@@ -1,7 +1,7 @@
 {
     "name": "extrulesproject",
     "version": "1.0.0",
-    "description": "",
+    "description": "ArkTS code check custom rules based on homecheck framework",
     "main": "lib/index.js",
     "scripts": {
         "prepack": "tsc -p ./tsconfig.prod.json",
@@ -9,7 +9,9 @@
     },
     "files": [
         "lib",
-        "docs"
+        "docs",
+        "patches",
+        "README.md"
     ],
     "devDependencies": {
         "arkanalyzer": "^1.0.19",
