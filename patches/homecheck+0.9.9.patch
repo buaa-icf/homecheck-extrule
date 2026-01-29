@@ -1,0 +1,64 @@
+diff --git a/node_modules/homecheck/lib/model/Defects.d.ts b/node_modules/homecheck/lib/model/Defects.d.ts
+index 5a7b961..917709b 100644
+--- a/node_modules/homecheck/lib/model/Defects.d.ts
++++ b/node_modules/homecheck/lib/model/Defects.d.ts
+@@ -16,7 +16,8 @@ export declare class Defects {
+     fixKey: string;
+     showIgnoreIcon: boolean;
+     engineName: string;
+-    constructor(reportLine: number, reportColumn: number, endColumn: number, description: string, severity: number, ruleId: string, filePath: string, ruleDocPath: string, disabled: boolean, checked: boolean, fixable: boolean, showIgnoreIcon?: boolean);
++    methodName: string;
++    constructor(reportLine: number, reportColumn: number, endColumn: number, description: string, severity: number, ruleId: string, filePath: string, ruleDocPath: string, disabled: boolean, checked: boolean, fixable: boolean, methodName?: string, showIgnoreIcon?: boolean);
+ }
+ export declare class IssueReport {
+     defect: Defects;
+diff --git a/node_modules/homecheck/lib/model/Defects.js b/node_modules/homecheck/lib/model/Defects.js
+index ae92866..55a41bf 100644
+--- a/node_modules/homecheck/lib/model/Defects.js
++++ b/node_modules/homecheck/lib/model/Defects.js
+@@ -5,7 +5,7 @@ exports.engine = {
+     engineName: ''
+ };
+ class Defects {
+-    constructor(reportLine, reportColumn, endColumn, description, severity, ruleId, filePath, ruleDocPath, disabled, checked, fixable, showIgnoreIcon = true) {
++    constructor(reportLine, reportColumn, endColumn, description, severity, ruleId, filePath, ruleDocPath, disabled, checked, fixable, methodName = '', showIgnoreIcon = true) {
+         this.description = '';
+         this.severity = -1; // 0:info, 1:warning, 2:error
+         this.ruleId = '@perforce/<checker-name>';
+@@ -22,6 +22,7 @@ class Defects {
+         this.description = description;
+         this.severity = severity;
+         this.ruleId = ruleId;
++        this.methodName = methodName;
+         this.fixKey = this.reportLine + '%' + this.reportColumn + '%' + endColumn + '%' + this.ruleId;
+         this.mergeKey = filePath + '%' + this.fixKey + '%' + this.description;
+         this.ruleDocPath = ruleDocPath;
+diff --git a/node_modules/homecheck/lib/utils/common/GeneratingJsonFile.js b/node_modules/homecheck/lib/utils/common/GeneratingJsonFile.js
+index bb52f9e..858bfee 100644
+--- a/node_modules/homecheck/lib/utils/common/GeneratingJsonFile.js
++++ b/node_modules/homecheck/lib/utils/common/GeneratingJsonFile.js
+@@ -68,7 +68,8 @@ class GeneratingJsonFile {
+                     severity: severitys[defect.severity],
+                     mergeKey: defect.mergeKey,
+                     description: defect.description,
+-                    ruleDocPath: defect.ruleDocPath
++                    ruleDocPath: defect.ruleDocPath,
++                    methodName: defect.methodName || ''
+                 };
+                 fileDefectInfo.defects.push(defectInfo);
+             }
+@@ -118,12 +119,14 @@ class GeneratingJsonFile {
+                     severity: '',
+                     message: '',
+                     rule: '',
++                    methodName: '',
+                 };
+                 oneDefect.line = defect.reportLine;
+                 oneDefect.column = defect.reportColumn;
+                 oneDefect.severity = defect.severity;
+                 oneDefect.message = defect.description;
+                 oneDefect.rule = defect.ruleId;
++                oneDefect.methodName = defect.methodName || '';
+                 oneResult.messages.push(oneDefect);
+             }
+             jsonResults.push(oneResult);

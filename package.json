@@ -1,0 +1,21 @@
+{
+    "name": "extrulesproject",
+    "version": "1.0.0",
+    "description": "",
+    "main": "lib/index.js",
+    "scripts": {
+        "prepack": "tsc -p ./tsconfig.prod.json",
+        "postinstall": "patch-package"
+    },
+    "files": [
+        "lib",
+        "docs"
+    ],
+    "devDependencies": {
+        "arkanalyzer": "^1.0.19",
+        "homecheck": "^0.9.9",
+        "patch-package": "^8.0.1"
+    },
+    "author": "",
+    "license": "ISC"
+}

@@ -1,0 +1,1 @@
+export { file2CheckRuleMap, project2CheckRuleMap } from './Checkers/CheckerIndex';

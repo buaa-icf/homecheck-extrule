@@ -1,0 +1,10 @@
+node_modules/
+.claude/
+.github/
+.vscode/
+lib/
+config/
+report/
+
+.DS_Store
+*.log
