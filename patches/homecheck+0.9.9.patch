@@ -83,3 +83,30 @@ index ae92866..5b1692f 100644
          this.fixKey = this.reportLine + '%' + this.reportColumn + '%' + endColumn + '%' + this.ruleId;
          this.mergeKey = filePath + '%' + this.fixKey + '%' + this.description;
          this.ruleDocPath = ruleDocPath;
+diff --git a/node_modules/homecheck/lib/model/Project2Check.js b/node_modules/homecheck/lib/model/Project2Check.js
+index 861ed8b..f13a3f3 100644
+--- a/node_modules/homecheck/lib/model/Project2Check.js
++++ b/node_modules/homecheck/lib/model/Project2Check.js
+@@ -60,6 +60,10 @@ class Project2Check {
+     }
+     collectMatcherCallbacks() {
+         this.enabledRuleCheckerMap.forEach(checker => {
++            var BaseChecker_1 = require('../checker/BaseChecker');
++            if (BaseChecker_1.isAdviceChecker(checker)) {
++                checker.beforeCheck();
++            }
+             const matcherCallbacks = checker.registerMatchers();
+             matcherCallbacks.forEach(obj => {
+                 const matcher = obj.matcher;
+@@ -130,7 +134,11 @@ class Project2Check {
+         }
+     }
+     collectIssues() {
++        var BaseChecker_1 = require('../checker/BaseChecker');
+         this.enabledRuleCheckerMap.forEach((v, k) => {
++            if (BaseChecker_1.isAdviceChecker(v)) {
++                v.afterCheck();
++            }
+             var _a;
+             this.issues.push(...((_a = v.issues) === null || _a === void 0 ? void 0 : _a.reduce((acc, cur) => {
+                 if (acc.some((item) => item.defect.mergeKey === cur.defect.mergeKey)) {
