@@ -1,0 +1,7 @@
+{
+  "name": "code-clone-test",
+  "version": "1.0.0",
+  "description": "Test project for Code Clone detection",
+  "main": "ets/FileA.ets",
+  "dependencies": {}
+}

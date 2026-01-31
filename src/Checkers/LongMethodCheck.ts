@@ -55,14 +55,19 @@ export class LongMethodCheck implements BaseChecker {
     }
 
     public check = (targetMtd: ArkMethod) => {
+        console.log('[LongMethodCheck] check called for method:', targetMtd.getName());
+        
         // 获取配置的最大语句数阈值
         const maxStmts = this.getMaxStmtsFromConfig();
+        console.log('[LongMethodCheck] maxStmts:', maxStmts);
 
         // 计算方法的语句数量
         const stmtCount = this.countMethodStmts(targetMtd);
+        console.log('[LongMethodCheck] stmtCount:', stmtCount);
 
         // 如果超过阈值，则上报问题
         if (stmtCount > maxStmts) {
+            console.log('[LongMethodCheck] Reporting issue for method:', targetMtd.getName());
             this.addIssueReport(targetMtd, stmtCount, maxStmts);
         }
     }
@@ -113,11 +118,9 @@ export class LongMethodCheck implements BaseChecker {
         const arkFile = method.getDeclaringArkFile();
         const filePath = arkFile?.getFilePath() ?? '';
 
-        // 构建描述信息，包含实际语句数和阈值
-        const description = `${this.metaData.description} (Current: ${actualStmts} statements, Max: ${maxStmts})`;
-
-        // 获取方法名
-        let methodName = method.getName() ?? '';
+        // 构建描述信息，包含实际语句数、阈值和方法名
+        const methodName = method.getName() ?? '';
+        const description = `Method '${methodName}' is too long. Consider refactoring. (Current: ${actualStmts} statements, Max: ${maxStmts})`;
 
         const defects = new Defects(
             line,
@@ -128,10 +131,11 @@ export class LongMethodCheck implements BaseChecker {
             this.rule.ruleId,
             filePath,
             this.metaData.ruleDocPath,
-            true,
-            false,
-            false,
-            methodName
+            true,   // disabled
+            false,  // checked
+            false,  // fixable
+            methodName,  // methodName
+            true    // showIgnoreIcon
         );
 
         this.issues.push(new IssueReport(defects, undefined));

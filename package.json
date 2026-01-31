@@ -4,8 +4,9 @@
     "description": "ArkTS code check custom rules based on homecheck framework",
     "main": "lib/index.js",
     "scripts": {
+        "postinstall": "patch-package",
         "prepack": "tsc -p ./tsconfig.prod.json",
-        "postinstall": "patch-package"
+        "build": "tsc -p ./tsconfig.prod.json"
     },
     "files": [
         "lib",
@@ -16,7 +17,8 @@
     "devDependencies": {
         "arkanalyzer": "^1.0.19",
         "homecheck": "^0.9.9",
-        "patch-package": "^8.0.1"
+        "patch-package": "^8.0.0",
+        "typescript": "^5.9.3"
     },
     "author": "",
     "license": "ISC"

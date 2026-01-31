@@ -1,3 +1,53 @@
+diff --git a/node_modules/homecheck/lib/Index.d.ts b/node_modules/homecheck/lib/Index.d.ts
+index d5166e1..023a627 100644
+--- a/node_modules/homecheck/lib/Index.d.ts
++++ b/node_modules/homecheck/lib/Index.d.ts
+@@ -1,5 +1,5 @@
+ export { start, run } from './Main';
+-export { BaseMetaData, BaseChecker } from './checker/BaseChecker';
++export { BaseMetaData, BaseChecker, AdviceChecker, isAdviceChecker } from './checker/BaseChecker';
+ export * from './matcher/Matchers';
+ export { CheckerStorage } from './utils/common/CheckerStorage';
+ export { Rule } from './model/Rule';
+diff --git a/node_modules/homecheck/lib/Index.js b/node_modules/homecheck/lib/Index.js
+index bb7d4f1..89195f9 100644
+--- a/node_modules/homecheck/lib/Index.js
++++ b/node_modules/homecheck/lib/Index.js
+@@ -68,3 +68,9 @@ Object.defineProperty(exports, "Utils", { enumerable: true, get: function () { r
+ var toolEntry_1 = require("./tools/toolEntry");
+ Object.defineProperty(exports, "runTool", { enumerable: true, get: function () { return toolEntry_1.runTool; } });
+ Object.defineProperty(exports, "Tools", { enumerable: true, get: function () { return toolEntry_1.Tools; } });
++// checkers (patched)
++var BaseChecker_1 = require("./checker/BaseChecker");
++Object.defineProperty(exports, "BaseMetaData", { enumerable: true, get: function () { return BaseChecker_1.BaseMetaData; } });
++Object.defineProperty(exports, "BaseChecker", { enumerable: true, get: function () { return BaseChecker_1.BaseChecker; } });
++Object.defineProperty(exports, "AdviceChecker", { enumerable: true, get: function () { return BaseChecker_1.AdviceChecker; } });
++Object.defineProperty(exports, "isAdviceChecker", { enumerable: true, get: function () { return BaseChecker_1.isAdviceChecker; } });
+diff --git a/node_modules/homecheck/lib/checker/BaseChecker.d.ts b/node_modules/homecheck/lib/checker/BaseChecker.d.ts
+index 74cdc8f..0a5e2d6 100644
+--- a/node_modules/homecheck/lib/checker/BaseChecker.d.ts
++++ b/node_modules/homecheck/lib/checker/BaseChecker.d.ts
+@@ -16,3 +16,8 @@ export interface BaseChecker {
+     codeFix?(arkFile: ArkFile, fixKey: string): boolean;
+     issues: IssueReport[];
+ }
++export interface AdviceChecker extends BaseChecker {
++    beforeCheck(): void;
++    afterCheck(): void;
++}
++export declare function isAdviceChecker(checker: BaseChecker): checker is AdviceChecker;
+diff --git a/node_modules/homecheck/lib/checker/BaseChecker.js b/node_modules/homecheck/lib/checker/BaseChecker.js
+index 6fe0445..47c29c5 100644
+--- a/node_modules/homecheck/lib/checker/BaseChecker.js
++++ b/node_modules/homecheck/lib/checker/BaseChecker.js
+@@ -14,3 +14,7 @@
+  * limitations under the License.
+  */
+ Object.defineProperty(exports, "__esModule", { value: true });
++exports.isAdviceChecker = isAdviceChecker;
++function isAdviceChecker(checker) {
++    return 'beforeCheck' in checker && 'afterCheck' in checker;
++}
 diff --git a/node_modules/homecheck/lib/model/Defects.d.ts b/node_modules/homecheck/lib/model/Defects.d.ts
 index 5a7b961..917709b 100644
 --- a/node_modules/homecheck/lib/model/Defects.d.ts
@@ -13,7 +63,7 @@ index 5a7b961..917709b 100644
  export declare class IssueReport {
      defect: Defects;
 diff --git a/node_modules/homecheck/lib/model/Defects.js b/node_modules/homecheck/lib/model/Defects.js
-index ae92866..55a41bf 100644
+index ae92866..5b1692f 100644
 --- a/node_modules/homecheck/lib/model/Defects.js
 +++ b/node_modules/homecheck/lib/model/Defects.js
 @@ -5,7 +5,7 @@ exports.engine = {
@@ -21,7 +71,7 @@ index ae92866..55a41bf 100644
  };
  class Defects {
 -    constructor(reportLine, reportColumn, endColumn, description, severity, ruleId, filePath, ruleDocPath, disabled, checked, fixable, showIgnoreIcon = true) {
-+    constructor(reportLine, reportColumn, endColumn, description, severity, ruleId, filePath, ruleDocPath, disabled, checked, fixable, methodName = '', showIgnoreIcon = true) {
++    constructor(reportLine, reportColumn, endColumn, description, severity, ruleId, filePath, ruleDocPath, disabled, checked, fixable, methodName = "", showIgnoreIcon = true) {
          this.description = '';
          this.severity = -1; // 0:info, 1:warning, 2:error
          this.ruleId = '@perforce/<checker-name>';
@@ -33,32 +83,30 @@ index ae92866..55a41bf 100644
          this.fixKey = this.reportLine + '%' + this.reportColumn + '%' + endColumn + '%' + this.ruleId;
          this.mergeKey = filePath + '%' + this.fixKey + '%' + this.description;
          this.ruleDocPath = ruleDocPath;
-diff --git a/node_modules/homecheck/lib/utils/common/GeneratingJsonFile.js b/node_modules/homecheck/lib/utils/common/GeneratingJsonFile.js
-index bb52f9e..858bfee 100644
---- a/node_modules/homecheck/lib/utils/common/GeneratingJsonFile.js
-+++ b/node_modules/homecheck/lib/utils/common/GeneratingJsonFile.js
-@@ -68,7 +68,8 @@ class GeneratingJsonFile {
-                     severity: severitys[defect.severity],
-                     mergeKey: defect.mergeKey,
-                     description: defect.description,
--                    ruleDocPath: defect.ruleDocPath
-+                    ruleDocPath: defect.ruleDocPath,
-+                    methodName: defect.methodName || ''
-                 };
-                 fileDefectInfo.defects.push(defectInfo);
-             }
-@@ -118,12 +119,14 @@ class GeneratingJsonFile {
-                     severity: '',
-                     message: '',
-                     rule: '',
-+                    methodName: '',
-                 };
-                 oneDefect.line = defect.reportLine;
-                 oneDefect.column = defect.reportColumn;
-                 oneDefect.severity = defect.severity;
-                 oneDefect.message = defect.description;
-                 oneDefect.rule = defect.ruleId;
-+                oneDefect.methodName = defect.methodName || '';
-                 oneResult.messages.push(oneDefect);
-             }
-             jsonResults.push(oneResult);
+diff --git a/node_modules/homecheck/lib/model/Project2Check.js b/node_modules/homecheck/lib/model/Project2Check.js
+index 861ed8b..f13a3f3 100644
+--- a/node_modules/homecheck/lib/model/Project2Check.js
++++ b/node_modules/homecheck/lib/model/Project2Check.js
+@@ -60,6 +60,10 @@ class Project2Check {
+     }
+     collectMatcherCallbacks() {
+         this.enabledRuleCheckerMap.forEach(checker => {
++            var BaseChecker_1 = require('../checker/BaseChecker');
++            if (BaseChecker_1.isAdviceChecker(checker)) {
++                checker.beforeCheck();
++            }
+             const matcherCallbacks = checker.registerMatchers();
+             matcherCallbacks.forEach(obj => {
+                 const matcher = obj.matcher;
+@@ -130,7 +134,11 @@ class Project2Check {
+         }
+     }
+     collectIssues() {
++        var BaseChecker_1 = require('../checker/BaseChecker');
+         this.enabledRuleCheckerMap.forEach((v, k) => {
++            if (BaseChecker_1.isAdviceChecker(v)) {
++                v.afterCheck();
++            }
+             var _a;
+             this.issues.push(...((_a = v.issues) === null || _a === void 0 ? void 0 : _a.reduce((acc, cur) => {
+                 if (acc.some((item) => item.defect.mergeKey === cur.defect.mergeKey)) {
