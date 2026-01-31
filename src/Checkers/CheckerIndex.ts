@@ -10,5 +10,5 @@ file2CheckRuleMap.set("@extrulesproject/long-method-check", LongMethodCheck);
 
 // 新增项目级checker，需要在此处注册（克隆检测需要跨文件比较）
 export const project2CheckRuleMap: Map<string, any> = new Map();
-project2CheckRuleMap.set("@extrulesproject/code-clone-type1", CodeCloneType1Check);
-project2CheckRuleMap.set("@extrulesproject/code-clone-type2", CodeCloneType2Check);
+project2CheckRuleMap.set("@extrulesproject/code-clone-type1-check", CodeCloneType1Check);
+project2CheckRuleMap.set("@extrulesproject/code-clone-type2-check", CodeCloneType2Check);
