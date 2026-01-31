@@ -106,6 +106,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 检测前初始化
      */
     public beforeCheck(): void {
+        console.log(`[CodeClone] beforeCheck called for ${this.getCloneType()}`);
         this.methodsByHash.clear();
         this.reportedPairs.clear();
         this.issues = [];
@@ -129,6 +130,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      */
     public collectMethods = (arkFile: ArkFile) => {
         const filePath = arkFile.getFilePath();
+        console.log(`[CodeClone] Scanning file: ${filePath}`);
         
         for (const arkClass of arkFile.getClasses()) {
             const className = arkClass.getName();
@@ -148,8 +150,11 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
 
                 const methodInfo = this.extractMethodInfo(method, filePath, className);
                 
-                if (methodInfo && methodInfo.stmtCount >= this.getMinStmts()) {
-                    this.addMethodToHash(methodInfo);
+                if (methodInfo) {
+                    console.log(`[CodeClone] Found method: ${className}.${methodName}, stmts=${methodInfo.stmtCount}, minRequired=${this.getMinStmts()}`);
+                    if (methodInfo.stmtCount >= this.getMinStmts()) {
+                        this.addMethodToHash(methodInfo);
+                    }
                 }
             }
         }
@@ -159,7 +164,14 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 检测完成后调用，查找克隆对
      */
     public afterCheck(): void {
+        console.log(`[CodeClone] afterCheck called. Total unique hashes: ${this.methodsByHash.size}`);
+        for (const [hash, methods] of this.methodsByHash) {
+            if (methods.length >= 2) {
+                console.log(`[CodeClone] Hash ${hash}: ${methods.length} methods (potential clone)`);
+            }
+        }
         this.findClonePairs();
+        console.log(`[CodeClone] Total issues found: ${this.issues.length}`);
     }
 
     /**
