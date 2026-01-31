@@ -363,10 +363,11 @@ export class CodeCloneType2Check implements AdviceChecker {
             this.rule.ruleId,
             method.filePath,
             this.metaData.ruleDocPath,
-            true,
-            false,
-            false,
-            true
+            true,   // disabled
+            false,  // checked
+            false,  // fixable
+            method.methodName,  // methodName
+            true    // showIgnoreIcon
         );
 
         this.issues.push(new IssueReport(defects, undefined));

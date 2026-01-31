@@ -333,6 +333,7 @@ export class CodeCloneType1Check implements AdviceChecker {
             true,   // disabled
             false,  // checked
             false,  // fixable
+            method.methodName,  // methodName
             true    // showIgnoreIcon
         );
 
