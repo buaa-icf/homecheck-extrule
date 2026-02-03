@@ -1,5 +1,3 @@
-node ./node_modules/homecheck/lib/run.js --projectConfigPath=./config/projectConfig.json --configPath=./config/ruleConfig.jsonnode ./node_modules/homecheck/lib/run.js --projectConfigPath=./config/projectConfig.json --configPath=./config/ruleConfig.json// Switch statement smell sample
-
 class StatusRenderer {
   render(status: string): string {
     switch (status) {
@@ -21,7 +19,7 @@ class StatusRenderer {
   }
 }
 
-// Smaller switch should stay below threshold.
+// Smaller switch should stay below阈值
 class SmallSwitchRenderer {
   render(kind: string): string {
     switch (kind) {
