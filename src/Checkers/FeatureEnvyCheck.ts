@@ -14,12 +14,17 @@ export class FeatureEnvyCheck implements BaseChecker {
     public rule: Rule;
     public issues: IssueReport[] = [];
 
+    // Ignore calls to built-in/native types to avoid false positives on literals/formatting.
+    private readonly IGNORED_CLASSES = new Set<string>([
+        "String", "Number", "Boolean", "Object", "Array", "Date", "Math", "RegExp", "JSON", "Symbol", "BigInt", "Error", "Promise"
+    ]);
+
     // Match every method.
     private methodMatcher: MethodMatcher = {
         matcherType: MatcherTypes.METHOD
     };
 
-    // Minimum calls required to avoid noise.
+    // Default thresholds to avoid noise; can be overridden via rule.option[0].
     private readonly MIN_TOTAL_CALLS = 3;
     private readonly MIN_FOREIGN_CALLS = 3;
     private readonly RATIO_THRESHOLD = 0.6; // 60% or more calls to the same foreign class.
@@ -39,23 +44,30 @@ export class FeatureEnvyCheck implements BaseChecker {
             return;
         }
 
-        const selfClass = targetMtd.getDeclaringClassSignature().getClassName();
+        const selfClass = targetMtd.getSignature().getDeclaringClassSignature().getClassName();
         const callCountByClass = new Map<string, number>();
         let totalCalls = 0;
 
+        const { minTotalCalls, minForeignCalls, ratioThreshold } = this.getThresholds();
+
         for (const stmt of stmts) {
-            const invoke = CheckerUtils.getInvokeExprFromStmt(stmt);
-            if (!invoke) {
+            const invokes = this.collectInvokes(stmt);
+            if (!invokes.length) {
                 continue;
             }
 
-            const methodSign = invoke.getMethodSignature();
-            const calleeClass = methodSign.getDeclaringClassSignature().getClassName();
-            totalCalls++;
-            callCountByClass.set(calleeClass, (callCountByClass.get(calleeClass) ?? 0) + 1);
+            for (const invoke of invokes) {
+                const methodSign = invoke.getMethodSignature();
+                const calleeClass = methodSign.getDeclaringClassSignature().getClassName();
+                if (!calleeClass || this.isIgnoredClass(calleeClass)) {
+                    continue;
+                }
+                totalCalls++;
+                callCountByClass.set(calleeClass, (callCountByClass.get(calleeClass) ?? 0) + 1);
+            }
         }
 
-        if (totalCalls < this.MIN_TOTAL_CALLS) {
+        if (totalCalls < minTotalCalls) {
             return;
         }
 
@@ -77,12 +89,58 @@ export class FeatureEnvyCheck implements BaseChecker {
         }
 
         const ratio = dominantCalls / totalCalls;
-        const envyDetected = dominantCalls >= this.MIN_FOREIGN_CALLS && ratio >= this.RATIO_THRESHOLD && dominantCalls > selfCalls;
+        const envyDetected = dominantCalls >= minForeignCalls && ratio >= ratioThreshold && dominantCalls > selfCalls;
         if (!envyDetected) {
             return;
         }
 
         this.addIssueReport(targetMtd, dominantClass, dominantCalls, totalCalls, ratio);
+    }
+
+    private getThresholds() {
+        const defaults = {
+            minTotalCalls: this.MIN_TOTAL_CALLS,
+            minForeignCalls: this.MIN_FOREIGN_CALLS,
+            ratioThreshold: this.RATIO_THRESHOLD
+        };
+
+        if (!this.rule || !Array.isArray(this.rule.option) || this.rule.option.length === 0) {
+            return defaults;
+        }
+
+        const opt = this.rule.option[0] as any;
+        return {
+            minTotalCalls: typeof opt.minTotalCalls === "number" ? opt.minTotalCalls : defaults.minTotalCalls,
+            minForeignCalls: typeof opt.minForeignCalls === "number" ? opt.minForeignCalls : defaults.minForeignCalls,
+            ratioThreshold: typeof opt.ratioThreshold === "number" ? opt.ratioThreshold : defaults.ratioThreshold
+        };
+    }
+
+    private collectInvokes(stmt: any) {
+        const invokes: any[] = [];
+
+        const direct = CheckerUtils.getInvokeExprFromStmt(stmt);
+        if (direct) {
+            invokes.push(direct);
+        }
+
+        if (typeof stmt.getExprs === "function") {
+            for (const expr of stmt.getExprs() ?? []) {
+                // Best-effort: some expr nodes may expose getInvokeExpr.
+                if (expr && typeof (expr as any).getInvokeExpr === "function") {
+                    const inv = (expr as any).getInvokeExpr();
+                    if (inv) {
+                        invokes.push(inv);
+                    }
+                }
+            }
+        }
+
+        return invokes;
+    }
+
+    private isIgnoredClass(className: string): boolean {
+        return this.IGNORED_CLASSES.has(className);
     }
 
     private addIssueReport(method: ArkMethod, foreignClass: string, foreignCalls: number, totalCalls: number, ratio: number) {

@@ -30,18 +30,31 @@ export class SwitchStatementCheck implements BaseChecker {
         }
 
         const stmts = body.getCfg().getStmts();
-        for (const stmt of stmts) {
-            const text = stmt.getOriginalText() ?? stmt.toString();
+        let hit = false;
+        const reported = new Set<string>();
+        for (let i = 0; i < stmts.length; i++) {
+            const stmt = stmts[i];
+            const text = this.getStmtText(stmt);
             if (!this.containsSwitch(text)) {
                 continue;
             }
 
-            const caseCount = this.countCases(text);
+            const switchBlockText = this.collectSwitchBlockText(stmts, i);
+            const caseCount = this.countCases(switchBlockText);
             if (caseCount >= this.getCaseThreshold()) {
-                const caseLineCounts = this.calculateCaseLineCounts(text);
+                const caseLineCounts = this.calculateCaseLineCounts(switchBlockText);
                 this.addIssueReport(targetMtd, stmt, caseCount, caseLineCounts);
+                reported.add(this.buildSwitchKey(stmt.getOriginPositionInfo().getLineNo(), caseCount));
+                hit = true;
             }
         }
+
+        // Always run a source scan to catch switches missed/flattened in CFG; dedupe by key.
+        this.detectFromSource(targetMtd, reported, hit);
+    }
+
+    private getStmtText(stmt: Stmt): string {
+        return stmt.getOriginalText() ?? stmt.toString();
     }
 
     private containsSwitch(text: string): boolean {
@@ -49,8 +62,114 @@ export class SwitchStatementCheck implements BaseChecker {
     }
 
     private countCases(text: string): number {
-        const matches = text.match(/\bcase\b/g);
+        const matches = text.match(/\bcase\b|\bdefault\b/g);
         return matches ? matches.length : 0;
+    }
+
+    private collectSwitchBlockText(stmts: Stmt[], startIdx: number): string {
+        const lines: string[] = [];
+        let braceDepth = 0;
+        let started = false;
+
+        for (let i = startIdx; i < stmts.length; i++) {
+            const text = this.getStmtText(stmts[i]);
+            const open = (text.match(/\{/g)?.length ?? 0);
+            const close = (text.match(/\}/g)?.length ?? 0);
+
+            if (!started) {
+                // Ensure we include the switch line even if it lacks '{' on the same line.
+                started = true;
+                braceDepth += open - close;
+                lines.push(text);
+                continue;
+            }
+
+            braceDepth += open - close;
+            lines.push(text);
+
+            if (braceDepth <= 0) {
+                break;
+            }
+        }
+
+        return lines.join("\n");
+    }
+
+    private detectFromSource(method: ArkMethod, reported: Set<string>, hadCfgHit: boolean) {
+        const code = method.getCode();
+        if (!code) {
+            return;
+        }
+
+        const lines = code.split(/\r?\n/);
+        const threshold = this.getCaseThreshold();
+
+        let inSwitch = false;
+        let braceDepth = 0;
+        let blockLines: string[] = [];
+        let startLine = 0;
+
+        const flush = () => {
+            if (!blockLines.length) {
+                return;
+            }
+            const blockText = blockLines.join("\n");
+            const caseCount = this.countCases(blockText);
+            if (caseCount >= threshold) {
+                const caseLineCounts = this.calculateCaseLineCounts(blockText);
+                // Columns are best-effort; we align to start of switch line.
+                const col = (lines[startLine].indexOf("switch") >= 0) ? lines[startLine].indexOf("switch") : 0;
+                const key = this.buildSwitchKey(startLine + 1, caseCount);
+                if (!reported.has(key)) {
+                    this.addIssueReportAtPosition(method, startLine + 1, col, caseCount, caseLineCounts);
+                    reported.add(key);
+                }
+            }
+        };
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (!inSwitch) {
+                if (this.containsSwitch(line)) {
+                    inSwitch = true;
+                    startLine = i;
+                    blockLines = [line];
+                    braceDepth = (line.match(/\{/g)?.length ?? 0) - (line.match(/\}/g)?.length ?? 0);
+                    if (braceDepth === 0) {
+                        // If switch line lacks '{', continue to find block start.
+                        continue;
+                    }
+                    if (braceDepth < 0) {
+                        // Unbalanced; abandon this switch.
+                        inSwitch = false;
+                        blockLines = [];
+                    }
+                }
+                continue;
+            }
+
+            // In switch block
+            blockLines.push(line);
+            braceDepth += (line.match(/\{/g)?.length ?? 0);
+            braceDepth -= (line.match(/\}/g)?.length ?? 0);
+
+            if (braceDepth <= 0) {
+                flush();
+                inSwitch = false;
+                blockLines = [];
+            }
+        }
+
+        // Handle unterminated block (best-effort)
+        if (inSwitch) {
+            flush();
+        }
+
+        // If neither CFG nor source caught anything, do nothing further; we attempted best-effort paths.
+    }
+
+    private buildSwitchKey(line: number, caseCount: number) {
+        return `${line}-${caseCount}`;
     }
 
     private calculateCaseLineCounts(text: string): Array<{ label: string; lines: number }> {
@@ -120,6 +239,34 @@ export class SwitchStatementCheck implements BaseChecker {
             line,
             startCol,
             endCol,
+            description,
+            severity,
+            this.rule.ruleId,
+            filePath,
+            this.metaData.ruleDocPath,
+            true,
+            false,
+            false,
+            method.getName(),
+            true
+        );
+
+        this.issues.push(new IssueReport(defects, undefined));
+    }
+
+    private addIssueReportAtPosition(method: ArkMethod, line: number, startCol: number, caseCount: number, caseLineCounts: Array<{ label: string; lines: number }>) {
+        const severity = this.rule?.alert ?? this.metaData.severity;
+        const filePath = method.getDeclaringArkFile()?.getFilePath() ?? "";
+        const caseLineSummary = caseLineCounts.length > 0
+            ? caseLineCounts.map(({ label, lines }) => `${label} (${lines} line${lines === 1 ? "" : "s"})`).join("; ")
+            : "unavailable";
+
+        const description = `Switch statement with ${caseCount} cases detected in method '${method.getName()}'. Consider using polymorphism or strategy. Case line counts: ${caseLineSummary}.`;
+
+        const defects = new Defects(
+            line,
+            startCol,
+            startCol + 1,
             description,
             severity,
             this.rule.ruleId,

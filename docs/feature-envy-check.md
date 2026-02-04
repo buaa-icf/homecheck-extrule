@@ -2,19 +2,19 @@
 
 ## 描述
 
-检测方法是否存在對其他類的過度依賴（Feature Envy）。如果一個方法對單一外部類的調用次數遠超自身類，可能應該將該邏輯移動到被依賴的類或提取協作對象。
+检测方法是否存在对其他类的过度依赖（Feature Envy）。如果一个方法对单一外部类的调用次数远超自身类，可能应将逻辑移动到被依赖的类，或提取协作对象来承载相关行为。
 
-## 默認閾值
+## 默认阈值
 
-- 最少統計的調用數：**3**（低於此值不報告）
-- 最少外部調用數：**3**（外部調用少於 3 不報告）
-- 外部調用比例：**60%** 及以上，且外部調用次數大於自身類的調用次數
+- 最少统计的调用数：**3**（低于此值不报告）
+- 最少外部调用数：**3**（外部调用少于 3 不报告）
+- 外部调用比例：**60%** 及以上，且外部调用次数大于自身类的调用次数
 
-> 調用計數基於方法體內的語句，識別每個調用的目標類，然後按類統計。
+> 调用计数基于方法体内的语句，识别每个调用的目标类，再按类进行统计。
 
 ## 配置方式
 
-目前僅支持在 `ruleConfig.json` 中調整嚴重級別（`level`）。閾值（最少調用數、比例等）在規則內置，不支持配置：
+当前仅支持在 `ruleConfig.json` 中调整严重级别（`level`）。阈值（最少调用数、比例等）在规则内置，不支持自定义：
 
 ```json
 {
@@ -26,12 +26,12 @@
 }
 ```
 
-## 反例代碼
+## 反例代码
 
 ```typescript
 class OrderService {
   process(order: Order) {
-    // 大量依賴外部類 PaymentGateway
+    // 大量依赖外部类 PaymentGateway
     this.gateway.validate(order);
     this.gateway.prepare(order);
     this.gateway.charge(order);
@@ -41,7 +41,7 @@ class OrderService {
 }
 ```
 
-## 正例代碼
+## 正例代码
 
 ```typescript
 class PaymentGateway {
@@ -56,13 +56,13 @@ class PaymentGateway {
 
 class OrderService {
   process(order: Order) {
-    // 委派給更合適的類
+    // 委派给更合适的类
     this.gateway.process(order);
   }
 }
 ```
 
-## 參考文獻
+## 参考文献
 
 - Martin Fowler, "Refactoring: Improving the Design of Existing Code"（Feature Envy）
 - Robert C. Martin, "Clean Code"，Chapter 7: Error Handling

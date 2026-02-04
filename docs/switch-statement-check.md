@@ -2,19 +2,19 @@
 
 ## 描述
 
-檢測大型 `switch` 語句的代碼異味。大量分支的 `switch` 往往暗示可以用多態、策略模式或查表方式替代，以降低條件分支的複雜度與耦合。
+检测大型 `switch` 语句的代码异味。大量分支往往暗示可以用多态、策略模式或查表方式替代，以降低条件分支的复杂度与耦合。
 
-## 默認閾值
+## 默认阈值
 
-- 最小 case 數：**5**（`switch` 中 `case` 個數達到或超過此值即報告）
+- 最小 case 数：**5**（`switch` 中 `case` 数达到或超过此值即报告）
 
-> 依據每個語句的原始文本統計 `case` 關鍵字次數。
+> 依据每个语句的原始文本统计 `case` 关键字次数。
 
-報告內容：會在描述中附帶每個 `case`（包含 `default`）對應的行數，便於判斷哪個分支邏輯較重。
+报告内容：会在描述中附带每个 `case`（包含 `default`）对应的行数，便于判断哪些分支逻辑较重。
 
 ## 配置方式
 
-可在 `ruleConfig.json` 中自定義最小 case 數：
+可在 `ruleConfig.json` 中自定义最小 case 数：
 
 ```json
 {
@@ -29,10 +29,10 @@
 }
 ```
 
-**配置參數說明**：
-- `minCases`：觸發報告的最小 `case` 數（默認 5）
+**配置参数说明**：
+- `minCases`：触发报告的最小 `case` 数（默认 5）
 
-## 反例代碼
+## 反例代码
 
 ```typescript
 function render(status: string) {
@@ -47,7 +47,7 @@ function render(status: string) {
 }
 ```
 
-## 正例代碼
+## 正例代码
 
 ```typescript
 const handlers: Record<string, () => void> = {
@@ -63,7 +63,7 @@ function render(status: string) {
 }
 ```
 
-## 參考文獻
+## 参考文献
 
 - Martin Fowler, "Refactoring: Improving the Design of Existing Code"（Replace Conditional with Polymorphism）
 - Robert C. Martin, "Clean Code", Chapter 3: Functions
