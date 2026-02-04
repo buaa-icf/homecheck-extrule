@@ -8,6 +8,10 @@ const gMetaData: BaseMetaData = {
     description: "Large switch statement detected; consider replacing with polymorphism."
 };
 
+/**
+ * Detects large switch statements by counting case/default labels.
+ * Uses CFG statements for structure and a source scan as a fallback.
+ */
 export class SwitchStatementCheck implements BaseChecker {
     readonly metaData: BaseMetaData = gMetaData;
     public rule: Rule;
@@ -19,10 +23,16 @@ export class SwitchStatementCheck implements BaseChecker {
 
     private readonly MIN_CASES = 5; // Heuristic threshold for a "large" switch.
 
+    /**
+     * Register the method-level matcher for this checker.
+     */
     public registerMatchers(): MatcherCallback[] {
         return [{ matcher: this.methodMatcher, callback: this.check }];
     }
 
+    /**
+     * Scan a method for switch blocks and report those above the threshold.
+     */
     public check = (targetMtd: ArkMethod) => {
         const body = targetMtd.getBody();
         if (!body) {
@@ -53,19 +63,32 @@ export class SwitchStatementCheck implements BaseChecker {
         this.detectFromSource(targetMtd, reported, hit);
     }
 
+    /**
+     * Prefer original source text for accurate brace/case counting.
+     */
     private getStmtText(stmt: Stmt): string {
         return stmt.getOriginalText() ?? stmt.toString();
     }
 
+    /**
+     * Basic switch detection on a single line of text.
+     */
     private containsSwitch(text: string): boolean {
         return /\bswitch\s*\(/.test(text);
     }
 
+    /**
+     * Count case/default labels inside a switch block.
+     */
     private countCases(text: string): number {
         const matches = text.match(/\bcase\b|\bdefault\b/g);
         return matches ? matches.length : 0;
     }
 
+    /**
+     * Collect the textual switch block starting at a statement index.
+     * Uses brace depth to determine the block end.
+     */
     private collectSwitchBlockText(stmts: Stmt[], startIdx: number): string {
         const lines: string[] = [];
         let braceDepth = 0;
@@ -95,6 +118,10 @@ export class SwitchStatementCheck implements BaseChecker {
         return lines.join("\n");
     }
 
+    /**
+     * Fallback scan over raw source to catch switches that CFG misses.
+     * De-duplicates with the `reported` key set.
+     */
     private detectFromSource(method: ArkMethod, reported: Set<string>, hadCfgHit: boolean) {
         const code = method.getCode();
         if (!code) {
@@ -168,10 +195,16 @@ export class SwitchStatementCheck implements BaseChecker {
         // If neither CFG nor source caught anything, do nothing further; we attempted best-effort paths.
     }
 
+    /**
+     * Create a stable-ish dedupe key for a detected switch block.
+     */
     private buildSwitchKey(line: number, caseCount: number) {
         return `${line}-${caseCount}`;
     }
 
+    /**
+     * Estimate per-case line counts for reporting detail.
+     */
     private calculateCaseLineCounts(text: string): Array<{ label: string; lines: number }> {
         const lines = text.split(/\r?\n/);
         const result: Array<{ label: string; lines: number }> = [];
@@ -212,6 +245,9 @@ export class SwitchStatementCheck implements BaseChecker {
         return result;
     }
 
+    /**
+     * Resolve the case-count threshold from rule options or defaults.
+     */
     private getCaseThreshold(): number {
         if (this.rule && this.rule.option && this.rule.option.length > 0) {
             const firstOption = this.rule.option[0] as any;
@@ -222,6 +258,9 @@ export class SwitchStatementCheck implements BaseChecker {
         return this.MIN_CASES;
     }
 
+    /**
+     * Report a switch statement detected from CFG statement context.
+     */
     private addIssueReport(method: ArkMethod, stmt: Stmt, caseCount: number, caseLineCounts: Array<{ label: string; lines: number }>) {
         const severity = this.rule?.alert ?? this.metaData.severity;
         const originPosition = stmt.getOriginPositionInfo();
@@ -254,6 +293,9 @@ export class SwitchStatementCheck implements BaseChecker {
         this.issues.push(new IssueReport(defects, undefined));
     }
 
+    /**
+     * Report a switch statement detected via source scan (best-effort coordinates).
+     */
     private addIssueReportAtPosition(method: ArkMethod, line: number, startCol: number, caseCount: number, caseLineCounts: Array<{ label: string; lines: number }>) {
         const severity = this.rule?.alert ?? this.metaData.severity;
         const filePath = method.getDeclaringArkFile()?.getFilePath() ?? "";

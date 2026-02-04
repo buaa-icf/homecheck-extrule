@@ -19,9 +19,9 @@ ArkTS 代码检查自定义规则项目，基于 [homecheck](https://gitcode.com
 
 ## 运行
 ```bash
-npm install
 npm pack
-node ./node_modules/homecheck/lib/run.js --projectConfigPath=./config/projectConfig.json --configPath=./config/ruleConfig.json --depGraphOutputDir=./out/dep-graph
+
+node ./node_modules/homecheck/lib/run.js --projectConfigPath=./config/projectConfig.json --configPath=./config/ruleConfig.json
 ```
 
 ## 许可证

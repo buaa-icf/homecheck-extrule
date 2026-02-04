@@ -9,6 +9,10 @@ const gMetaData: BaseMetaData = {
     description: "Method excessively uses members of another class (Feature Envy)."
 };
 
+/**
+ * Detects "Feature Envy" by comparing call distribution to self vs. foreign classes.
+ * Thresholds can be tuned via rule.option[0] (minTotalCalls, minForeignCalls, ratioThreshold).
+ */
 export class FeatureEnvyCheck implements BaseChecker {
     readonly metaData: BaseMetaData = gMetaData;
     public rule: Rule;
@@ -29,10 +33,16 @@ export class FeatureEnvyCheck implements BaseChecker {
     private readonly MIN_FOREIGN_CALLS = 3;
     private readonly RATIO_THRESHOLD = 0.6; // 60% or more calls to the same foreign class.
 
+    /**
+     * Register the method-level matcher for this checker.
+     */
     public registerMatchers(): MatcherCallback[] {
         return [{ matcher: this.methodMatcher, callback: this.check }];
     }
 
+    /**
+     * Analyze a method's call targets and report if dominated by one foreign class.
+     */
     public check = (targetMtd: ArkMethod) => {
         const body = targetMtd.getBody();
         if (!body) {
@@ -97,6 +107,9 @@ export class FeatureEnvyCheck implements BaseChecker {
         this.addIssueReport(targetMtd, dominantClass, dominantCalls, totalCalls, ratio);
     }
 
+    /**
+     * Resolve thresholds, falling back to defaults if rule options are missing.
+     */
     private getThresholds() {
         const defaults = {
             minTotalCalls: this.MIN_TOTAL_CALLS,
@@ -116,6 +129,9 @@ export class FeatureEnvyCheck implements BaseChecker {
         };
     }
 
+    /**
+     * Collect invoke expressions from a statement (best-effort across stmt/expr shapes).
+     */
     private collectInvokes(stmt: any) {
         const invokes: any[] = [];
 
@@ -139,10 +155,16 @@ export class FeatureEnvyCheck implements BaseChecker {
         return invokes;
     }
 
+    /**
+     * Filter out common built-in types to reduce noise.
+     */
     private isIgnoredClass(className: string): boolean {
         return this.IGNORED_CLASSES.has(className);
     }
 
+    /**
+     * Emit an IssueReport describing the detected Feature Envy.
+     */
     private addIssueReport(method: ArkMethod, foreignClass: string, foreignCalls: number, totalCalls: number, ratio: number) {
         const severity = this.rule?.alert ?? this.metaData.severity;
         const line = method.getLine() ?? 0;
