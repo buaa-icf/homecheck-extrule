@@ -183,17 +183,23 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
             return null;
         }
 
-        const stmts = body.getCfg().getStmts();
-        if (stmts.length === 0) {
+        const allStmts = body.getCfg().getStmts();
+        if (allStmts.length === 0) {
             return null;
+        }
+
+        // 过滤日志语句（如果配置了 ignoreLogs: true）
+        const stmts = this.filterStatements(allStmts);
+        if (stmts.length === 0) {
+            return null;  // 过滤后没有语句了
         }
 
         // 计算哈希值（由子类实现具体算法）
         const hash = this.computeHash(stmts);
         
-        // 获取起止行号
+        // 获取起止行号（使用原始语句列表，保留完整范围）
         const startLine = method.getLine() ?? 0;
-        const endLine = this.getMethodEndLine(stmts, startLine);
+        const endLine = this.getMethodEndLine(allStmts, startLine);
 
         return {
             method,
@@ -203,7 +209,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
             startLine,
             endLine,
             hash,
-            stmtCount: stmts.length
+            stmtCount: stmts.length  // 使用过滤后的语句数
         };
     }
 
@@ -351,5 +357,80 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
             }
         }
         return this.DEFAULT_MIN_STMTS;
+    }
+
+    /**
+     * 从配置中获取是否忽略字面量差异
+     * 
+     * 注意：此选项默认关闭，因为开启后可能产生误报
+     * 详见 test/sample/CodeClone/README.md 中的说明
+     * 
+     * 使用方式：在 ruleConfig.json 中配置
+     * "@extrulesproject/code-clone-type2-check": ["error", { "ignoreLiterals": true }]
+     */
+    protected getIgnoreLiterals(): boolean {
+        if (this.rule && this.rule.option && this.rule.option.length > 0) {
+            const firstOption = this.rule.option[0] as any;
+            if (typeof firstOption.ignoreLiterals === 'boolean') {
+                return firstOption.ignoreLiterals;
+            }
+        }
+        return false;  // 默认关闭，避免误报
+    }
+
+    /**
+     * 从配置中获取是否忽略日志语句
+     * 
+     * 日志语句（console.log、hilog、Logger 等）通常只是调试信息，
+     * 不影响业务逻辑，因此默认跳过以减少噪声。
+     * 
+     * 使用方式：在 ruleConfig.json 中配置
+     * "@extrulesproject/code-clone-type1-check": ["error", { "ignoreLogs": false }]
+     * 
+     * 默认值：true（开启日志过滤）
+     */
+    protected getIgnoreLogs(): boolean {
+        if (this.rule && this.rule.option && this.rule.option.length > 0) {
+            const firstOption = this.rule.option[0] as any;
+            if (typeof firstOption.ignoreLogs === 'boolean') {
+                return firstOption.ignoreLogs;
+            }
+        }
+        return true;  // 默认开启，过滤日志语句
+    }
+
+    /**
+     * 判断语句是否为纯日志语句
+     * 
+     * 只过滤"纯日志语句"，即整行代码只有日志调用，没有其他业务逻辑。
+     * 如果日志调用嵌在复杂表达式中（如 doSomething() && console.log("done")），
+     * 则不跳过该语句，以避免漏掉业务逻辑。
+     * 
+     * 支持的日志模式：
+     * - console.* (console.log, console.info, console.warn, console.error, console.debug)
+     * - hilog.* (HarmonyOS 系统日志)
+     * - Logger.* (项目自定义封装)
+     */
+    protected isLogStatement(stmt: Stmt): boolean {
+        const text = stmt.toString().trim();
+        
+        // 匹配纯日志语句：整行只有日志调用
+        // 模式：以日志对象开头，调用方法，括号内任意内容，结尾
+        const logPattern = /^(console|hilog|Logger)\.\w+\s*\([\s\S]*\)$/i;
+        
+        return logPattern.test(text);
+    }
+
+    /**
+     * 过滤语句列表，移除日志语句
+     * 
+     * 如果配置了 ignoreLogs: true（默认），则过滤掉纯日志语句
+     */
+    protected filterStatements(stmts: Stmt[]): Stmt[] {
+        if (!this.getIgnoreLogs()) {
+            return stmts;  // 不过滤
+        }
+        
+        return stmts.filter(stmt => !this.isLogStatement(stmt));
     }
 }

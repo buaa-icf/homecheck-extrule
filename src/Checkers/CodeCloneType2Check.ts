@@ -55,10 +55,13 @@ export class CodeCloneType2Check extends CodeCloneBaseCheck {
     /**
      * 计算规范化后的哈希值
      * Type-2 需要将标识符替换为占位符
+     * 如果配置了 ignoreLiterals: true，还会将字面量替换为占位符
      */
     protected computeHash(stmts: Stmt[]): string {
         // 用于追踪已见过的标识符
         const identifierMap = new Map<string, string>();
+        // 读取配置：是否忽略字面量差异
+        const ignoreLiterals = this.getIgnoreLiterals();
 
         const stmtStrings = stmts.map(stmt => {
             let text = stmt.toString();
@@ -66,11 +69,44 @@ export class CodeCloneType2Check extends CodeCloneBaseCheck {
             text = this.normalizeBasic(text);
             // 再做标识符规范化
             text = this.normalizeIdentifiers(text, identifierMap);
+            // 如果配置了 ignoreLiterals，进行字面量规范化
+            if (ignoreLiterals) {
+                text = this.normalizeLiterals(text);
+            }
             return text;
         });
         
         const combined = stmtStrings.join('|');
         return this.simpleHash(combined);
+    }
+
+    /**
+     * 字面量规范化
+     * 将数字、字符串替换为占位符
+     * 
+     * 注意：此功能可能导致误报，默认关闭
+     * 只有当配置 ignoreLiterals: true 时才会调用
+     * 
+     * 规范化规则：
+     * - 数字（整数、小数、十六进制、科学计数法）→ NUM
+     * - 字符串（双引号、单引号）→ STR
+     */
+    private normalizeLiterals(text: string): string {
+        // 数字：整数、小数、科学计数法 (如 123, 3.14, 1e10, 1.5e-3)
+        text = text.replace(/\b\d+\.?\d*([eE][+-]?\d+)?\b/g, 'NUM');
+        
+        // 十六进制数字 (如 0xFF, 0x1A2B)
+        text = text.replace(/\b0x[0-9a-fA-F]+\b/g, 'NUM');
+        
+        // 双引号字符串 (如 "hello world")
+        text = text.replace(/"[^"]*"/g, 'STR');
+        
+        // 单引号字符串 (如 'hello world')
+        text = text.replace(/'[^']*'/g, 'STR');
+        
+        // 模板字符串的静态部分已在 ArkAnalyzer 处理中转换，这里不额外处理
+        
+        return text;
     }
 
     /**

@@ -1,24 +1,35 @@
-// FileB.ets - 包含与 FileA 相同的 Type1 克隆代码
+// ============================================================
+// @file: FileA.ets
+// @category: positive/type1
+// @expect: clone-with FileB.ets
+// @clone-type: Type-1 (完全相同)
+// @description: 与 FileB.ets 包含完全相同的方法代码
+// @methods-cloned: calculateTotal, formatPrice, validateInput
+// ============================================================
 
 @Component
-struct PageB {
-  @State title: string = "页面B"
-  @State value: number = 100
+struct PageA {
+  @State title: string = "页面A"
+  @State count: number = 0
 
   build() {
     Column() {
       Text(this.title)
-        .fontSize(20)
+        .fontSize(24)
+        .fontWeight(FontWeight.Bold)
       
-      Button("减少")
+      Button("增加")
         .onClick(() => {
-          this.value--
+          this.count++
         })
+      
+      Text(`计数: ${this.count}`)
+        .fontSize(18)
     }
   }
 
   // ========== Type1 克隆代码块 开始 ==========
-  // 这段代码与 FileA.ets 中完全相同（Type1 克隆）
+  // 这段代码在 FileB.ets 中完全相同
   calculateTotal(items: number[]): number {
     let total = 0
     for (let i = 0; i < items.length; i++) {
@@ -48,7 +59,7 @@ struct PageB {
   // ========== Type1 克隆代码块 结束 ==========
 
   // 这个方法是独特的，不是克隆
-  uniqueMethodB(): void {
-    console.log("This is unique to FileB")
+  uniqueMethodA(): void {
+    console.log("This is unique to FileA")
   }
 }

@@ -1,4 +1,11 @@
-// FileE.ets - Type2 克隆测试：变量名不同但结构相同
+// ============================================================
+// @file: FileE.ets
+// @category: positive/type2_identifier
+// @expect: clone-with FileD.ets
+// @clone-type: Type-2 (标识符重命名)
+// @description: 与 FileD.ets 结构相同，但变量名/函数名不同
+// @methods-cloned: computeSum↔calculateTotal, formatOutput↔formatDisplay, validateInput↔checkValidity
+// ============================================================
 
 @Component
 struct CartPage {

@@ -1,4 +1,10 @@
-// FileC.ets - 不包含克隆代码，用于对照测试
+// ============================================================
+// @file: FileC.ets
+// @category: negative/control
+// @expect: no-clone
+// @clone-type: N/A
+// @description: 完全独立的代码，不应被检测为任何克隆
+// ============================================================
 
 @Component
 struct PageC {

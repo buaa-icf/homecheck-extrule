@@ -1,4 +1,11 @@
-// FileD.ets - Type2 克隆测试：原始版本
+// ============================================================
+// @file: FileD.ets
+// @category: positive/type2_identifier
+// @expect: clone-with FileE.ets
+// @clone-type: Type-2 (标识符重命名)
+// @description: 与 FileE.ets 结构相同，但变量名/函数名不同
+// @methods-cloned: calculateTotal↔computeSum, formatDisplay↔formatOutput, checkValidity↔validateInput
+// ============================================================
 
 @Component
 struct OrderPage {

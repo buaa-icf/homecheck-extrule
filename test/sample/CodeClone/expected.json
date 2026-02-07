@@ -1,0 +1,151 @@
+{
+  "$schema": "测试用例期望结果",
+  "$description": "定义每组测试文件的期望检测结果，用于自动化验证",
+  
+  "positive": {
+    "type1": {
+      "description": "Type-1 克隆: 完全相同的代码",
+      "files": ["FileA.ets", "FileB.ets"],
+      "expectedClones": [
+        {
+          "method": "calculateTotal",
+          "files": ["FileA.ets", "FileB.ets"],
+          "rule": "code-clone-type1-check"
+        },
+        {
+          "method": "formatPrice",
+          "files": ["FileA.ets", "FileB.ets"],
+          "rule": "code-clone-type1-check"
+        },
+        {
+          "method": "validateInput",
+          "files": ["FileA.ets", "FileB.ets"],
+          "rule": "code-clone-type1-check"
+        }
+      ]
+    },
+    "type2_identifier": {
+      "description": "Type-2 克隆: 标识符重命名",
+      "files": ["FileD.ets", "FileE.ets"],
+      "expectedClones": [
+        {
+          "method1": "calculateTotal",
+          "method2": "computeSum",
+          "files": ["FileD.ets", "FileE.ets"],
+          "rule": "code-clone-type2-check"
+        },
+        {
+          "method1": "formatDisplay",
+          "method2": "formatOutput",
+          "files": ["FileD.ets", "FileE.ets"],
+          "rule": "code-clone-type2-check"
+        },
+        {
+          "method1": "checkValidity",
+          "method2": "validateInput",
+          "files": ["FileD.ets", "FileE.ets"],
+          "rule": "code-clone-type2-check"
+        }
+      ]
+    },
+    "type2_literal": {
+      "description": "Type-2 克隆: 字面量替换 (需开启 ignoreLiterals)",
+      "files": ["Config1.ets", "Config2.ets"],
+      "requiresConfig": { "ignoreLiterals": true },
+      "expectedClones": [
+        {
+          "method": "getTimeout",
+          "files": ["Config1.ets", "Config2.ets"],
+          "rule": "code-clone-type2-check"
+        },
+        {
+          "method": "getMessage",
+          "files": ["Config1.ets", "Config2.ets"],
+          "rule": "code-clone-type2-check"
+        },
+        {
+          "method": "isEnabled",
+          "files": ["Config1.ets", "Config2.ets"],
+          "rule": "code-clone-type2-check"
+        }
+      ]
+    },
+    "type1_with_logs": {
+      "description": "Type-1 克隆: 业务逻辑相同，日志不同 (ignoreLogs 默认开启)",
+      "files": ["LogFileA.ets", "LogFileB.ets"],
+      "requiresConfig": { "ignoreLogs": true },
+      "note": "LogFileA 使用 console.*，LogFileB 使用 hilog.* 和 Logger.*",
+      "expectedClones": [
+        {
+          "method": "processData",
+          "files": ["LogFileA.ets", "LogFileB.ets"],
+          "rule": "code-clone-type1-check"
+        },
+        {
+          "method": "calculateSum",
+          "files": ["LogFileA.ets", "LogFileB.ets"],
+          "rule": "code-clone-type1-check"
+        }
+      ]
+    },
+    "type2_with_logs": {
+      "description": "Type-2 克隆: 标识符重命名 + 日志不同 (ignoreLogs 默认开启)",
+      "files": ["Type2LogA.ets", "Type2LogB.ets"],
+      "requiresConfig": { "ignoreLogs": true },
+      "note": "Type2LogA 使用 console.*，Type2LogB 使用 hilog.*，变量名也不同",
+      "expectedClones": [
+        {
+          "method1": "handleRequest",
+          "method2": "processInput",
+          "files": ["Type2LogA.ets", "Type2LogB.ets"],
+          "rule": "code-clone-type2-check"
+        }
+      ]
+    }
+  },
+  
+  "negative": {
+    "control": {
+      "description": "对照组: 完全不同的代码",
+      "files": ["FileC.ets"],
+      "expectedClones": []
+    },
+    "similar_but_different": {
+      "description": "误报风险演示: 结构相似但语义不同的代码",
+      "files": ["Calculator.ets", "Counter.ets"],
+      "purpose": "演示 ignoreLiterals 配置可能带来的误报风险",
+      "expectedBehavior": {
+        "ignoreLiterals_false": {
+          "description": "默认配置，不开启字面量规范化",
+          "expectedClones": [],
+          "result": "正确：不检测为克隆"
+        },
+        "ignoreLiterals_true": {
+          "description": "开启字面量规范化后",
+          "expectedClones": [
+            {
+              "method1": "add",
+              "method2": "increment",
+              "files": ["Calculator.ets", "Counter.ets"],
+              "rule": "code-clone-type2-check"
+            },
+            {
+              "method1": "multiply",
+              "method2": "reset",
+              "files": ["Calculator.ets", "Counter.ets"],
+              "rule": "code-clone-type2-check"
+            },
+            {
+              "method1": "divide",
+              "method2": "getCount",
+              "files": ["Calculator.ets", "Counter.ets"],
+              "rule": "code-clone-type2-check"
+            }
+          ],
+          "result": "误报：这些方法语义不同（数学计算 vs 计数器），但结构相同"
+        }
+      },
+      "conclusion": "这就是为什么 ignoreLiterals 默认关闭——开启后可能产生误报，用户需要根据实际情况决定是否启用"
+    }
+  }
+}
