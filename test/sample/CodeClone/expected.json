@@ -101,6 +101,63 @@
           "rule": "code-clone-type2-check"
         }
       ]
+    },
+    
+    "fragment_same_method": {
+      "description": "片段级克隆: 同一方法内部的重复代码",
+      "files": ["IntraMethodClone.ets"],
+      "rule": "code-clone-fragment-check",
+      "scope": "SAME_METHOD",
+      "expectedClones": [
+        {
+          "description": "processData 方法内的两段相同代码（数据处理逻辑）",
+          "file": "IntraMethodClone.ets",
+          "class": "DataProcessor",
+          "method": "processData",
+          "fragmentDescription": "sum/count/max/min 计算循环",
+          "expectedScope": "SAME_METHOD"
+        }
+      ],
+      "refactoringHint": "建议提取为独立方法，如 calculateStatistics()"
+    },
+    
+    "fragment_same_class": {
+      "description": "片段级克隆: 同一类的不同方法之间的重复代码",
+      "files": ["InterMethodClone.ets"],
+      "rule": "code-clone-fragment-check",
+      "scope": "SAME_CLASS",
+      "expectedClones": [
+        {
+          "description": "calculateOrderTotal 和 validateOrderData 之间的验证逻辑",
+          "file": "InterMethodClone.ets",
+          "class": "OrderManager",
+          "methods": ["calculateOrderTotal", "validateOrderData"],
+          "fragmentDescription": "数据验证循环",
+          "expectedScope": "SAME_CLASS"
+        }
+      ],
+      "refactoringHint": "建议提取为类的私有方法，如 private validateItems()"
+    },
+    
+    "fragment_different_class": {
+      "description": "片段级克隆: 不同类之间 / 类与独立函数之间的重复代码",
+      "files": ["ClassA.ets", "ClassB.ets", "TopLevelFunc.ets"],
+      "rule": "code-clone-fragment-check",
+      "scope": "DIFFERENT_CLASS",
+      "expectedClones": [
+        {
+          "description": "ClassA.validateUsers 与 ClassB.validateProducts 之间的验证逻辑",
+          "files": ["ClassA.ets", "ClassB.ets"],
+          "expectedScope": "DIFFERENT_CLASS"
+        },
+        {
+          "description": "ClassA.validateUsers 与 TopLevelFunc.validateData 之间的验证逻辑",
+          "files": ["ClassA.ets", "TopLevelFunc.ets"],
+          "expectedScope": "DIFFERENT_CLASS",
+          "note": "演示类方法与顶级函数之间的克隆"
+        }
+      ],
+      "refactoringHint": "建议提取为工具类或工具函数，如 ValidationUtils.validateStrings()"
     }
   },
   

@@ -616,3 +616,111 @@ describe('expected.json 验证（日志过滤）', () => {
         expect(expected.positive.type2_with_logs.expectedClones.length).toBeGreaterThan(0);
     });
 });
+
+// ==================== 片段级克隆检测测试 ====================
+
+describe('测试用例目录结构（片段级克隆）', () => {
+    test('positive/fragment_same_method 目录应包含测试文件', () => {
+        const dir = path.join(SAMPLE_DIR, 'positive/fragment_same_method');
+        expect(fs.existsSync(dir)).toBe(true);
+        expect(fs.existsSync(path.join(dir, 'IntraMethodClone.ets'))).toBe(true);
+    });
+
+    test('positive/fragment_same_class 目录应包含测试文件', () => {
+        const dir = path.join(SAMPLE_DIR, 'positive/fragment_same_class');
+        expect(fs.existsSync(dir)).toBe(true);
+        expect(fs.existsSync(path.join(dir, 'InterMethodClone.ets'))).toBe(true);
+    });
+
+    test('positive/fragment_different_class 目录应包含测试文件', () => {
+        const dir = path.join(SAMPLE_DIR, 'positive/fragment_different_class');
+        expect(fs.existsSync(dir)).toBe(true);
+        expect(fs.existsSync(path.join(dir, 'ClassA.ets'))).toBe(true);
+        expect(fs.existsSync(path.join(dir, 'ClassB.ets'))).toBe(true);
+        expect(fs.existsSync(path.join(dir, 'TopLevelFunc.ets'))).toBe(true);
+    });
+});
+
+describe('expected.json 验证（片段级克隆）', () => {
+    let expected: any;
+
+    beforeAll(() => {
+        const expectedPath = path.join(SAMPLE_DIR, 'expected.json');
+        const content = fs.readFileSync(expectedPath, 'utf-8');
+        expected = JSON.parse(content);
+    });
+
+    test('positive.fragment_same_method 应有期望的克隆', () => {
+        expect(expected.positive.fragment_same_method).toBeDefined();
+        expect(expected.positive.fragment_same_method.scope).toBe('SAME_METHOD');
+        expect(expected.positive.fragment_same_method.expectedClones.length).toBeGreaterThan(0);
+    });
+
+    test('positive.fragment_same_class 应有期望的克隆', () => {
+        expect(expected.positive.fragment_same_class).toBeDefined();
+        expect(expected.positive.fragment_same_class.scope).toBe('SAME_CLASS');
+        expect(expected.positive.fragment_same_class.expectedClones.length).toBeGreaterThan(0);
+    });
+
+    test('positive.fragment_different_class 应有期望的克隆', () => {
+        expect(expected.positive.fragment_different_class).toBeDefined();
+        expect(expected.positive.fragment_different_class.scope).toBe('DIFFERENT_CLASS');
+        expect(expected.positive.fragment_different_class.expectedClones.length).toBeGreaterThan(0);
+    });
+
+    test('片段级克隆测试应包含重构建议', () => {
+        expect(expected.positive.fragment_same_method.refactoringHint).toBeDefined();
+        expect(expected.positive.fragment_same_class.refactoringHint).toBeDefined();
+        expect(expected.positive.fragment_different_class.refactoringHint).toBeDefined();
+    });
+});
+
+describe('片段级克隆测试文件标注验证', () => {
+    test('所有片段级测试文件应包含正确的标注', () => {
+        const fragmentFiles = [
+            'positive/fragment_same_method/IntraMethodClone.ets',
+            'positive/fragment_same_class/InterMethodClone.ets',
+            'positive/fragment_different_class/ClassA.ets',
+            'positive/fragment_different_class/ClassB.ets',
+            'positive/fragment_different_class/TopLevelFunc.ets',
+        ];
+
+        for (const file of fragmentFiles) {
+            const filePath = path.join(SAMPLE_DIR, file);
+            const content = fs.readFileSync(filePath, 'utf-8');
+            // 应包含 @expect 标注
+            expect(content).toMatch(/@expect/);
+            // 应包含 @scope 标注
+            expect(content).toMatch(/@scope/);
+            // 应包含 @clone-type: Fragment
+            expect(content).toMatch(/@clone-type:\s*Fragment/);
+        }
+    });
+
+    test('SAME_METHOD 测试文件应标注为方法内部重复', () => {
+        const filePath = path.join(SAMPLE_DIR, 'positive/fragment_same_method/IntraMethodClone.ets');
+        const content = fs.readFileSync(filePath, 'utf-8');
+        expect(content).toMatch(/@scope:\s*SAME_METHOD/);
+        expect(content).toContain('方法内部');
+    });
+
+    test('SAME_CLASS 测试文件应标注为同一类不同方法', () => {
+        const filePath = path.join(SAMPLE_DIR, 'positive/fragment_same_class/InterMethodClone.ets');
+        const content = fs.readFileSync(filePath, 'utf-8');
+        expect(content).toMatch(/@scope:\s*SAME_CLASS/);
+        expect(content).toContain('同一个类的不同方法');
+    });
+
+    test('DIFFERENT_CLASS 测试文件应标注为不同类', () => {
+        const filePath = path.join(SAMPLE_DIR, 'positive/fragment_different_class/ClassA.ets');
+        const content = fs.readFileSync(filePath, 'utf-8');
+        expect(content).toMatch(/@scope:\s*DIFFERENT_CLASS/);
+    });
+
+    test('TopLevelFunc.ets 应演示类与独立函数之间的克隆', () => {
+        const filePath = path.join(SAMPLE_DIR, 'positive/fragment_different_class/TopLevelFunc.ets');
+        const content = fs.readFileSync(filePath, 'utf-8');
+        expect(content).toContain('独立函数');
+        expect(content).toContain('顶级函数');
+    });
+});

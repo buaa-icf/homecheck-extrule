@@ -2,6 +2,7 @@ import { ForeachArgsCheck } from "./ForEachArgsCheck";
 import { LongMethodCheck } from "./LongMethodCheck";
 import { CodeCloneType1Check } from "./CodeCloneType1Check";
 import { CodeCloneType2Check } from "./CodeCloneType2Check";
+import { CodeCloneFragmentCheck } from "./CodeCloneFragmentCheck";
 import { FeatureEnvyCheck } from "./FeatureEnvyCheck";
 import { SwitchStatementCheck } from "./SwitchStatementCheck";
 
@@ -16,3 +17,4 @@ file2CheckRuleMap.set("@extrulesproject/switch-statement-check", SwitchStatement
 export const project2CheckRuleMap: Map<string, any> = new Map();
 project2CheckRuleMap.set("@extrulesproject/code-clone-type1-check", CodeCloneType1Check);
 project2CheckRuleMap.set("@extrulesproject/code-clone-type2-check", CodeCloneType2Check);
+project2CheckRuleMap.set("@extrulesproject/code-clone-fragment-check", CodeCloneFragmentCheck);
