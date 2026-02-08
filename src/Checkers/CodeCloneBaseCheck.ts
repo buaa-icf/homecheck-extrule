@@ -14,16 +14,25 @@
  */
 
 import { ArkFile, ArkMethod, Stmt } from "arkanalyzer";
-import { 
-    BaseMetaData, 
-    Rule, 
-    Defects, 
-    MatcherCallback, 
+import {
+    BaseMetaData,
+    Rule,
+    MatcherCallback,
     IssueReport,
     FileMatcher,
     MatcherTypes,
     AdviceChecker
 } from "homecheck";
+import {
+    createDefects,
+    djb2Hash,
+    getMethodEndLine,
+    getRuleOption,
+    isLogStatement as isLogStatementUtil,
+    normalizeBasic as normalizeBasicText,
+    shouldSkipClass,
+    shouldSkipMethod
+} from "./utils";
 
 /**
  * 方法信息，用于克隆检测
@@ -106,7 +115,6 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 检测前初始化
      */
     public beforeCheck(): void {
-        console.log(`[CodeClone] beforeCheck called for ${this.getCloneType()}`);
         this.methodsByHash.clear();
         this.reportedPairs.clear();
         this.issues = [];
@@ -130,28 +138,26 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      */
     public collectMethods = (arkFile: ArkFile) => {
         const filePath = arkFile.getFilePath();
-        console.log(`[CodeClone] Scanning file: ${filePath}`);
-        
+
         for (const arkClass of arkFile.getClasses()) {
             const className = arkClass.getName();
-            
+
             // 跳过默认类
-            if (className.startsWith('%')) {
+            if (shouldSkipClass(className)) {
                 continue;
             }
 
             for (const method of arkClass.getMethods()) {
                 const methodName = method.getName();
-                
+
                 // 跳过默认方法、静态初始化、构造函数
-                if (methodName.startsWith('%') || methodName === 'constructor') {
+                if (shouldSkipMethod(methodName)) {
                     continue;
                 }
 
                 const methodInfo = this.extractMethodInfo(method, filePath, className);
-                
+
                 if (methodInfo) {
-                    console.log(`[CodeClone] Found method: ${className}.${methodName}, stmts=${methodInfo.stmtCount}, minRequired=${this.getMinStmts()}`);
                     if (methodInfo.stmtCount >= this.getMinStmts()) {
                         this.addMethodToHash(methodInfo);
                     }
@@ -164,14 +170,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 检测完成后调用，查找克隆对
      */
     public afterCheck(): void {
-        console.log(`[CodeClone] afterCheck called. Total unique hashes: ${this.methodsByHash.size}`);
-        for (const [hash, methods] of this.methodsByHash) {
-            if (methods.length >= 2) {
-                console.log(`[CodeClone] Hash ${hash}: ${methods.length} methods (potential clone)`);
-            }
-        }
         this.findClonePairs();
-        console.log(`[CodeClone] Total issues found: ${this.issues.length}`);
     }
 
     /**
@@ -183,17 +182,23 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
             return null;
         }
 
-        const stmts = body.getCfg().getStmts();
-        if (stmts.length === 0) {
+        const allStmts = body.getCfg().getStmts();
+        if (allStmts.length === 0) {
             return null;
+        }
+
+        // 过滤日志语句（如果配置了 ignoreLogs: true）
+        const stmts = this.filterStatements(allStmts);
+        if (stmts.length === 0) {
+            return null;  // 过滤后没有语句了
         }
 
         // 计算哈希值（由子类实现具体算法）
         const hash = this.computeHash(stmts);
         
-        // 获取起止行号
+        // 获取起止行号（使用原始语句列表，保留完整范围）
         const startLine = method.getLine() ?? 0;
-        const endLine = this.getMethodEndLine(stmts, startLine);
+        const endLine = getMethodEndLine(method);
 
         return {
             method,
@@ -203,7 +208,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
             startLine,
             endLine,
             hash,
-            stmtCount: stmts.length
+            stmtCount: stmts.length  // 使用过滤后的语句数
         };
     }
 
@@ -211,49 +216,21 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 基础规范化：去除位置相关信息
      */
     protected normalizeBasic(text: string): string {
-        // 去除多余空白
-        text = text.replace(/\s+/g, ' ').trim();
-        
-        // 去除文件路径信息
-        text = text.replace(/@[^:\s]+\.[a-z]+:/gi, '@FILE:');
-        
-        // 规范化 this 引用中的类名
-        text = text.replace(/this: @FILE: \w+/g, 'this: @FILE: CLASS');
-        
-        // 规范化匿名类引用
-        text = text.replace(/%AC\d+/g, '%AC');
-        
-        return text;
+        return normalizeBasicText(text);
     }
 
     /**
      * DJB2 哈希函数
      */
     protected simpleHash(str: string): string {
-        let hash = 0;
-        for (let i = 0; i < str.length; i++) {
-            const char = str.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash; // Convert to 32bit integer
-        }
-        return hash.toString(16);
+        return djb2Hash(str);
     }
 
     /**
      * 获取方法结束行号
      */
-    protected getMethodEndLine(stmts: Stmt[], startLine: number): number {
-        let maxLine = startLine;
-        for (const stmt of stmts) {
-            const pos = stmt.getOriginPositionInfo();
-            if (pos) {
-                const line = pos.getLineNo();
-                if (line > maxLine) {
-                    maxLine = line;
-                }
-            }
-        }
-        return maxLine;
+    protected getMethodEndLine(method: ArkMethod): number {
+        return getMethodEndLine(method);
     }
 
     /**
@@ -272,7 +249,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 查找克隆对并上报
      */
     protected findClonePairs(): void {
-        for (const [hash, methods] of this.methodsByHash) {
+        for (const methods of this.methodsByHash.values()) {
             // 如果有多个方法具有相同的哈希值，它们是克隆
             if (methods.length >= 2) {
                 // 两两配对
@@ -321,35 +298,83 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
         const severity = this.rule?.alert ?? this.metaData.severity;
         const description = this.getDescription(method, cloneWith);
 
-        const defects = new Defects(
-            method.startLine,
-            0,  // startCol
-            method.methodName.length,  // endCol
+        this.issues.push(createDefects({
+            line: method.startLine,
+            startCol: 0,
+            endCol: method.methodName.length,
             description,
             severity,
-            this.rule.ruleId,
-            method.filePath,
-            this.metaData.ruleDocPath,
-            true,   // disabled
-            false,  // checked
-            false,  // fixable
-            method.methodName,  // methodName
-            true    // showIgnoreIcon
-        );
-
-        this.issues.push(new IssueReport(defects, undefined));
+            ruleId: this.rule.ruleId,
+            filePath: method.filePath,
+            ruleDocPath: this.metaData.ruleDocPath,
+            methodName: method.methodName
+        }));
     }
 
     /**
      * 从配置中获取最小语句数阈值
      */
     protected getMinStmts(): number {
-        if (this.rule && this.rule.option && this.rule.option.length > 0) {
-            const firstOption = this.rule.option[0] as any;
-            if (typeof firstOption.minStmts === 'number') {
-                return firstOption.minStmts;
-            }
+        const option = getRuleOption(this.rule, { minStmts: this.DEFAULT_MIN_STMTS });
+        return option.minStmts;
+    }
+
+    /**
+     * 从配置中获取是否忽略字面量差异
+     * 
+     * 注意：此选项默认关闭，因为开启后可能产生误报
+     * 详见 test/sample/CodeClone/README.md 中的说明
+     * 
+     * 使用方式：在 ruleConfig.json 中配置
+     * "@extrulesproject/code-clone-type2-check": ["error", { "ignoreLiterals": true }]
+     */
+    protected getIgnoreLiterals(): boolean {
+        const option = getRuleOption(this.rule, { ignoreLiterals: false });
+        return option.ignoreLiterals;
+    }
+
+    /**
+     * 从配置中获取是否忽略日志语句
+     * 
+     * 日志语句（console.log、hilog、Logger 等）通常只是调试信息，
+     * 不影响业务逻辑，因此默认跳过以减少噪声。
+     * 
+     * 使用方式：在 ruleConfig.json 中配置
+     * "@extrulesproject/code-clone-type1-check": ["error", { "ignoreLogs": false }]
+     * 
+     * 默认值：true（开启日志过滤）
+     */
+    protected getIgnoreLogs(): boolean {
+        const option = getRuleOption(this.rule, { ignoreLogs: true });
+        return option.ignoreLogs;
+    }
+
+    /**
+     * 判断语句是否为纯日志语句
+     * 
+     * 只过滤"纯日志语句"，即整行代码只有日志调用，没有其他业务逻辑。
+     * 如果日志调用嵌在复杂表达式中（如 doSomething() && console.log("done")），
+     * 则不跳过该语句，以避免漏掉业务逻辑。
+     * 
+     * 支持的日志模式：
+     * - console.* (console.log, console.info, console.warn, console.error, console.debug)
+     * - hilog.* (HarmonyOS 系统日志)
+     * - Logger.* (项目自定义封装)
+     */
+    protected isLogStatement(stmt: Stmt): boolean {
+        return isLogStatementUtil(stmt);
+    }
+
+    /**
+     * 过滤语句列表，移除日志语句
+     * 
+     * 如果配置了 ignoreLogs: true（默认），则过滤掉纯日志语句
+     */
+    protected filterStatements(stmts: Stmt[]): Stmt[] {
+        if (!this.getIgnoreLogs()) {
+            return stmts;  // 不过滤
         }
-        return this.DEFAULT_MIN_STMTS;
+        
+        return stmts.filter(stmt => !this.isLogStatement(stmt));
     }
 }

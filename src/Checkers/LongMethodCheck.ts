@@ -14,7 +14,8 @@
  */
 
 import { ArkMethod } from "arkanalyzer";
-import { BaseMetaData, BaseChecker, Rule, Defects, MethodMatcher, MatcherTypes, MatcherCallback, IssueReport } from "homecheck";
+import { BaseMetaData, BaseChecker, Rule, MethodMatcher, MatcherTypes, MatcherCallback, IssueReport } from "homecheck";
+import { createDefects, getRuleOption } from "./utils";
 
 const gMetaData: BaseMetaData = {
     severity: 2,
@@ -55,19 +56,14 @@ export class LongMethodCheck implements BaseChecker {
     }
 
     public check = (targetMtd: ArkMethod) => {
-        console.log('[LongMethodCheck] check called for method:', targetMtd.getName());
-        
         // 获取配置的最大语句数阈值
         const maxStmts = this.getMaxStmtsFromConfig();
-        console.log('[LongMethodCheck] maxStmts:', maxStmts);
 
         // 计算方法的语句数量
         const stmtCount = this.countMethodStmts(targetMtd);
-        console.log('[LongMethodCheck] stmtCount:', stmtCount);
 
         // 如果超过阈值，则上报问题
         if (stmtCount > maxStmts) {
-            console.log('[LongMethodCheck] Reporting issue for method:', targetMtd.getName());
             this.addIssueReport(targetMtd, stmtCount, maxStmts);
         }
     }
@@ -76,16 +72,18 @@ export class LongMethodCheck implements BaseChecker {
      * 从配置中获取最大语句数阈值
      */
     private getMaxStmtsFromConfig(): number {
-        if (this.rule && this.rule.option && this.rule.option.length > 0) {
-            const firstOption = this.rule.option[0] as any;
-            if (typeof firstOption.maxStmts === 'number') {
-                return firstOption.maxStmts;
-            }
-            if (typeof firstOption.maxLines === 'number') {
-                // 支持 maxLines 作为别名
-                return firstOption.maxLines;
-            }
+        const option = getRuleOption(this.rule, {
+            maxStmts: Number.NaN,
+            maxLines: Number.NaN
+        });
+
+        if (Number.isFinite(option.maxStmts)) {
+            return option.maxStmts;
         }
+        if (Number.isFinite(option.maxLines)) {
+            return option.maxLines;
+        }
+
         return this.DEFAULT_MAX_STMTS;
     }
 
@@ -122,22 +120,16 @@ export class LongMethodCheck implements BaseChecker {
         const methodName = method.getName() ?? '';
         const description = `Method '${methodName}' is too long. Consider refactoring. (Current: ${actualStmts} statements, Max: ${maxStmts})`;
 
-        const defects = new Defects(
+        this.issues.push(createDefects({
             line,
             startCol,
             endCol,
             description,
             severity,
-            this.rule.ruleId,
+            ruleId: this.rule.ruleId,
             filePath,
-            this.metaData.ruleDocPath,
-            true,   // disabled
-            false,  // checked
-            false,  // fixable
-            methodName,  // methodName
-            true    // showIgnoreIcon
-        );
-
-        this.issues.push(new IssueReport(defects, undefined));
+            ruleDocPath: this.metaData.ruleDocPath,
+            methodName
+        }));
     }
 }

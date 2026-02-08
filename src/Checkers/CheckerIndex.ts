@@ -2,17 +2,22 @@ import { ForeachArgsCheck } from "./ForEachArgsCheck";
 import { LongMethodCheck } from "./LongMethodCheck";
 import { CodeCloneType1Check } from "./CodeCloneType1Check";
 import { CodeCloneType2Check } from "./CodeCloneType2Check";
+import { CodeCloneFragmentCheck } from "./CodeCloneFragmentCheck";
 import { FeatureEnvyCheck } from "./FeatureEnvyCheck";
 import { SwitchStatementCheck } from "./SwitchStatementCheck";
+import { AdviceChecker, BaseChecker } from "homecheck";
+
+type CheckerClass = new () => BaseChecker | AdviceChecker;
 
 // 新增文件级的checker，需要在此处注册
-export const file2CheckRuleMap: Map<string, any> = new Map();
+export const file2CheckRuleMap: Map<string, CheckerClass> = new Map();
 file2CheckRuleMap.set("@extrulesproject/foreach-args-check", ForeachArgsCheck);
 file2CheckRuleMap.set("@extrulesproject/long-method-check", LongMethodCheck);
 file2CheckRuleMap.set("@extrulesproject/feature-envy-check", FeatureEnvyCheck);
 file2CheckRuleMap.set("@extrulesproject/switch-statement-check", SwitchStatementCheck);
 
 // 新增项目级checker，需要在此处注册（克隆检测需要跨文件比较）
-export const project2CheckRuleMap: Map<string, any> = new Map();
+export const project2CheckRuleMap: Map<string, CheckerClass> = new Map();
 project2CheckRuleMap.set("@extrulesproject/code-clone-type1-check", CodeCloneType1Check);
 project2CheckRuleMap.set("@extrulesproject/code-clone-type2-check", CodeCloneType2Check);
+project2CheckRuleMap.set("@extrulesproject/code-clone-fragment-check", CodeCloneFragmentCheck);

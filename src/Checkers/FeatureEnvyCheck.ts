@@ -1,5 +1,6 @@
 import { ArkMethod } from "arkanalyzer";
-import { BaseChecker, BaseMetaData, CheckerUtils, Defects, IssueReport, MatcherCallback, MatcherTypes, MethodMatcher, Rule } from "homecheck";
+import { BaseChecker, BaseMetaData, CheckerUtils, IssueReport, MatcherCallback, MatcherTypes, MethodMatcher, Rule } from "homecheck";
+import { createDefects, getRuleOption } from "./utils";
 
 // Heuristic detection for "Feature Envy" code smell: a method that tends to
 // interact much more with another class than with its own.
@@ -111,22 +112,11 @@ export class FeatureEnvyCheck implements BaseChecker {
      * Resolve thresholds, falling back to defaults if rule options are missing.
      */
     private getThresholds() {
-        const defaults = {
+        return getRuleOption(this.rule, {
             minTotalCalls: this.MIN_TOTAL_CALLS,
             minForeignCalls: this.MIN_FOREIGN_CALLS,
             ratioThreshold: this.RATIO_THRESHOLD
-        };
-
-        if (!this.rule || !Array.isArray(this.rule.option) || this.rule.option.length === 0) {
-            return defaults;
-        }
-
-        const opt = this.rule.option[0] as any;
-        return {
-            minTotalCalls: typeof opt.minTotalCalls === "number" ? opt.minTotalCalls : defaults.minTotalCalls,
-            minForeignCalls: typeof opt.minForeignCalls === "number" ? opt.minForeignCalls : defaults.minForeignCalls,
-            ratioThreshold: typeof opt.ratioThreshold === "number" ? opt.ratioThreshold : defaults.ratioThreshold
-        };
+        });
     }
 
     /**
@@ -175,22 +165,16 @@ export class FeatureEnvyCheck implements BaseChecker {
         const methodName = method.getName() ?? "<unknown>";
         const description = `Method '${methodName}' is highly coupled to '${foreignClass}' (${foreignCalls}/${totalCalls} calls, ${(ratio * 100).toFixed(0)}%). Consider moving logic or introducing delegation.`;
 
-        const defects = new Defects(
+        this.issues.push(createDefects({
             line,
             startCol,
             endCol,
             description,
             severity,
-            this.rule.ruleId,
+            ruleId: this.rule.ruleId,
             filePath,
-            this.metaData.ruleDocPath,
-            true,
-            false,
-            false,
-            methodName,
-            true
-        );
-
-        this.issues.push(new IssueReport(defects, undefined));
+            ruleDocPath: this.metaData.ruleDocPath,
+            methodName
+        }));
     }
 }

@@ -1,5 +1,6 @@
 import { ArkMethod, Stmt } from "arkanalyzer";
-import { BaseChecker, BaseMetaData, Defects, IssueReport, MatcherCallback, MatcherTypes, MethodMatcher, Rule } from "homecheck";
+import { BaseChecker, BaseMetaData, IssueReport, MatcherCallback, MatcherTypes, MethodMatcher, Rule } from "homecheck";
+import { createDefects, getRuleOption } from "./utils";
 
 // Detect "Switch Statement" smell: large switch blocks that may signal missing polymorphism.
 const gMetaData: BaseMetaData = {
@@ -40,7 +41,6 @@ export class SwitchStatementCheck implements BaseChecker {
         }
 
         const stmts = body.getCfg().getStmts();
-        let hit = false;
         const reported = new Set<string>();
         for (let i = 0; i < stmts.length; i++) {
             const stmt = stmts[i];
@@ -50,17 +50,25 @@ export class SwitchStatementCheck implements BaseChecker {
             }
 
             const switchBlockText = this.collectSwitchBlockText(stmts, i);
-            const caseCount = this.countCases(switchBlockText);
-            if (caseCount >= this.getCaseThreshold()) {
-                const caseLineCounts = this.calculateCaseLineCounts(switchBlockText);
-                this.addIssueReport(targetMtd, stmt, caseCount, caseLineCounts);
-                reported.add(this.buildSwitchKey(stmt.getOriginPositionInfo().getLineNo(), caseCount));
-                hit = true;
+                const caseCount = this.countCases(switchBlockText);
+                if (caseCount >= this.getCaseThreshold()) {
+                    const caseLineCounts = this.calculateCaseLineCounts(switchBlockText);
+                    const originPosition = stmt.getOriginPositionInfo();
+                    this.addIssueReport(
+                        targetMtd,
+                        caseCount,
+                        caseLineCounts,
+                        originPosition.getLineNo(),
+                        originPosition.getColNo(),
+                        originPosition.getColNo() + (stmt.getOriginalText()?.length ?? 0),
+                        stmt.getCfg()?.getDeclaringMethod().getDeclaringArkFile()?.getFilePath() ?? ""
+                    );
+                    reported.add(this.buildSwitchKey(stmt.getOriginPositionInfo().getLineNo(), caseCount));
+                }
             }
-        }
 
         // Always run a source scan to catch switches missed/flattened in CFG; dedupe by key.
-        this.detectFromSource(targetMtd, reported, hit);
+        this.detectFromSource(targetMtd, reported);
     }
 
     /**
@@ -122,7 +130,7 @@ export class SwitchStatementCheck implements BaseChecker {
      * Fallback scan over raw source to catch switches that CFG misses.
      * De-duplicates with the `reported` key set.
      */
-    private detectFromSource(method: ArkMethod, reported: Set<string>, hadCfgHit: boolean) {
+    private detectFromSource(method: ArkMethod, reported: Set<string>) {
         const code = method.getCode();
         if (!code) {
             return;
@@ -148,7 +156,15 @@ export class SwitchStatementCheck implements BaseChecker {
                 const col = (lines[startLine].indexOf("switch") >= 0) ? lines[startLine].indexOf("switch") : 0;
                 const key = this.buildSwitchKey(startLine + 1, caseCount);
                 if (!reported.has(key)) {
-                    this.addIssueReportAtPosition(method, startLine + 1, col, caseCount, caseLineCounts);
+                    this.addIssueReport(
+                        method,
+                        caseCount,
+                        caseLineCounts,
+                        startLine + 1,
+                        col,
+                        col + 1,
+                        method.getDeclaringArkFile()?.getFilePath() ?? ""
+                    );
                     reported.add(key);
                 }
             }
@@ -249,78 +265,39 @@ export class SwitchStatementCheck implements BaseChecker {
      * Resolve the case-count threshold from rule options or defaults.
      */
     private getCaseThreshold(): number {
-        if (this.rule && this.rule.option && this.rule.option.length > 0) {
-            const firstOption = this.rule.option[0] as any;
-            if (typeof firstOption.minCases === "number") {
-                return firstOption.minCases;
-            }
-        }
-        return this.MIN_CASES;
+        const option = getRuleOption(this.rule, { minCases: this.MIN_CASES });
+        return option.minCases;
     }
 
     /**
      * Report a switch statement detected from CFG statement context.
      */
-    private addIssueReport(method: ArkMethod, stmt: Stmt, caseCount: number, caseLineCounts: Array<{ label: string; lines: number }>) {
+    private addIssueReport(
+        method: ArkMethod,
+        caseCount: number,
+        caseLineCounts: Array<{ label: string; lines: number }>,
+        line: number,
+        startCol: number,
+        endCol: number,
+        filePath: string
+    ) {
         const severity = this.rule?.alert ?? this.metaData.severity;
-        const originPosition = stmt.getOriginPositionInfo();
-        const line = originPosition.getLineNo();
-        const startCol = originPosition.getColNo();
-        const endCol = startCol + (stmt.getOriginalText()?.length ?? 0);
-        const filePath = stmt.getCfg()?.getDeclaringMethod().getDeclaringArkFile()?.getFilePath() ?? "";
         const caseLineSummary = caseLineCounts.length > 0
             ? caseLineCounts.map(({ label, lines }) => `${label} (${lines} line${lines === 1 ? "" : "s"})`).join("; ")
             : "unavailable";
 
         const description = `Switch statement with ${caseCount} cases detected in method '${method.getName()}'. Consider using polymorphism or strategy. Case line counts: ${caseLineSummary}.`;
 
-        const defects = new Defects(
+        this.issues.push(createDefects({
             line,
             startCol,
             endCol,
             description,
             severity,
-            this.rule.ruleId,
+            ruleId: this.rule.ruleId,
             filePath,
-            this.metaData.ruleDocPath,
-            true,
-            false,
-            false,
-            method.getName(),
-            true
-        );
-
-        this.issues.push(new IssueReport(defects, undefined));
-    }
-
-    /**
-     * Report a switch statement detected via source scan (best-effort coordinates).
-     */
-    private addIssueReportAtPosition(method: ArkMethod, line: number, startCol: number, caseCount: number, caseLineCounts: Array<{ label: string; lines: number }>) {
-        const severity = this.rule?.alert ?? this.metaData.severity;
-        const filePath = method.getDeclaringArkFile()?.getFilePath() ?? "";
-        const caseLineSummary = caseLineCounts.length > 0
-            ? caseLineCounts.map(({ label, lines }) => `${label} (${lines} line${lines === 1 ? "" : "s"})`).join("; ")
-            : "unavailable";
-
-        const description = `Switch statement with ${caseCount} cases detected in method '${method.getName()}'. Consider using polymorphism or strategy. Case line counts: ${caseLineSummary}.`;
-
-        const defects = new Defects(
-            line,
-            startCol,
-            startCol + 1,
-            description,
-            severity,
-            this.rule.ruleId,
-            filePath,
-            this.metaData.ruleDocPath,
-            true,
-            false,
-            false,
-            method.getName(),
-            true
-        );
-
-        this.issues.push(new IssueReport(defects, undefined));
+            ruleDocPath: this.metaData.ruleDocPath,
+            methodName: method.getName()
+        }));
     }
 }
