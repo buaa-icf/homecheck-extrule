@@ -14,16 +14,25 @@
  */
 
 import { ArkFile, ArkMethod, Stmt } from "arkanalyzer";
-import { 
-    BaseMetaData, 
-    Rule, 
-    Defects, 
-    MatcherCallback, 
+import {
+    BaseMetaData,
+    Rule,
+    MatcherCallback,
     IssueReport,
     FileMatcher,
     MatcherTypes,
     AdviceChecker
 } from "homecheck";
+import {
+    createDefects,
+    djb2Hash,
+    getMethodEndLine,
+    getRuleOption,
+    isLogStatement as isLogStatementUtil,
+    normalizeBasic as normalizeBasicText,
+    shouldSkipClass,
+    shouldSkipMethod
+} from "./utils";
 
 /**
  * 方法信息，用于克隆检测
@@ -106,7 +115,6 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 检测前初始化
      */
     public beforeCheck(): void {
-        console.log(`[CodeClone] beforeCheck called for ${this.getCloneType()}`);
         this.methodsByHash.clear();
         this.reportedPairs.clear();
         this.issues = [];
@@ -130,28 +138,26 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      */
     public collectMethods = (arkFile: ArkFile) => {
         const filePath = arkFile.getFilePath();
-        console.log(`[CodeClone] Scanning file: ${filePath}`);
-        
+
         for (const arkClass of arkFile.getClasses()) {
             const className = arkClass.getName();
-            
+
             // 跳过默认类
-            if (className.startsWith('%')) {
+            if (shouldSkipClass(className)) {
                 continue;
             }
 
             for (const method of arkClass.getMethods()) {
                 const methodName = method.getName();
-                
+
                 // 跳过默认方法、静态初始化、构造函数
-                if (methodName.startsWith('%') || methodName === 'constructor') {
+                if (shouldSkipMethod(methodName)) {
                     continue;
                 }
 
                 const methodInfo = this.extractMethodInfo(method, filePath, className);
-                
+
                 if (methodInfo) {
-                    console.log(`[CodeClone] Found method: ${className}.${methodName}, stmts=${methodInfo.stmtCount}, minRequired=${this.getMinStmts()}`);
                     if (methodInfo.stmtCount >= this.getMinStmts()) {
                         this.addMethodToHash(methodInfo);
                     }
@@ -164,14 +170,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 检测完成后调用，查找克隆对
      */
     public afterCheck(): void {
-        console.log(`[CodeClone] afterCheck called. Total unique hashes: ${this.methodsByHash.size}`);
-        for (const [hash, methods] of this.methodsByHash) {
-            if (methods.length >= 2) {
-                console.log(`[CodeClone] Hash ${hash}: ${methods.length} methods (potential clone)`);
-            }
-        }
         this.findClonePairs();
-        console.log(`[CodeClone] Total issues found: ${this.issues.length}`);
     }
 
     /**
@@ -199,7 +198,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
         
         // 获取起止行号（使用原始语句列表，保留完整范围）
         const startLine = method.getLine() ?? 0;
-        const endLine = this.getMethodEndLine(allStmts, startLine);
+        const endLine = getMethodEndLine(method);
 
         return {
             method,
@@ -217,49 +216,21 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 基础规范化：去除位置相关信息
      */
     protected normalizeBasic(text: string): string {
-        // 去除多余空白
-        text = text.replace(/\s+/g, ' ').trim();
-        
-        // 去除文件路径信息
-        text = text.replace(/@[^:\s]+\.[a-z]+:/gi, '@FILE:');
-        
-        // 规范化 this 引用中的类名
-        text = text.replace(/this: @FILE: \w+/g, 'this: @FILE: CLASS');
-        
-        // 规范化匿名类引用
-        text = text.replace(/%AC\d+/g, '%AC');
-        
-        return text;
+        return normalizeBasicText(text);
     }
 
     /**
      * DJB2 哈希函数
      */
     protected simpleHash(str: string): string {
-        let hash = 0;
-        for (let i = 0; i < str.length; i++) {
-            const char = str.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash; // Convert to 32bit integer
-        }
-        return hash.toString(16);
+        return djb2Hash(str);
     }
 
     /**
      * 获取方法结束行号
      */
-    protected getMethodEndLine(stmts: Stmt[], startLine: number): number {
-        let maxLine = startLine;
-        for (const stmt of stmts) {
-            const pos = stmt.getOriginPositionInfo();
-            if (pos) {
-                const line = pos.getLineNo();
-                if (line > maxLine) {
-                    maxLine = line;
-                }
-            }
-        }
-        return maxLine;
+    protected getMethodEndLine(method: ArkMethod): number {
+        return getMethodEndLine(method);
     }
 
     /**
@@ -278,7 +249,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 查找克隆对并上报
      */
     protected findClonePairs(): void {
-        for (const [hash, methods] of this.methodsByHash) {
+        for (const methods of this.methodsByHash.values()) {
             // 如果有多个方法具有相同的哈希值，它们是克隆
             if (methods.length >= 2) {
                 // 两两配对
@@ -327,36 +298,25 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
         const severity = this.rule?.alert ?? this.metaData.severity;
         const description = this.getDescription(method, cloneWith);
 
-        const defects = new Defects(
-            method.startLine,
-            0,  // startCol
-            method.methodName.length,  // endCol
+        this.issues.push(createDefects({
+            line: method.startLine,
+            startCol: 0,
+            endCol: method.methodName.length,
             description,
             severity,
-            this.rule.ruleId,
-            method.filePath,
-            this.metaData.ruleDocPath,
-            true,   // disabled
-            false,  // checked
-            false,  // fixable
-            method.methodName,  // methodName
-            true    // showIgnoreIcon
-        );
-
-        this.issues.push(new IssueReport(defects, undefined));
+            ruleId: this.rule.ruleId,
+            filePath: method.filePath,
+            ruleDocPath: this.metaData.ruleDocPath,
+            methodName: method.methodName
+        }));
     }
 
     /**
      * 从配置中获取最小语句数阈值
      */
     protected getMinStmts(): number {
-        if (this.rule && this.rule.option && this.rule.option.length > 0) {
-            const firstOption = this.rule.option[0] as any;
-            if (typeof firstOption.minStmts === 'number') {
-                return firstOption.minStmts;
-            }
-        }
-        return this.DEFAULT_MIN_STMTS;
+        const option = getRuleOption(this.rule, { minStmts: this.DEFAULT_MIN_STMTS });
+        return option.minStmts;
     }
 
     /**
@@ -369,13 +329,8 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * "@extrulesproject/code-clone-type2-check": ["error", { "ignoreLiterals": true }]
      */
     protected getIgnoreLiterals(): boolean {
-        if (this.rule && this.rule.option && this.rule.option.length > 0) {
-            const firstOption = this.rule.option[0] as any;
-            if (typeof firstOption.ignoreLiterals === 'boolean') {
-                return firstOption.ignoreLiterals;
-            }
-        }
-        return false;  // 默认关闭，避免误报
+        const option = getRuleOption(this.rule, { ignoreLiterals: false });
+        return option.ignoreLiterals;
     }
 
     /**
@@ -390,13 +345,8 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 默认值：true（开启日志过滤）
      */
     protected getIgnoreLogs(): boolean {
-        if (this.rule && this.rule.option && this.rule.option.length > 0) {
-            const firstOption = this.rule.option[0] as any;
-            if (typeof firstOption.ignoreLogs === 'boolean') {
-                return firstOption.ignoreLogs;
-            }
-        }
-        return true;  // 默认开启，过滤日志语句
+        const option = getRuleOption(this.rule, { ignoreLogs: true });
+        return option.ignoreLogs;
     }
 
     /**
@@ -412,13 +362,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * - Logger.* (项目自定义封装)
      */
     protected isLogStatement(stmt: Stmt): boolean {
-        const text = stmt.toString().trim();
-        
-        // 匹配纯日志语句：整行只有日志调用
-        // 模式：以日志对象开头，调用方法，括号内任意内容，结尾
-        const logPattern = /^(console|hilog|Logger)\.\w+\s*\([\s\S]*\)$/i;
-        
-        return logPattern.test(text);
+        return isLogStatementUtil(stmt);
     }
 
     /**

@@ -9,82 +9,22 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { normalizeBasic, normalizeIdentifiers, normalizeLiterals, djb2Hash as simpleHash } from '../src/Checkers/utils';
 
 // 测试用例目录
 const SAMPLE_DIR = path.join(__dirname, 'sample/CodeClone');
 
-/**
- * 模拟基础规范化函数（复制自 CodeCloneBaseCheck）
- */
-function normalizeBasic(text: string): string {
-    // 去除多余空白
-    text = text.replace(/\s+/g, ' ').trim();
-    // 去除文件路径信息
-    text = text.replace(/@[^:\s]+\.[a-z]+:/gi, '@FILE:');
-    // 规范化 this 引用中的类名
-    text = text.replace(/this: @FILE: \w+/g, 'this: @FILE: CLASS');
-    // 规范化匿名类引用
-    text = text.replace(/%AC\d+/g, '%AC');
-    return text;
+function isLogStatement(text: string): boolean {
+    const trimmed = text.trim();
+    const logPattern = /^(console|hilog|Logger)\.\w+\s*\([\s\S]*\)$/i;
+    return logPattern.test(trimmed);
 }
 
-/**
- * 模拟标识符规范化函数（复制自 CodeCloneType2Check）
- */
-function normalizeIdentifiers(text: string, identifierMap: Map<string, string>): string {
-    const keywords = new Set([
-        'let', 'const', 'var', 'function', 'return', 'if', 'else', 'for', 'while',
-        'true', 'false', 'null', 'undefined', 'this', 'new', 'class', 'extends',
-        'number', 'string', 'boolean', 'void', 'any', 'object',
-        'length', 'push', 'pop', 'map', 'filter', 'forEach', 'indexOf',
-        'console', 'log', 'toFixed', 'trim', 'toString',
-        'parameter0', 'parameter1', 'parameter2'
-    ]);
-
-    const identifierPattern = /\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g;
-    
-    return text.replace(identifierPattern, (match) => {
-        if (keywords.has(match.toLowerCase()) || match.length <= 1) {
-            return match;
-        }
-        if (match === match.toUpperCase() && match.length > 1) {
-            return match;
-        }
-        if (identifierMap.has(match)) {
-            return identifierMap.get(match)!;
-        }
-        const normalized = `ID_${identifierMap.size + 1}`;
-        identifierMap.set(match, normalized);
-        return normalized;
-    });
-}
-
-/**
- * 模拟字面量规范化函数（复制自 CodeCloneType2Check）
- */
-function normalizeLiterals(text: string): string {
-    // 数字：整数、小数、科学计数法
-    text = text.replace(/\b\d+\.?\d*([eE][+-]?\d+)?\b/g, 'NUM');
-    // 十六进制数字
-    text = text.replace(/\b0x[0-9a-fA-F]+\b/g, 'NUM');
-    // 双引号字符串
-    text = text.replace(/"[^"]*"/g, 'STR');
-    // 单引号字符串
-    text = text.replace(/'[^']*'/g, 'STR');
-    return text;
-}
-
-/**
- * DJB2 哈希函数
- */
-function simpleHash(str: string): string {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        const char = str.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
-        hash = hash & hash;
+function filterLogStatements(statements: string[], ignoreLogs: boolean): string[] {
+    if (!ignoreLogs) {
+        return statements;
     }
-    return hash.toString(16);
+    return statements.filter(stmt => !isLogStatement(stmt));
 }
 
 describe('测试用例目录结构', () => {
@@ -441,26 +381,6 @@ describe('Type-2 字面量规范化克隆检测', () => {
         expect(hash1_withLiteral).toBe(hash2_withLiteral);
     });
 });
-
-/**
- * 模拟日志语句判断函数（复制自 CodeCloneBaseCheck）
- */
-function isLogStatement(text: string): boolean {
-    const trimmed = text.trim();
-    // 匹配纯日志语句：整行只有日志调用
-    const logPattern = /^(console|hilog|Logger)\.\w+\s*\([\s\S]*\)$/i;
-    return logPattern.test(trimmed);
-}
-
-/**
- * 过滤日志语句
- */
-function filterLogStatements(statements: string[], ignoreLogs: boolean): string[] {
-    if (!ignoreLogs) {
-        return statements;
-    }
-    return statements.filter(stmt => !isLogStatement(stmt));
-}
 
 describe('日志语句判断函数', () => {
     test('应识别 console.log 为纯日志语句', () => {

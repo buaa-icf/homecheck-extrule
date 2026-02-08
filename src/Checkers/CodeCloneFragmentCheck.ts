@@ -14,17 +14,23 @@
  */
 
 import * as fs from 'fs';
-import { ArkFile, ArkClass, ArkMethod } from "arkanalyzer";
+import { ArkFile, ArkMethod } from "arkanalyzer";
 import {
     BaseMetaData,
     Rule,
-    Defects,
     MatcherCallback,
     IssueReport,
     FileMatcher,
     MatcherTypes,
     AdviceChecker
 } from "homecheck";
+import {
+    createDefects,
+    getMethodEndLine,
+    getRuleOption,
+    shouldSkipClass,
+    shouldSkipMethod
+} from "./utils";
 
 import {
     Tokenizer,
@@ -124,14 +130,9 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      * 检测前初始化
      */
     public beforeCheck(): void {
-        console.log('[CodeCloneFragment] beforeCheck called');
-        
-        // 从配置读取参数
         const minimumTokens = this.getMinimumTokens();
         const normalizeIdentifiers = this.getNormalizeIdentifiers();
         const normalizeLiterals = this.getNormalizeLiterals();
-
-        console.log(`[CodeCloneFragment] Config: minimumTokens=${minimumTokens}, normalizeIdentifiers=${normalizeIdentifiers}, normalizeLiterals=${normalizeLiterals}`);
 
         // 重新初始化组件
         this.cloneMatcher = new CloneMatcher(minimumTokens);
@@ -163,22 +164,19 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      */
     public collectTokens = (arkFile: ArkFile): void => {
         const filePath = arkFile.getFilePath();
-        console.log(`[CodeCloneFragment] Processing file: ${filePath}`);
+        const minimumTokens = this.getMinimumTokens();
 
         try {
             // 读取源文件内容
             const sourceCode = this.readSourceFile(filePath);
             if (!sourceCode) {
-                console.warn(`[CodeCloneFragment] Failed to read file: ${filePath}`);
                 return;
             }
 
             // Tokenize
             const tokens = this.tokenizer.tokenize(sourceCode, filePath);
-            console.log(`[CodeCloneFragment] File ${filePath}: ${tokens.length} tokens`);
 
-            if (tokens.length < this.getMinimumTokens()) {
-                console.log(`[CodeCloneFragment] Skipping file (tokens < minimumTokens): ${filePath}`);
+            if (tokens.length < minimumTokens) {
                 return;
             }
 
@@ -188,8 +186,8 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             // 送入匹配器
             this.cloneMatcher.processFile(tokens, filePath);
 
-        } catch (error) {
-            console.error(`[CodeCloneFragment] Error processing file ${filePath}:`, error);
+        } catch {
+            return;
         }
     }
 
@@ -197,11 +195,8 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      * 检测完成后，生成报告
      */
     public afterCheck(): void {
-        console.log('[CodeCloneFragment] afterCheck called');
-
         // 获取克隆对
         const clonePairs = this.cloneMatcher.getClonePairs();
-        console.log(`[CodeCloneFragment] Found ${clonePairs.length} clone pairs`);
 
         if (clonePairs.length === 0) {
             return;
@@ -209,7 +204,6 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
 
         // 合并连续片段
         const mergedClones = this.cloneMerger.merge(clonePairs);
-        console.log(`[CodeCloneFragment] After merge: ${mergedClones.length} clones`);
 
         // 生成报告
         for (const clone of mergedClones) {
@@ -219,7 +213,6 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             }
         }
 
-        console.log(`[CodeCloneFragment] Total issues: ${this.issues.length}`);
     }
 
     /**
@@ -290,17 +283,17 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         // 遍历类和方法，查找包含该行范围的方法
         for (const arkClass of arkFile.getClasses()) {
             const className = arkClass.getName();
-            
+
             // 跳过默认类
-            if (className.startsWith('%')) {
+            if (shouldSkipClass(className)) {
                 continue;
             }
 
             for (const method of arkClass.getMethods()) {
                 const methodName = method.getName();
-                
+
                 // 跳过默认方法
-                if (methodName.startsWith('%') || methodName === 'constructor') {
+                if (shouldSkipMethod(methodName)) {
                     continue;
                 }
 
@@ -323,25 +316,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      * 获取方法结束行号
      */
     private getMethodEndLine(method: ArkMethod): number {
-        const body = method.getBody();
-        if (!body) {
-            return method.getLine() ?? 0;
-        }
-
-        const stmts = body.getCfg().getStmts();
-        let maxLine = method.getLine() ?? 0;
-
-        for (const stmt of stmts) {
-            const pos = stmt.getOriginPositionInfo();
-            if (pos) {
-                const line = pos.getLineNo();
-                if (line > maxLine) {
-                    maxLine = line;
-                }
-            }
-        }
-
-        return maxLine;
+        return getMethodEndLine(method);
     }
 
     /**
@@ -389,23 +364,17 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         const severity = this.rule?.alert ?? this.metaData.severity;
         const description = this.formatDescription(report);
 
-        const defects = new Defects(
-            report.location1.startLine,
-            0,  // startCol
-            0,  // endCol
+        this.issues.push(createDefects({
+            line: report.location1.startLine,
+            startCol: 0,
+            endCol: 0,
             description,
             severity,
-            this.rule.ruleId,
-            report.location1.file,
-            this.metaData.ruleDocPath,
-            true,   // disabled
-            false,  // checked
-            false,  // fixable
-            report.location1.methodName ?? '',  // methodName
-            true    // showIgnoreIcon
-        );
-
-        this.issues.push(new IssueReport(defects, undefined));
+            ruleId: this.rule.ruleId,
+            filePath: report.location1.file,
+            ruleDocPath: this.metaData.ruleDocPath,
+            methodName: report.location1.methodName ?? ''
+        }));
     }
 
     /**
@@ -457,39 +426,23 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     /**
      * 获取最小 Token 数配置
      */
+    private getConfig() {
+        return getRuleOption(this.rule, {
+            minimumTokens: this.DEFAULT_MINIMUM_TOKENS,
+            normalizeIdentifiers: this.DEFAULT_NORMALIZE_IDENTIFIERS,
+            normalizeLiterals: this.DEFAULT_NORMALIZE_LITERALS
+        });
+    }
+
     private getMinimumTokens(): number {
-        if (this.rule && this.rule.option && this.rule.option.length > 0) {
-            const firstOption = this.rule.option[0] as any;
-            if (typeof firstOption.minimumTokens === 'number') {
-                return firstOption.minimumTokens;
-            }
-        }
-        return this.DEFAULT_MINIMUM_TOKENS;
+        return this.getConfig().minimumTokens;
     }
 
-    /**
-     * 获取是否规范化标识符配置
-     */
     private getNormalizeIdentifiers(): boolean {
-        if (this.rule && this.rule.option && this.rule.option.length > 0) {
-            const firstOption = this.rule.option[0] as any;
-            if (typeof firstOption.normalizeIdentifiers === 'boolean') {
-                return firstOption.normalizeIdentifiers;
-            }
-        }
-        return this.DEFAULT_NORMALIZE_IDENTIFIERS;
+        return this.getConfig().normalizeIdentifiers;
     }
 
-    /**
-     * 获取是否规范化字面量配置
-     */
     private getNormalizeLiterals(): boolean {
-        if (this.rule && this.rule.option && this.rule.option.length > 0) {
-            const firstOption = this.rule.option[0] as any;
-            if (typeof firstOption.normalizeLiterals === 'boolean') {
-                return firstOption.normalizeLiterals;
-            }
-        }
-        return this.DEFAULT_NORMALIZE_LITERALS;
+        return this.getConfig().normalizeLiterals;
     }
 }

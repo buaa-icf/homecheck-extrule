@@ -11,14 +11,15 @@ export { Token, TokenType, createToken, isKeyword, isIdentifier, isLiteral } fro
 export { TokenWindow, createSlidingWindows, getWindowCount } from './SlidingWindow';
 
 // 哈希索引
-export { 
-    FragmentLocation, 
-    HashIndex, 
-    djb2Hash, 
-    computeWindowHash, 
+export {
+    FragmentLocation,
+    HashIndex,
+    computeWindowHash,
     computeTokensHash,
-    createLocationFromWindow 
+    createLocationFromWindow
 } from './HashIndex';
+
+export { djb2Hash } from '../utils';
 
 // 克隆匹配器
 export { CloneMatch, ClonePair, CloneMatcher } from './CloneMatcher';

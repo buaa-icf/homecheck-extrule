@@ -6,6 +6,7 @@
 
 import { Token } from './Token';
 import { TokenWindow } from './SlidingWindow';
+import { djb2Hash } from '../utils';
 
 /**
  * 片段位置信息
@@ -88,21 +89,6 @@ export class HashIndex {
     clear(): void {
         this.index.clear();
     }
-}
-
-/**
- * DJB2 哈希函数
- * 
- * 复用现有的哈希算法
- */
-export function djb2Hash(str: string): string {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        const char = str.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
-        hash = hash & hash;  // Convert to 32bit integer
-    }
-    return hash.toString(16);
 }
 
 /**

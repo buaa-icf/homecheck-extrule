@@ -16,6 +16,7 @@
 import { Stmt } from "arkanalyzer";
 import { BaseMetaData } from "homecheck";
 import { CodeCloneBaseCheck, MethodInfo } from "./CodeCloneBaseCheck";
+import { normalizeIdentifiers, normalizeLiterals } from "./utils";
 
 const gMetaData: BaseMetaData = {
     severity: 2,
@@ -38,16 +39,6 @@ const gMetaData: BaseMetaData = {
 export class CodeCloneType2Check extends CodeCloneBaseCheck {
     readonly metaData: BaseMetaData = gMetaData;
 
-    // TypeScript/ArkTS 关键字和常用标识符（不做规范化）
-    private readonly keywords = new Set([
-        'let', 'const', 'var', 'function', 'return', 'if', 'else', 'for', 'while',
-        'true', 'false', 'null', 'undefined', 'this', 'new', 'class', 'extends',
-        'number', 'string', 'boolean', 'void', 'any', 'object',
-        'length', 'push', 'pop', 'map', 'filter', 'forEach', 'indexOf',
-        'console', 'log', 'toFixed', 'trim', 'toString',
-        'parameter0', 'parameter1', 'parameter2'  // ArkAnalyzer 的参数占位符
-    ]);
-
     protected getCloneType(): string {
         return "Type-2";
     }
@@ -68,10 +59,10 @@ export class CodeCloneType2Check extends CodeCloneBaseCheck {
             // 先做基础规范化（去除路径、类名）
             text = this.normalizeBasic(text);
             // 再做标识符规范化
-            text = this.normalizeIdentifiers(text, identifierMap);
+            text = normalizeIdentifiers(text, identifierMap);
             // 如果配置了 ignoreLiterals，进行字面量规范化
             if (ignoreLiterals) {
-                text = this.normalizeLiterals(text);
+                text = normalizeLiterals(text);
             }
             return text;
         });
@@ -91,55 +82,6 @@ export class CodeCloneType2Check extends CodeCloneBaseCheck {
      * - 数字（整数、小数、十六进制、科学计数法）→ NUM
      * - 字符串（双引号、单引号）→ STR
      */
-    private normalizeLiterals(text: string): string {
-        // 数字：整数、小数、科学计数法 (如 123, 3.14, 1e10, 1.5e-3)
-        text = text.replace(/\b\d+\.?\d*([eE][+-]?\d+)?\b/g, 'NUM');
-        
-        // 十六进制数字 (如 0xFF, 0x1A2B)
-        text = text.replace(/\b0x[0-9a-fA-F]+\b/g, 'NUM');
-        
-        // 双引号字符串 (如 "hello world")
-        text = text.replace(/"[^"]*"/g, 'STR');
-        
-        // 单引号字符串 (如 'hello world')
-        text = text.replace(/'[^']*'/g, 'STR');
-        
-        // 模板字符串的静态部分已在 ArkAnalyzer 处理中转换，这里不额外处理
-        
-        return text;
-    }
-
-    /**
-     * 标识符规范化
-     * 将变量名、函数名替换为 ID_1, ID_2 等
-     */
-    private normalizeIdentifiers(text: string, identifierMap: Map<string, string>): string {
-        // 匹配标识符模式：字母开头，后跟字母、数字、下划线
-        const identifierPattern = /\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g;
-        
-        return text.replace(identifierPattern, (match) => {
-            // 跳过关键字和短标识符
-            if (this.keywords.has(match.toLowerCase()) || match.length <= 1) {
-                return match;
-            }
-            
-            // 跳过全大写的常量（如 CLASS, FILE）
-            if (match === match.toUpperCase() && match.length > 1) {
-                return match;
-            }
-
-            // 检查是否已经映射过
-            if (identifierMap.has(match)) {
-                return identifierMap.get(match)!;
-            }
-
-            // 生成新的规范化名称
-            const normalized = `ID_${identifierMap.size + 1}`;
-            identifierMap.set(match, normalized);
-            return normalized;
-        });
-    }
-
     protected getDescription(method: MethodInfo, cloneWith: MethodInfo): string {
         const cloneFileName = cloneWith.filePath.split('/').pop() ?? cloneWith.filePath;
         return `Code Clone Type-2: Method '${method.methodName}' (lines ${method.startLine}-${method.endLine}) ` +
