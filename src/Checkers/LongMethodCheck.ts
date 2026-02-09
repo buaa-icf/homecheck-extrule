@@ -14,6 +14,7 @@
  */
 
 import { ArkMethod } from "arkanalyzer";
+import { ClassCategory } from "arkanalyzer/lib/core/model/ArkClass";
 import { BaseMetaData, BaseChecker, Rule, MethodMatcher, MatcherTypes, MatcherCallback, IssueReport } from "homecheck";
 import { createDefects, getRuleOption } from "./utils";
 
@@ -23,6 +24,14 @@ const gMetaData: BaseMetaData = {
     description: 'Method is too long. Consider refactoring it into smaller methods for better readability and maintainability.'
 };
 
+const UI_LIFECYCLE_METHODS = new Set([
+    'aboutToAppear',
+    'aboutToDisappear',
+    'onPageShow',
+    'onPageHide',
+    'onBackPress'
+]);
+
 /**
  * Long Method 检测规则
  *
@@ -31,16 +40,22 @@ const gMetaData: BaseMetaData = {
  * 2. 包含多个职责，违反单一职责原则
  * 3. 难以测试和复用
  *
- * 默认阈值：50 个语句节点
- * 可通过 ruleConfig.json 配置 maxStmts 参数自定义阈值
+ * 阈值策略：
+ * - 普通函数：默认 50 个语句节点
+ * - UI 组装/渲染/构建类函数（build、@Builder、含 ViewTree 的方法等）：
+ *   - 软阈值：80 个语句节点（severity 降为 warning）
+ *   - 硬阈值：120 个语句节点（保持原 severity）
+ *
+ * 可通过 ruleConfig.json 配置各阈值参数
  */
 export class LongMethodCheck implements BaseChecker {
     readonly metaData: BaseMetaData = gMetaData;
     public rule: Rule;
     public issues: IssueReport[] = [];
 
-    // 默认最大方法语句数阈值
     private readonly DEFAULT_MAX_STMTS = 50;
+    private readonly DEFAULT_MAX_UI_STMTS_SOFT = 80;
+    private readonly DEFAULT_MAX_UI_STMTS_HARD = 120;
 
     // 匹配所有方法
     private methodMatcher: MethodMatcher = {
@@ -56,20 +71,68 @@ export class LongMethodCheck implements BaseChecker {
     }
 
     public check = (targetMtd: ArkMethod) => {
-        // 获取配置的最大语句数阈值
-        const maxStmts = this.getMaxStmtsFromConfig();
-
-        // 计算方法的语句数量
         const stmtCount = this.countMethodStmts(targetMtd);
 
-        // 如果超过阈值，则上报问题
+        if (this.isUIMethod(targetMtd)) {
+            this.checkUIMethod(targetMtd, stmtCount);
+        } else {
+            this.checkNormalMethod(targetMtd, stmtCount);
+        }
+    }
+
+    private checkNormalMethod(method: ArkMethod, stmtCount: number): void {
+        const maxStmts = this.getMaxStmtsFromConfig();
         if (stmtCount > maxStmts) {
-            this.addIssueReport(targetMtd, stmtCount, maxStmts);
+            this.addIssueReport(method, stmtCount, maxStmts);
+        }
+    }
+
+    private checkUIMethod(method: ArkMethod, stmtCount: number): void {
+        const { softLimit, hardLimit } = this.getUIThresholdsFromConfig();
+
+        if (stmtCount > hardLimit) {
+            this.addIssueReport(method, stmtCount, hardLimit);
+        } else if (stmtCount > softLimit) {
+            this.addIssueReport(method, stmtCount, softLimit, 1);
         }
     }
 
     /**
-     * 从配置中获取最大语句数阈值
+     * 判断方法是否为 UI 组装/渲染/构建类方法
+     *
+     * 满足以下任一条件即视为 UI 方法：
+     * 1. 方法本身带有 @Builder 装饰器
+     * 2. 方法关联了 ViewTree（UI 渲染树）
+     * 3. 方法名为 build 且所属类为 STRUCT（@Component struct 的 build 方法）
+     * 4. 方法名为 UI 生命周期方法且所属类为 @Component struct
+     */
+    private isUIMethod(method: ArkMethod): boolean {
+        if (method.hasBuilderDecorator()) {
+            return true;
+        }
+
+        if (method.hasViewTree()) {
+            return true;
+        }
+
+        const declaringClass = method.getDeclaringArkClass();
+        if (declaringClass && declaringClass.getCategory() === ClassCategory.STRUCT) {
+            const methodName = method.getName();
+
+            if (methodName === 'build') {
+                return true;
+            }
+
+            if (UI_LIFECYCLE_METHODS.has(methodName) && declaringClass.hasComponentDecorator()) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 从配置中获取普通方法的最大语句数阈值
      */
     private getMaxStmtsFromConfig(): number {
         const option = getRuleOption(this.rule, {
@@ -87,6 +150,23 @@ export class LongMethodCheck implements BaseChecker {
         return this.DEFAULT_MAX_STMTS;
     }
 
+    private getUIThresholdsFromConfig(): { softLimit: number; hardLimit: number } {
+        const option = getRuleOption(this.rule, {
+            maxUIStmtsSoft: Number.NaN,
+            maxUIStmtsHard: Number.NaN
+        });
+
+        const softLimit = Number.isFinite(option.maxUIStmtsSoft)
+            ? option.maxUIStmtsSoft
+            : this.DEFAULT_MAX_UI_STMTS_SOFT;
+
+        const hardLimit = Number.isFinite(option.maxUIStmtsHard)
+            ? option.maxUIStmtsHard
+            : this.DEFAULT_MAX_UI_STMTS_HARD;
+
+        return { softLimit, hardLimit };
+    }
+
     /**
      * 计算方法的语句数量
      * CFG 中的 stmts 已经包含了方法的所有语句（包括嵌套语句）
@@ -102,8 +182,8 @@ export class LongMethodCheck implements BaseChecker {
         return stmts.length;
     }
 
-    private addIssueReport(method: ArkMethod, actualStmts: number, maxStmts: number) {
-        const severity = this.rule?.alert ?? this.metaData.severity;
+    private addIssueReport(method: ArkMethod, actualStmts: number, maxStmts: number, severityOverride?: number) {
+        const severity = severityOverride ?? this.rule?.alert ?? this.metaData.severity;
 
         // 获取方法的位置信息
         const methodLine = method.getLine();

@@ -1,0 +1,7 @@
+{
+  "name": "long-method-test",
+  "version": "1.0.0",
+  "description": "Test project for Long Method Check detection",
+  "main": "ets/NormalMethods.ets",
+  "dependencies": {}
+}
