@@ -14,7 +14,7 @@
  */
 
 import * as fs from 'fs';
-import { ArkFile, ArkMethod } from "arkanalyzer";
+import { ArkFile, ArkClass, ArkMethod, Stmt } from "arkanalyzer";
 import {
     BaseMetaData,
     Rule,
@@ -102,6 +102,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     private readonly DEFAULT_MINIMUM_TOKENS = 100;
     private readonly DEFAULT_NORMALIZE_IDENTIFIERS = true;
     private readonly DEFAULT_NORMALIZE_LITERALS = false;
+    private readonly DEFAULT_IGNORE_LOGS = true;
 
     // 克隆匹配器和合并器
     private cloneMatcher: CloneMatcher;
@@ -168,9 +169,17 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
 
         try {
             // 读取源文件内容
-            const sourceCode = this.readSourceFile(filePath);
+            let sourceCode = this.readSourceFile(filePath);
             if (!sourceCode) {
                 return;
+            }
+
+            // 缓存 ArkFile 用于后续反查（放在日志过滤之前，因为过滤需要用到）
+            this.fileCache.set(filePath, arkFile);
+
+            // 日志过滤：在 Tokenize 之前，将日志语句行替换为空行
+            if (this.getIgnoreLogs()) {
+                sourceCode = this.removeLogLines(sourceCode, arkFile);
             }
 
             // Tokenize
@@ -179,9 +188,6 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             if (tokens.length < minimumTokens) {
                 return;
             }
-
-            // 缓存 ArkFile 用于后续反查
-            this.fileCache.set(filePath, arkFile);
 
             // 送入匹配器
             this.cloneMatcher.processFile(tokens, filePath);
@@ -408,20 +414,127 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
 
     /**
      * 格式化位置信息
+     * 
+     * 使用完整路径，确保 Homecheck 的 mergeKey 绝对唯一，不会误合并。
+     * 之前用 shortPath（最后 3 级）导致不同子项目下的同名文件被去重，
+     * 271 个 issue 只剩 43 个。改为完整路径后彻底根治。
      */
     private formatLocation(loc: CodeLocation): string {
-        const fileName = loc.file.split('/').pop() ?? loc.file;
-        
         if (loc.className && loc.methodName) {
-            return `${fileName} > ${loc.className}.${loc.methodName}():${loc.startLine}-${loc.endLine}`;
+            return `${loc.file} > ${loc.className}.${loc.methodName}():${loc.startLine}-${loc.endLine}`;
         } else if (loc.className) {
-            return `${fileName} > ${loc.className}:${loc.startLine}-${loc.endLine}`;
+            return `${loc.file} > ${loc.className}:${loc.startLine}-${loc.endLine}`;
         } else {
-            return `${fileName}:${loc.startLine}-${loc.endLine}`;
+            return `${loc.file}:${loc.startLine}-${loc.endLine}`;
         }
     }
 
+    // ========== 日志过滤方法 ==========
+
+    /**
+     * 判断一个 IR 语句是否为纯日志语句
+     * 
+     * 复用方法级 CodeCloneBaseCheck 的日志识别模式。
+     * 支持：console.*, hilog.*, Logger.*
+     */
+    private isLogStatement(stmt: Stmt): boolean {
+        const text = stmt.toString().trim();
+        const logPattern = /^(console|hilog|Logger)\.\w+\s*\([\s\S]*\)$/i;
+        return logPattern.test(text);
+    }
+
+    /**
+     * 收集 ArkFile 中所有日志语句所占据的行号集合
+     * 
+     * 遍历文件中所有类的所有方法（包括默认类/默认方法，即顶层代码），
+     * 对每个方法的 Stmt 列表：
+     *   1. 找到日志语句的起始行
+     *   2. 用下一条语句的起始行-1 作为结束行（最后一条用方法结束行）
+     *   3. 将该范围内所有行号加入集合
+     */
+    public collectLogLines(arkFile: ArkFile): Set<number> {
+        const logLines = new Set<number>();
+
+        for (const arkClass of arkFile.getClasses()) {
+            for (const method of arkClass.getMethods()) {
+                const body = method.getBody();
+                if (!body) continue;
+
+                const stmts = body.getCfg().getStmts();
+                if (stmts.length === 0) continue;
+
+                // 计算方法结束行（作为最后一条语句的结束边界）
+                const methodEndLine = this.getMethodEndLine(method);
+
+                for (let i = 0; i < stmts.length; i++) {
+                    if (!this.isLogStatement(stmts[i])) continue;
+
+                    const startLine = stmts[i].getOriginPositionInfo().getLineNo();
+                    if (startLine <= 0) continue;
+
+                    // 结束行 = 下一条语句起始行 - 1，或方法结束行
+                    let endLine: number;
+                    if (i + 1 < stmts.length) {
+                        const nextLine = stmts[i + 1].getOriginPositionInfo().getLineNo();
+                        endLine = nextLine > startLine ? nextLine - 1 : startLine;
+                    } else {
+                        endLine = methodEndLine;
+                    }
+
+                    for (let line = startLine; line <= endLine; line++) {
+                        logLines.add(line);
+                    }
+                }
+            }
+        }
+
+        return logLines;
+    }
+
+    /**
+     * 将源码中日志语句所在行替换为空行
+     * 
+     * 替换为空行而非删除，以保持行号不变。
+     */
+    public removeLogLines(sourceCode: string, arkFile: ArkFile): string {
+        const logLines = this.collectLogLines(arkFile);
+        if (logLines.size === 0) {
+            return sourceCode;
+        }
+
+        const lines = sourceCode.split('\n');
+        for (const lineNo of logLines) {
+            // ArkAnalyzer 行号从 1 开始，数组索引从 0 开始
+            const idx = lineNo - 1;
+            if (idx >= 0 && idx < lines.length) {
+                lines[idx] = '';
+            }
+        }
+
+        console.log(`[CodeCloneFragment] Removed ${logLines.size} log lines from ${arkFile.getFilePath()}`);
+        return lines.join('\n');
+    }
+
     // ========== 配置读取方法 ==========
+
+    /**
+     * 获取是否忽略日志语句配置
+     * 
+     * 日志语句（console.log、hilog、Logger 等）通常只是调试信息，
+     * 不影响业务逻辑，默认过滤以减少噪声。
+     * 
+     * 配置方式：{ "ignoreLogs": false }
+     * 默认值：true（开启日志过滤）
+     */
+    private getIgnoreLogs(): boolean {
+        if (this.rule && this.rule.option && this.rule.option.length > 0) {
+            const firstOption = this.rule.option[0] as any;
+            if (typeof firstOption.ignoreLogs === 'boolean') {
+                return firstOption.ignoreLogs;
+            }
+        }
+        return this.DEFAULT_IGNORE_LOGS;
+    }
 
     /**
      * 获取最小 Token 数配置

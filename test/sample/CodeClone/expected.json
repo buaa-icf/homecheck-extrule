@@ -139,6 +139,47 @@
       "refactoringHint": "建议提取为类的私有方法，如 private validateItems()"
     },
     
+    "fragment_with_logs": {
+      "description": "片段级+日志过滤: 含日志语句的克隆，过滤后仍应检出业务逻辑克隆",
+      "files": ["FragmentWithLogsA.ets", "FragmentWithLogsB.ets"],
+      "rule": "code-clone-fragment-check",
+      "scope": "DIFFERENT_CLASS",
+      "requiresConfig": { "ignoreLogs": true },
+      "expectedClones": [
+        {
+          "description": "FragmentWithLogsA.processItems 与 FragmentWithLogsB.processItems 业务逻辑相同、日志不同",
+          "files": ["FragmentWithLogsA.ets", "FragmentWithLogsB.ets"],
+          "expectedScope": "DIFFERENT_CLASS"
+        }
+      ],
+      "refactoringHint": "建议提取公共逻辑到工具类，统一日志接口"
+    },
+    "fragment_pure_logs": {
+      "description": "片段级+日志过滤: 纯日志重复，过滤后不报为克隆",
+      "files": ["PureLogsOnly.ets"],
+      "rule": "code-clone-fragment-check",
+      "scope": "N/A",
+      "requiresConfig": { "ignoreLogs": true },
+      "expectedClones": [],
+      "refactoringHint": "纯日志重复无需重构，过滤后正确不报"
+    },
+    "fragment_multiline_logs": {
+      "description": "片段级+日志过滤: 多行日志语句的克隆，验证多行日志完整清理",
+      "files": ["MultilineLogClone.ets"],
+      "rule": "code-clone-fragment-check",
+      "scope": "SAME_CLASS",
+      "requiresConfig": { "ignoreLogs": true },
+      "expectedClones": [
+        {
+          "description": "methodOne 与 methodTwo 之间含多行 log 的相同片段，多行日志被完整移除后仍检出",
+          "file": "MultilineLogClone.ets",
+          "class": "MultilineLogClone",
+          "methods": ["methodOne", "methodTwo"],
+          "expectedScope": "SAME_CLASS"
+        }
+      ],
+      "refactoringHint": "建议提取为类的私有方法"
+    },
     "fragment_different_class": {
       "description": "片段级克隆: 不同类之间 / 类与独立函数之间的重复代码",
       "files": ["ClassA.ets", "ClassB.ets", "TopLevelFunc.ets"],

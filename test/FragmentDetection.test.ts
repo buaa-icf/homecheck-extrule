@@ -1166,7 +1166,7 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
         expect(desc).toBe('different classes');
     });
     
-    test('格式化位置 - 带类和方法', () => {
+    test('格式化位置 - 带类和方法（使用完整路径）', () => {
         const check = new CodeCloneFragmentCheck() as any;
         
         const loc: CodeLocation = {
@@ -1178,10 +1178,10 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
         };
         
         const formatted = check.formatLocation(loc);
-        expect(formatted).toBe('file.ts > MyClass.myMethod():10-20');
+        expect(formatted).toBe('/path/to/file.ts > MyClass.myMethod():10-20');
     });
     
-    test('格式化位置 - 只有类', () => {
+    test('格式化位置 - 只有类（使用完整路径）', () => {
         const check = new CodeCloneFragmentCheck() as any;
         
         const loc: CodeLocation = {
@@ -1192,10 +1192,10 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
         };
         
         const formatted = check.formatLocation(loc);
-        expect(formatted).toBe('file.ts > MyClass:10-20');
+        expect(formatted).toBe('/path/to/file.ts > MyClass:10-20');
     });
     
-    test('格式化位置 - 无类无方法', () => {
+    test('格式化位置 - 无类无方法（使用完整路径）', () => {
         const check = new CodeCloneFragmentCheck() as any;
         
         const loc: CodeLocation = {
@@ -1205,7 +1205,39 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
         };
         
         const formatted = check.formatLocation(loc);
-        expect(formatted).toBe('file.ts:10-20');
+        expect(formatted).toBe('/path/to/file.ts:10-20');
+    });
+    
+    test('格式化位置 - 长路径保持完整（确保 mergeKey 唯一）', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        const loc: CodeLocation = {
+            file: '/very/long/path/to/src/utils/Logger.ets',
+            startLine: 1,
+            endLine: 20
+        };
+        
+        const formatted = check.formatLocation(loc);
+        expect(formatted).toBe('/very/long/path/to/src/utils/Logger.ets:1-20');
+    });
+    
+    test('不同完整路径的同名文件应产生不同的格式化结果', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        const loc1: CodeLocation = {
+            file: '/project/moduleA/src/utils/Logger.ets',
+            startLine: 5,
+            endLine: 23
+        };
+        const loc2: CodeLocation = {
+            file: '/project/moduleB/src/utils/Logger.ets',
+            startLine: 5,
+            endLine: 23
+        };
+        
+        const formatted1 = check.formatLocation(loc1);
+        const formatted2 = check.formatLocation(loc2);
+        expect(formatted1).not.toBe(formatted2);
     });
     
     test('格式化完整描述', () => {
@@ -1237,5 +1269,332 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
         expect(desc).toContain('same class');
         expect(desc).toContain('150 tokens');
         expect(desc).toContain('11 lines');
+    });
+});
+
+// ============================================================
+// 日志过滤测试
+// ============================================================
+
+describe('CodeCloneFragmentCheck - 日志过滤', () => {
+
+    test('isLogStatement 识别 console.log', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        const mockStmt = { toString: () => 'console.log("hello")' };
+        expect(check.isLogStatement(mockStmt)).toBe(true);
+    });
+
+    test('isLogStatement 识别 console.error', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        const mockStmt = { toString: () => 'console.error("error msg")' };
+        expect(check.isLogStatement(mockStmt)).toBe(true);
+    });
+
+    test('isLogStatement 识别 hilog.info', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        const mockStmt = { toString: () => 'hilog.info(0x0000, "TAG", "msg")' };
+        expect(check.isLogStatement(mockStmt)).toBe(true);
+    });
+
+    test('isLogStatement 识别 Logger.debug', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        const mockStmt = { toString: () => 'Logger.debug("debug info")' };
+        expect(check.isLogStatement(mockStmt)).toBe(true);
+    });
+
+    test('isLogStatement 不匹配业务代码', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        expect(check.isLogStatement({ toString: () => 'let x = 1' })).toBe(false);
+        expect(check.isLogStatement({ toString: () => 'return result' })).toBe(false);
+        expect(check.isLogStatement({ toString: () => 'this.data.push(item)' })).toBe(false);
+    });
+
+    test('isLogStatement 不匹配嵌入式日志', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        // 日志嵌在其他表达式中，不应被识别为"纯日志语句"
+        expect(check.isLogStatement({ toString: () => 'doSomething() && console.log("done")' })).toBe(false);
+    });
+
+    test('collectLogLines 收集单行日志的行号', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        // 构造 mock ArkFile
+        const mockStmts = [
+            { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 5 }) },
+            { toString: () => 'console.log("test")', getOriginPositionInfo: () => ({ getLineNo: () => 6 }) },
+            { toString: () => 'let y = 2', getOriginPositionInfo: () => ({ getLineNo: () => 7 }) }
+        ];
+        
+        const mockMethod = {
+            getName: () => 'testMethod',
+            getLine: () => 4,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => 'TestClass',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+        
+        const logLines = check.collectLogLines(mockArkFile);
+        expect(logLines.has(6)).toBe(true);
+        expect(logLines.has(5)).toBe(false);
+        expect(logLines.has(7)).toBe(false);
+        expect(logLines.size).toBe(1);
+    });
+
+    test('collectLogLines 收集多行日志的行号范围', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        // 日志语句在第 10 行，下一条语句在第 13 行
+        // → 日志占据 10, 11, 12 三行
+        const mockStmts = [
+            { toString: () => 'hilog.info(0x0000, "TAG", "msg")', getOriginPositionInfo: () => ({ getLineNo: () => 10 }) },
+            { toString: () => 'let result = compute()', getOriginPositionInfo: () => ({ getLineNo: () => 13 }) }
+        ];
+        
+        const mockMethod = {
+            getName: () => 'testMethod',
+            getLine: () => 9,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => 'TestClass',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+        
+        const logLines = check.collectLogLines(mockArkFile);
+        expect(logLines.has(10)).toBe(true);
+        expect(logLines.has(11)).toBe(true);
+        expect(logLines.has(12)).toBe(true);
+        expect(logLines.has(13)).toBe(false);  // 下一条语句的行不应被包含
+        expect(logLines.size).toBe(3);
+    });
+
+    test('collectLogLines 处理末尾日志（用方法结束行作为边界）', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        // 日志是方法的最后一条语句
+        const mockStmts = [
+            { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 5 }) },
+            { toString: () => 'console.log("done")', getOriginPositionInfo: () => ({ getLineNo: () => 6 }) }
+        ];
+        
+        // getMethodEndLine 需要 ArkMethod 接口，这里 mock 一下
+        // 方法结束行是第 7 行
+        const mockMethod = {
+            getName: () => 'testMethod',
+            getLine: () => 4,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => 'TestClass',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+        
+        const logLines = check.collectLogLines(mockArkFile);
+        // 最后一条语句是日志，endLine = getMethodEndLine(method)
+        // getMethodEndLine 遍历 stmts 找最大行号 = max(5, 6) = 6
+        // 所以只有第 6 行
+        expect(logLines.has(6)).toBe(true);
+        expect(logLines.size).toBe(1);
+    });
+
+    test('removeLogLines 将日志行替换为空行', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        const sourceCode = [
+            'import { something } from "module"',   // line 1
+            '',                                       // line 2
+            'class MyClass {',                        // line 3
+            '    method() {',                         // line 4
+            '        let x = 1;',                     // line 5
+            '        console.log("debug");',          // line 6
+            '        let y = 2;',                     // line 7
+            '    }',                                  // line 8
+            '}'                                       // line 9
+        ].join('\n');
+        
+        // mock ArkFile，日志在第 6 行
+        const mockStmts = [
+            { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 5 }) },
+            { toString: () => 'console.log("debug")', getOriginPositionInfo: () => ({ getLineNo: () => 6 }) },
+            { toString: () => 'let y = 2', getOriginPositionInfo: () => ({ getLineNo: () => 7 }) }
+        ];
+        
+        const mockMethod = {
+            getName: () => 'method',
+            getLine: () => 4,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => 'MyClass',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+        
+        const result = check.removeLogLines(sourceCode, mockArkFile);
+        const lines = result.split('\n');
+        
+        // 总行数不变
+        expect(lines.length).toBe(9);
+        // 第 6 行被替换为空行
+        expect(lines[5]).toBe('');
+        // 其他行不受影响
+        expect(lines[4]).toBe('        let x = 1;');
+        expect(lines[6]).toBe('        let y = 2;');
+    });
+
+    test('removeLogLines 保持行号不变（多行日志）', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        const sourceCode = [
+            'function test() {',                       // line 1
+            '    let a = 1;',                          // line 2
+            '    hilog.info(0x0000,',                  // line 3
+            '        "TAG",',                          // line 4
+            '        "message");',                     // line 5
+            '    let b = 2;',                          // line 6
+            '}'                                        // line 7
+        ].join('\n');
+        
+        // 日志从第 3 行开始，下一条语句在第 6 行
+        const mockStmts = [
+            { toString: () => 'let a = 1', getOriginPositionInfo: () => ({ getLineNo: () => 2 }) },
+            { toString: () => 'hilog.info(0x0000, "TAG", "message")', getOriginPositionInfo: () => ({ getLineNo: () => 3 }) },
+            { toString: () => 'let b = 2', getOriginPositionInfo: () => ({ getLineNo: () => 6 }) }
+        ];
+        
+        const mockMethod = {
+            getName: () => 'test',
+            getLine: () => 1,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => '%default',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+        
+        const result = check.removeLogLines(sourceCode, mockArkFile);
+        const lines = result.split('\n');
+        
+        // 总行数不变
+        expect(lines.length).toBe(7);
+        // 第 3-5 行被替换为空行
+        expect(lines[2]).toBe('');
+        expect(lines[3]).toBe('');
+        expect(lines[4]).toBe('');
+        // 第 2 行和第 6 行不受影响
+        expect(lines[1]).toBe('    let a = 1;');
+        expect(lines[5]).toBe('    let b = 2;');
+    });
+
+    test('removeLogLines 无日志时原样返回', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        const sourceCode = 'let x = 1;\nlet y = 2;';
+        
+        const mockStmts = [
+            { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 1 }) },
+            { toString: () => 'let y = 2', getOriginPositionInfo: () => ({ getLineNo: () => 2 }) }
+        ];
+        
+        const mockMethod = {
+            getName: () => 'test',
+            getLine: () => 1,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => 'TestClass',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+        
+        const result = check.removeLogLines(sourceCode, mockArkFile);
+        expect(result).toBe(sourceCode);
+    });
+
+    test('getIgnoreLogs 默认返回 true', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        expect(check.getIgnoreLogs()).toBe(true);
+    });
+
+    test('getIgnoreLogs 从配置读取 false', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        check.rule = {
+            option: [{ ignoreLogs: false }]
+        };
+        expect(check.getIgnoreLogs()).toBe(false);
+    });
+
+    test('getIgnoreLogs 配置为 true', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        check.rule = {
+            option: [{ ignoreLogs: true }]
+        };
+        expect(check.getIgnoreLogs()).toBe(true);
     });
 });
