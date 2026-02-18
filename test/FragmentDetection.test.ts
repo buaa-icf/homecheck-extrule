@@ -24,6 +24,7 @@ import {
     computeTokensHash,
     CloneMatcher
 } from '../src/Checkers/FragmentDetection';
+import { isLogStatement } from '../src/Checkers/utils';
 
 // ============================================================
 // 辅助函数：创建 mock Token
@@ -1279,46 +1280,33 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
 describe('CodeCloneFragmentCheck - 日志过滤', () => {
 
     test('isLogStatement 识别 console.log', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const mockStmt = { toString: () => 'console.log("hello")' };
-        expect(check.isLogStatement(mockStmt)).toBe(true);
+        expect(isLogStatement(mockStmt as any)).toBe(true);
     });
 
     test('isLogStatement 识别 console.error', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const mockStmt = { toString: () => 'console.error("error msg")' };
-        expect(check.isLogStatement(mockStmt)).toBe(true);
+        expect(isLogStatement(mockStmt as any)).toBe(true);
     });
 
     test('isLogStatement 识别 hilog.info', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const mockStmt = { toString: () => 'hilog.info(0x0000, "TAG", "msg")' };
-        expect(check.isLogStatement(mockStmt)).toBe(true);
+        expect(isLogStatement(mockStmt as any)).toBe(true);
     });
 
     test('isLogStatement 识别 Logger.debug', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const mockStmt = { toString: () => 'Logger.debug("debug info")' };
-        expect(check.isLogStatement(mockStmt)).toBe(true);
+        expect(isLogStatement(mockStmt as any)).toBe(true);
     });
 
     test('isLogStatement 不匹配业务代码', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
-        expect(check.isLogStatement({ toString: () => 'let x = 1' })).toBe(false);
-        expect(check.isLogStatement({ toString: () => 'return result' })).toBe(false);
-        expect(check.isLogStatement({ toString: () => 'this.data.push(item)' })).toBe(false);
+        expect(isLogStatement({ toString: () => 'let x = 1' } as any)).toBe(false);
+        expect(isLogStatement({ toString: () => 'return result' } as any)).toBe(false);
+        expect(isLogStatement({ toString: () => 'this.data.push(item)' } as any)).toBe(false);
     });
 
     test('isLogStatement 不匹配嵌入式日志', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
-        // 日志嵌在其他表达式中，不应被识别为"纯日志语句"
-        expect(check.isLogStatement({ toString: () => 'doSomething() && console.log("done")' })).toBe(false);
+        expect(isLogStatement({ toString: () => 'doSomething() && console.log("done")' } as any)).toBe(false);
     });
 
     test('collectLogLines 收集单行日志的行号', () => {
@@ -1541,6 +1529,96 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
         // 第 2 行和第 6 行不受影响
         expect(lines[1]).toBe('    let a = 1;');
         expect(lines[5]).toBe('    let b = 2;');
+    });
+
+    test('collectLogLines 末尾多行日志仅清除到 methodEndLine（边界：endLine=startLine）', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        // 方法最后一条语句是一个跨 3 行的 hilog.info，起始行 10
+        // getMethodEndLine 遍历 stmts 取 max lineNo = 10（日志自身起始行）
+        // 因此 endLine = methodEndLine = 10，只有第 10 行被标记，11/12 行漏掉
+        // 这是当前实现的已知局限，此测试记录该行为
+        const mockStmts = [
+            { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 8 }) },
+            { toString: () => 'hilog.info(0x0000, "TAG", "very long message")', getOriginPositionInfo: () => ({ getLineNo: () => 10 }) }
+        ];
+        
+        const mockMethod = {
+            getName: () => 'lastLogMethod',
+            getLine: () => 7,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => 'TestClass',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+        
+        const logLines = check.collectLogLines(mockArkFile);
+        // methodEndLine = max(8, 10) = 10，所以 endLine = 10
+        // 只有第 10 行被标记；如果实际源码中该日志跨 10-12 行，11/12 不会被清除
+        expect(logLines.has(10)).toBe(true);
+        expect(logLines.has(11)).toBe(false);
+        expect(logLines.has(12)).toBe(false);
+        expect(logLines.size).toBe(1);
+    });
+
+    test('removeLogLines 末尾多行日志：后续行未被清除（已知局限）', () => {
+        const check = new CodeCloneFragmentCheck() as any;
+        
+        const sourceCode = [
+            'function test() {',                        // line 1
+            '    let x = 1;',                           // line 2
+            '    hilog.info(0x0000,',                   // line 3 ← 日志起始行（也是最后一条 stmt）
+            '        "TAG",',                           // line 4 ← 多行日志续行
+            '        "message");',                      // line 5 ← 多行日志续行
+            '}'                                         // line 6
+        ].join('\n');
+        
+        // 日志是最后一条 stmt，起始行 3；methodEndLine = max(2, 3) = 3
+        const mockStmts = [
+            { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 2 }) },
+            { toString: () => 'hilog.info(0x0000, "TAG", "message")', getOriginPositionInfo: () => ({ getLineNo: () => 3 }) }
+        ];
+        
+        const mockMethod = {
+            getName: () => 'test',
+            getLine: () => 1,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => '%default',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+        
+        const result = check.removeLogLines(sourceCode, mockArkFile);
+        const resultLines = result.split('\n');
+        
+        expect(resultLines.length).toBe(6);
+        // 第 3 行被清除
+        expect(resultLines[2]).toBe('');
+        // 第 4、5 行未被清除（已知局限：methodEndLine 不感知多行日志的实际结束行）
+        expect(resultLines[3]).toBe('        "TAG",');
+        expect(resultLines[4]).toBe('        "message");');
     });
 
     test('removeLogLines 无日志时原样返回', () => {

@@ -14,7 +14,7 @@
  */
 
 import * as fs from 'fs';
-import { ArkFile, ArkClass, ArkMethod, Stmt } from "arkanalyzer";
+import { ArkFile, ArkMethod } from "arkanalyzer";
 import {
     BaseMetaData,
     Rule,
@@ -28,6 +28,7 @@ import {
     createDefects,
     getMethodEndLine,
     getRuleOption,
+    isLogStatement,
     shouldSkipClass,
     shouldSkipMethod
 } from "./utils";
@@ -432,18 +433,6 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     // ========== 日志过滤方法 ==========
 
     /**
-     * 判断一个 IR 语句是否为纯日志语句
-     * 
-     * 复用方法级 CodeCloneBaseCheck 的日志识别模式。
-     * 支持：console.*, hilog.*, Logger.*
-     */
-    private isLogStatement(stmt: Stmt): boolean {
-        const text = stmt.toString().trim();
-        const logPattern = /^(console|hilog|Logger)\.\w+\s*\([\s\S]*\)$/i;
-        return logPattern.test(text);
-    }
-
-    /**
      * 收集 ArkFile 中所有日志语句所占据的行号集合
      * 
      * 遍历文件中所有类的所有方法（包括默认类/默认方法，即顶层代码），
@@ -467,7 +456,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
                 const methodEndLine = this.getMethodEndLine(method);
 
                 for (let i = 0; i < stmts.length; i++) {
-                    if (!this.isLogStatement(stmts[i])) continue;
+                    if (!isLogStatement(stmts[i])) continue;
 
                     const startLine = stmts[i].getOriginPositionInfo().getLineNo();
                     if (startLine <= 0) continue;
@@ -511,40 +500,22 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             }
         }
 
-        console.log(`[CodeCloneFragment] Removed ${logLines.size} log lines from ${arkFile.getFilePath()}`);
         return lines.join('\n');
     }
 
     // ========== 配置读取方法 ==========
 
-    /**
-     * 获取是否忽略日志语句配置
-     * 
-     * 日志语句（console.log、hilog、Logger 等）通常只是调试信息，
-     * 不影响业务逻辑，默认过滤以减少噪声。
-     * 
-     * 配置方式：{ "ignoreLogs": false }
-     * 默认值：true（开启日志过滤）
-     */
-    private getIgnoreLogs(): boolean {
-        if (this.rule && this.rule.option && this.rule.option.length > 0) {
-            const firstOption = this.rule.option[0] as any;
-            if (typeof firstOption.ignoreLogs === 'boolean') {
-                return firstOption.ignoreLogs;
-            }
-        }
-        return this.DEFAULT_IGNORE_LOGS;
-    }
-
-    /**
-     * 获取最小 Token 数配置
-     */
     private getConfig() {
         return getRuleOption(this.rule, {
             minimumTokens: this.DEFAULT_MINIMUM_TOKENS,
             normalizeIdentifiers: this.DEFAULT_NORMALIZE_IDENTIFIERS,
-            normalizeLiterals: this.DEFAULT_NORMALIZE_LITERALS
+            normalizeLiterals: this.DEFAULT_NORMALIZE_LITERALS,
+            ignoreLogs: this.DEFAULT_IGNORE_LOGS
         });
+    }
+
+    private getIgnoreLogs(): boolean {
+        return this.getConfig().ignoreLogs;
     }
 
     private getMinimumTokens(): number {
