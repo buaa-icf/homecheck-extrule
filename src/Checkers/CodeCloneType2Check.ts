@@ -48,7 +48,7 @@ export class CodeCloneType2Check extends CodeCloneBaseCheck {
      * Type-2 需要将标识符替换为占位符
      * 如果配置了 ignoreLiterals: true，还会将字面量替换为占位符
      */
-    protected computeHash(stmts: Stmt[]): string {
+    protected computeHash(stmts: Stmt[]): { hash: string; normalizedContent: string } {
         // 用于追踪已见过的标识符
         const identifierMap = new Map<string, string>();
         // 读取配置：是否忽略字面量差异
@@ -68,7 +68,7 @@ export class CodeCloneType2Check extends CodeCloneBaseCheck {
         });
         
         const combined = stmtStrings.join('|');
-        return this.simpleHash(combined);
+        return { hash: this.simpleHash(combined), normalizedContent: combined };
     }
 
     /**

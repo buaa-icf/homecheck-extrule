@@ -45,7 +45,7 @@ export class CodeCloneType1Check extends CodeCloneBaseCheck {
      * 计算语句序列的哈希值
      * Type-1 克隆要求完全相同，只做基础规范化
      */
-    protected computeHash(stmts: Stmt[]): string {
+    protected computeHash(stmts: Stmt[]): { hash: string; normalizedContent: string } {
         const stmtStrings = stmts.map(stmt => {
             let text = stmt.toString();
             text = this.normalizeBasic(text);
@@ -53,7 +53,7 @@ export class CodeCloneType1Check extends CodeCloneBaseCheck {
         });
         
         const combined = stmtStrings.join('|');
-        return this.simpleHash(combined);
+        return { hash: this.simpleHash(combined), normalizedContent: combined };
     }
 
     protected getDescription(method: MethodInfo, cloneWith: MethodInfo): string {

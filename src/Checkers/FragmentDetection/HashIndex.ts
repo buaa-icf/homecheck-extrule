@@ -23,6 +23,9 @@ export interface FragmentLocation {
     
     /** 结束行号 */
     endLine: number;
+
+    /** Token 指纹（规范化后的 Token 序列拼接），用于哈希碰撞验证 */
+    tokenFingerprint: string;
 }
 
 /**
@@ -92,17 +95,17 @@ export class HashIndex {
 }
 
 /**
- * 计算窗口的哈希值
+ * 计算窗口的哈希值和 Token 指纹
  * 
- * 将窗口内的 Token 值拼接后计算哈希
+ * 将窗口内的 Token 值拼接后计算哈希，同时返回拼接字符串作为指纹
  * 
  * @param window 窗口
- * @returns 哈希值
+ * @returns { hash, tokenFingerprint } 哈希值和 Token 指纹
  */
-export function computeWindowHash(window: TokenWindow): string {
+export function computeWindowHash(window: TokenWindow): { hash: string; tokenFingerprint: string } {
     // 使用 Token 的 value 拼接
     const combined = window.tokens.map(t => t.value).join('|');
-    return djb2Hash(combined);
+    return { hash: djb2Hash(combined), tokenFingerprint: combined };
 }
 
 /**
@@ -123,11 +126,12 @@ export function computeTokensHash(tokens: Token[]): string {
  * @param defaultFile 默认文件路径（如果窗口没有文件信息）
  * @returns 位置信息
  */
-export function createLocationFromWindow(window: TokenWindow, defaultFile: string = ''): FragmentLocation {
+export function createLocationFromWindow(window: TokenWindow, defaultFile: string = '', tokenFingerprint: string = ''): FragmentLocation {
     return {
         file: window.file || defaultFile,
         startIndex: window.startIndex,
         startLine: window.startLine,
-        endLine: window.endLine
+        endLine: window.endLine,
+        tokenFingerprint
     };
 }

@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-import { ArkMethod, Stmt } from "arkanalyzer";
+import { ArkMethod, Stmt, ts } from "arkanalyzer";
 import { Defects, IssueReport, Rule } from "homecheck";
 
 export interface DefectsParams {
@@ -150,20 +150,54 @@ export function isLogStatement(stmt: Stmt): boolean {
     return logPattern.test(text);
 }
 
-/** TypeScript/ArkTS keywords — not normalized */
-const TYPE2_KEYWORDS = new Set([
-    'let', 'const', 'var', 'function', 'return', 'if', 'else', 'for', 'while',
-    'true', 'false', 'null', 'undefined', 'this', 'new', 'class', 'extends',
-    'number', 'string', 'boolean', 'void', 'any', 'object',
-    'length', 'push', 'pop', 'map', 'filter', 'forEach', 'indexOf',
-    'console', 'log', 'toFixed', 'trim', 'toString',
-    'parameter0', 'parameter1', 'parameter2'
-]);
+/**
+ * 动态构建 TypeScript/ArkTS 关键字集合
+ * 
+ * 通过遍历 ts.SyntaxKind 枚举（BreakKeyword ~ OfKeyword 范围）自动获取所有关键字，
+ * 不再需要手动维护硬编码列表。额外添加常见内置 API 名称和 ArkAnalyzer 参数占位符，
+ * 防止它们被规范化。
+ */
+const TYPE2_KEYWORDS: Set<string> = (() => {
+    const keywords = new Set<string>();
+    
+    // 从 ts.SyntaxKind 枚举中提取所有关键字（BreakKeyword ~ OfKeyword）
+    for (let kind = ts.SyntaxKind.BreakKeyword; kind <= ts.SyntaxKind.OfKeyword; kind++) {
+        const name = ts.tokenToString(kind as ts.SyntaxKind);
+        if (name) {
+            keywords.add(name);
+        }
+    }
+    
+    // ArkTS 特有关键字
+    const structKeyword = ts.tokenToString(ts.SyntaxKind.StructKeyword);
+    if (structKeyword) {
+        keywords.add(structKeyword);
+    }
+    
+    // 常见内置对象/方法名（不应规范化）
+    const builtinNames = [
+        'undefined', 'NaN', 'Infinity',
+        'length', 'push', 'pop', 'map', 'filter', 'forEach', 'indexOf',
+        'console', 'log', 'toFixed', 'trim', 'toString',
+        'Array', 'Object', 'String', 'Number', 'Boolean', 'Map', 'Set',
+        'Promise', 'Date', 'RegExp', 'Error', 'JSON', 'Math',
+    ];
+    for (const name of builtinNames) {
+        keywords.add(name);
+    }
+    
+    // ArkAnalyzer IR 参数占位符
+    for (let i = 0; i <= 9; i++) {
+        keywords.add(`parameter${i}`);
+    }
+    
+    return keywords;
+})();
 
-export function normalizeIdentifiers(text: string, identifierMap: Map<string, string>): string {
+export function normalizeIdentifiers(text: string, identifierMap: Map<string, string>, normalizeSingleChar: boolean = false): string {
     const identifierPattern = /\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g;
     return text.replace(identifierPattern, (match) => {
-        if (TYPE2_KEYWORDS.has(match.toLowerCase()) || match.length <= 1) {
+        if (TYPE2_KEYWORDS.has(match.toLowerCase()) || (!normalizeSingleChar && match.length <= 1)) {
             return match;
         }
         if (match === match.toUpperCase() && match.length > 1) {
@@ -183,5 +217,38 @@ export function normalizeLiterals(text: string): string {
     text = text.replace(/\b0x[0-9a-fA-F]+\b/g, 'NUM');
     text = text.replace(/"[^"]*"/g, 'STR');
     text = text.replace(/'[^']*'/g, 'STR');
+    return text;
+}
+
+/**
+ * 剥离类型注解（用于方法级克隆检测）
+ *
+ * 移除 ArkTS/TypeScript 中的类型注解，包括：
+ * - 变量/参数类型标注 `: Type`
+ * - 泛型类型 `: Type<T>`
+ * - 数组类型 `: Type[]`
+ * - 类型断言 `as Type`
+ *
+ * 注意：这是基于正则的粗粒度实现，适用于方法级 IR 文本。
+ * 片段级检测使用 Tokenizer 中更精确的 Token 过滤。
+ */
+export function stripTypeAnnotations(text: string): string {
+    // 移除 `: Type<T>[]` 模式（含可选泛型和数组标记）
+    text = text.replace(/:\s*[A-Za-z_][\w]*(\s*<[^>]*>)?(\s*\[\])*/g, '');
+    // 移除 `as Type` 模式
+    text = text.replace(/\bas\b\s+[A-Za-z_][\w]*/g, '');
+    return text;
+}
+
+/**
+ * 剥离装饰器（用于方法级克隆检测）
+ *
+ * 移除 ArkTS/TypeScript 中的装饰器，包括：
+ * - 简单装饰器 `@Decorator`
+ * - 带参数装饰器 `@Decorator(args)`
+ */
+export function stripDecorators(text: string): string {
+    // 移除 @Decorator 或 @Decorator(...) 模式
+    text = text.replace(/@[A-Za-z_][\w]*(\s*\([^)]*\))?/g, '');
     return text;
 }

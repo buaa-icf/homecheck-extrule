@@ -22,6 +22,15 @@ export interface TokenizerOptions {
     
     /** 是否规范化字面量（默认 false，用于 Type-2 检测时开启） */
     normalizeLiterals?: boolean;
+
+    /** 是否忽略类型注解（默认 false，开启后去除 : Type、as Type 等类型信息） */
+    ignoreTypes?: boolean;
+
+    /** 是否忽略装饰器（默认 false，开启后去除 @Decorator 及其参数） */
+    ignoreDecorators?: boolean;
+
+    /** 是否规范化单字符标识符（默认 false，即保留 i, j, x 等循环变量原样） */
+    normalizeSingleCharIdentifiers?: boolean;
 }
 
 /**
@@ -30,7 +39,10 @@ export interface TokenizerOptions {
 const DEFAULT_OPTIONS: TokenizerOptions = {
     skipComments: true,
     normalizeIdentifiers: false,
-    normalizeLiterals: false
+    normalizeLiterals: false,
+    ignoreTypes: false,
+    ignoreDecorators: false,
+    normalizeSingleCharIdentifiers: false
 };
 
 /**
@@ -254,7 +266,16 @@ export class Tokenizer {
             kind = scanner.scan();
         }
         
-        return tokens;
+        // 后处理过滤
+        let filteredTokens = tokens;
+        if (this.options.ignoreDecorators) {
+            filteredTokens = this.filterDecorators(filteredTokens);
+        }
+        if (this.options.ignoreTypes) {
+            filteredTokens = this.filterTypeAnnotations(filteredTokens);
+        }
+
+        return filteredTokens;
     }
     
     /**
@@ -283,8 +304,8 @@ export class Tokenizer {
      * 注意：单字母标识符不规范化（如 i, j, x），因为它们通常是循环变量
      */
     private normalizeIdentifier(value: string): string {
-        // 单字母不规范化
-        if (value.length <= 1) {
+        // 单字母标识符：根据配置决定是否规范化
+        if (!this.options.normalizeSingleCharIdentifiers && value.length <= 1) {
             return value;
         }
         
@@ -332,6 +353,141 @@ export class Tokenizer {
         }
         
         return value;
+    }
+
+    /**
+     * 过滤类型注解 Token
+     *
+     * 状态机识别类型注解模式：
+     * - `: Type` (变量/参数类型标注)
+     * - `: Type<T>` (泛型类型)
+     * - `as Type` (类型断言)
+     *
+     * 移除冒号/as 及其后续类型 Token，直到遇到终止符
+     */
+    private filterTypeAnnotations(tokens: Token[]): Token[] {
+        const result: Token[] = [];
+        let i = 0;
+
+        while (i < tokens.length) {
+            const token = tokens[i];
+
+            // 检测 `: Type` 模式
+            if (token.type === TokenType.PUNCTUATION && token.value === ':') {
+                // 跳过冒号和后续类型注解
+                i++; // skip ':'
+                i = this.skipTypeAnnotation(tokens, i);
+                continue;
+            }
+
+            // 检测 `as Type` 模式
+            if (token.type === TokenType.KEYWORD && token.value === 'as') {
+                i++; // skip 'as'
+                i = this.skipTypeAnnotation(tokens, i);
+                continue;
+            }
+
+            result.push(token);
+            i++;
+        }
+
+        return result;
+    }
+
+    /**
+     * 从当前位置跳过类型注解 Token
+     *
+     * 处理嵌套泛型 `<>` 和数组 `[]`，
+     * 遇到终止符 `=`, `,`, `)`, `{`, `;`, `=>`, `(` 时停止
+     */
+    private skipTypeAnnotation(tokens: Token[], index: number): number {
+        let i = index;
+        let angleDepth = 0;
+
+        while (i < tokens.length) {
+            const t = tokens[i];
+
+            // 处理泛型嵌套
+            if (t.type === TokenType.OPERATOR && t.value === '<') {
+                angleDepth++;
+                i++;
+                continue;
+            }
+            if (t.type === TokenType.OPERATOR && t.value === '>') {
+                if (angleDepth > 0) {
+                    angleDepth--;
+                    i++;
+                    continue;
+                }
+                // angleDepth == 0, '>' is a terminator
+                return i;
+            }
+
+            // 在泛型内部，继续消费
+            if (angleDepth > 0) {
+                i++;
+                continue;
+            }
+
+            // 终止符：停止跳过
+            if (t.type === TokenType.OPERATOR && (t.value === '=' || t.value === '=>')) {
+                return i;
+            }
+            if (t.type === TokenType.PUNCTUATION &&
+                (t.value === ',' || t.value === ')' || t.value === '{' || t.value === ';' || t.value === '(')) {
+                return i;
+            }
+
+            // 数组标记 [] 是类型的一部分，继续跳过
+            // 标识符、关键字（如 void, string, number）也是类型的一部分
+            i++;
+        }
+
+        return i;
+    }
+
+    /**
+     * 过滤装饰器 Token
+     *
+     * 移除 `@` 及其后续标识符，以及可能的参数列表 `(...)`
+     */
+    private filterDecorators(tokens: Token[]): Token[] {
+        const result: Token[] = [];
+        let i = 0;
+
+        while (i < tokens.length) {
+            const token = tokens[i];
+
+            // 检测装饰器 @ 符号
+            if (token.type === TokenType.DECORATOR) {
+                i++; // skip '@'
+
+                // 跳过装饰器名称（标识符）
+                if (i < tokens.length && tokens[i].type === TokenType.IDENTIFIER) {
+                    i++; // skip decorator name
+                }
+
+                // 如果有参数列表，跳过 (...)
+                if (i < tokens.length && tokens[i].type === TokenType.PUNCTUATION && tokens[i].value === '(') {
+                    let parenDepth = 1;
+                    i++; // skip '('
+                    while (i < tokens.length && parenDepth > 0) {
+                        if (tokens[i].type === TokenType.PUNCTUATION && tokens[i].value === '(') {
+                            parenDepth++;
+                        } else if (tokens[i].type === TokenType.PUNCTUATION && tokens[i].value === ')') {
+                            parenDepth--;
+                        }
+                        i++;
+                    }
+                }
+                continue;
+            }
+
+            result.push(token);
+            i++;
+        }
+
+        return result;
     }
     
     /**

@@ -5,7 +5,7 @@
  */
 
 import { Token } from './Token';
-import { TokenWindow, createSlidingWindows } from './SlidingWindow';
+import { createSlidingWindows } from './SlidingWindow';
 import { HashIndex, FragmentLocation, computeWindowHash, createLocationFromWindow } from './HashIndex';
 
 /**
@@ -64,10 +64,9 @@ export class CloneMatcher {
      */
     processFile(tokens: Token[], file: string): void {
         const windows = createSlidingWindows(tokens, this.windowSize);
-        
         for (const window of windows) {
-            const hash = computeWindowHash(window);
-            const location = createLocationFromWindow(window, file);
+            const { hash, tokenFingerprint } = computeWindowHash(window);
+            const location = createLocationFromWindow(window, file, tokenFingerprint);
             this.hashIndex.add(hash, location);
         }
     }
@@ -96,20 +95,33 @@ export class CloneMatcher {
     getClonePairs(): ClonePair[] {
         const matches = this.getMatches();
         const pairs: ClonePair[] = [];
-        
         for (const match of matches) {
-            // 两两配对
-            for (let i = 0; i < match.locations.length; i++) {
-                for (let j = i + 1; j < match.locations.length; j++) {
-                    pairs.push({
-                        location1: match.locations[i],
-                        location2: match.locations[j],
-                        tokenCount: this.windowSize
-                    });
+            // 按 tokenFingerprint 分组，验证哈希碰撞
+            const fingerprintGroups = new Map<string, FragmentLocation[]>();
+            for (const loc of match.locations) {
+                const existing = fingerprintGroups.get(loc.tokenFingerprint);
+                if (existing) {
+                    existing.push(loc);
+                } else {
+                    fingerprintGroups.set(loc.tokenFingerprint, [loc]);
+                }
+            }
+            // 只有 tokenFingerprint 完全相同的位置才是真正的克隆
+            for (const group of fingerprintGroups.values()) {
+                if (group.length < 2) {
+                    continue;  // 哈希碰撞，跳过
+                }
+                for (let i = 0; i < group.length; i++) {
+                    for (let j = i + 1; j < group.length; j++) {
+                        pairs.push({
+                            location1: group[i],
+                            location2: group[j],
+                            tokenCount: this.windowSize
+                        });
+                    }
                 }
             }
         }
-        
         return pairs;
     }
     

@@ -172,10 +172,10 @@ describe('哈希计算', () => {
         const tokens = mockTokens(['a', 'b', 'c']);
         const windows = createSlidingWindows(tokens, 3);
         
-        const hash = computeWindowHash(windows[0]);
+        const result = computeWindowHash(windows[0]);
         const expectedHash = djb2Hash('a|b|c');
-        
-        expect(hash).toBe(expectedHash);
+        expect(result.hash).toBe(expectedHash);
+        expect(result.tokenFingerprint).toBe('a|b|c');
     });
 });
 
@@ -186,7 +186,7 @@ describe('哈希计算', () => {
 describe('哈希索引', () => {
     test('add 和 get 应正确存取', () => {
         const index = new HashIndex();
-        const location = { file: 'test.ets', startIndex: 0, startLine: 1, endLine: 5 };
+        const location = { file: 'test.ets', startIndex: 0, startLine: 1, endLine: 5, tokenFingerprint: '' };
         
         index.add('hash1', location);
         
@@ -196,8 +196,8 @@ describe('哈希索引', () => {
     
     test('相同哈希应累积位置', () => {
         const index = new HashIndex();
-        const loc1 = { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5 };
-        const loc2 = { file: 'b.ets', startIndex: 100, startLine: 10, endLine: 15 };
+        const loc1 = { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5, tokenFingerprint: '' };
+        const loc2 = { file: 'b.ets', startIndex: 100, startLine: 10, endLine: 15, tokenFingerprint: '' };
         
         index.add('hash1', loc1);
         index.add('hash1', loc2);
@@ -209,11 +209,11 @@ describe('哈希索引', () => {
         const index = new HashIndex();
         
         // 添加一个只出现一次的哈希
-        index.add('unique', { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5 });
+        index.add('unique', { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5, tokenFingerprint: '' });
         
         // 添加一个出现两次的哈希
-        index.add('duplicate', { file: 'a.ets', startIndex: 10, startLine: 10, endLine: 15 });
-        index.add('duplicate', { file: 'b.ets', startIndex: 20, startLine: 20, endLine: 25 });
+        index.add('duplicate', { file: 'a.ets', startIndex: 10, startLine: 10, endLine: 15, tokenFingerprint: '' });
+        index.add('duplicate', { file: 'b.ets', startIndex: 20, startLine: 20, endLine: 25, tokenFingerprint: '' });
         
         const duplicates = index.getDuplicates();
         
@@ -225,9 +225,9 @@ describe('哈希索引', () => {
     test('size 应返回不同哈希的数量', () => {
         const index = new HashIndex();
         
-        index.add('hash1', { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5 });
-        index.add('hash2', { file: 'a.ets', startIndex: 10, startLine: 10, endLine: 15 });
-        index.add('hash1', { file: 'b.ets', startIndex: 20, startLine: 20, endLine: 25 });
+        index.add('hash1', { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5, tokenFingerprint: '' });
+        index.add('hash2', { file: 'a.ets', startIndex: 10, startLine: 10, endLine: 15, tokenFingerprint: '' });
+        index.add('hash1', { file: 'b.ets', startIndex: 20, startLine: 20, endLine: 25, tokenFingerprint: '' });
         
         expect(index.size()).toBe(2);
     });
@@ -235,7 +235,7 @@ describe('哈希索引', () => {
     test('clear 应清空索引', () => {
         const index = new HashIndex();
         
-        index.add('hash1', { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5 });
+        index.add('hash1', { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5, tokenFingerprint: '' });
         index.clear();
         
         expect(index.size()).toBe(0);
@@ -373,8 +373,8 @@ describe('连续匹配检测', () => {
         file2: string, startIndex2: number, startLine2: number
     ): ClonePair {
         return {
-            location1: { file: file1, startIndex: startIndex1, startLine: startLine1, endLine: startLine1 + 2 },
-            location2: { file: file2, startIndex: startIndex2, startLine: startLine2, endLine: startLine2 + 2 },
+            location1: { file: file1, startIndex: startIndex1, startLine: startLine1, endLine: startLine1 + 2, tokenFingerprint: '' },
+            location2: { file: file2, startIndex: startIndex2, startLine: startLine2, endLine: startLine2 + 2, tokenFingerprint: '' },
             tokenCount: 3
         };
     }
@@ -414,8 +414,8 @@ describe('片段合并算法', () => {
         file2: string, startIndex2: number, startLine2: number
     ): ClonePair {
         return {
-            location1: { file: file1, startIndex: startIndex1, startLine: startLine1, endLine: startLine1 + 2 },
-            location2: { file: file2, startIndex: startIndex2, startLine: startLine2, endLine: startLine2 + 2 },
+            location1: { file: file1, startIndex: startIndex1, startLine: startLine1, endLine: startLine1 + 2, tokenFingerprint: '' },
+            location2: { file: file2, startIndex: startIndex2, startLine: startLine2, endLine: startLine2 + 2, tokenFingerprint: '' },
             tokenCount: 3
         };
     }
@@ -493,13 +493,13 @@ describe('CloneMerger 类', () => {
         
         const pairs: ClonePair[] = [
             {
-                location1: { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 3 },
-                location2: { file: 'b.ets', startIndex: 10, startLine: 5, endLine: 7 },
+                location1: { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 3, tokenFingerprint: '' },
+                location2: { file: 'b.ets', startIndex: 10, startLine: 5, endLine: 7, tokenFingerprint: '' },
                 tokenCount: 3
             },
             {
-                location1: { file: 'a.ets', startIndex: 1, startLine: 1, endLine: 3 },
-                location2: { file: 'b.ets', startIndex: 11, startLine: 5, endLine: 7 },
+                location1: { file: 'a.ets', startIndex: 1, startLine: 1, endLine: 3, tokenFingerprint: '' },
+                location2: { file: 'b.ets', startIndex: 11, startLine: 5, endLine: 7, tokenFingerprint: '' },
                 tokenCount: 3
             }
         ];

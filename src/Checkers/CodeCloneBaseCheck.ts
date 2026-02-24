@@ -45,6 +45,7 @@ export interface MethodInfo {
     startLine: number;
     endLine: number;
     hash: string;  // 计算后的哈希值
+    normalizedContent: string;  // 规范化后的内容，用于哈希碰撞验证
     stmtCount: number;
 }
 
@@ -80,6 +81,9 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
     // 最小方法语句数阈值
     protected readonly DEFAULT_MIN_STMTS = 5;
 
+    // 最小复杂度阈值（不同规范化 token 数），0 = 禁用
+    protected readonly DEFAULT_MIN_COMPLEXITY = 0;
+
     // 存储所有方法信息，按哈希值分组
     protected methodsByHash: Map<string, MethodInfo[]> = new Map();
 
@@ -97,9 +101,10 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
     protected abstract getCloneType(): string;
 
     /**
-     * 计算方法的哈希值（子类实现不同的规范化策略）
+     * 计算方法的哈希值和规范化内容（子类实现不同的规范化策略）
+     * 返回 { hash, normalizedContent } 用于哈希碰撞验证
      */
-    protected abstract computeHash(stmts: Stmt[]): string;
+    protected abstract computeHash(stmts: Stmt[]): { hash: string; normalizedContent: string };
 
     /**
      * 生成问题描述（子类可覆盖）
@@ -193,8 +198,17 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
             return null;  // 过滤后没有语句了
         }
 
-        // 计算哈希值（由子类实现具体算法）
-        const hash = this.computeHash(stmts);
+        // 计算哈希值和规范化内容（由子类实现具体算法）
+        const { hash, normalizedContent } = this.computeHash(stmts);
+
+        // 复杂度门控：如果不同 token 数量低于阈值，则跳过
+        const minComplexity = this.getMinComplexity();
+        if (minComplexity > 0) {
+            const distinctTokens = new Set(normalizedContent.split(/\s+|\|/).filter(t => t.length > 0)).size;
+            if (distinctTokens < minComplexity) {
+                return null;
+            }
+        }
         
         // 获取起止行号（使用原始语句列表，保留完整范围）
         const startLine = method.getLine() ?? 0;
@@ -208,6 +222,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
             startLine,
             endLine,
             hash,
+            normalizedContent,
             stmtCount: stmts.length  // 使用过滤后的语句数
         };
     }
@@ -250,16 +265,32 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      */
     protected findClonePairs(): void {
         for (const methods of this.methodsByHash.values()) {
-            // 如果有多个方法具有相同的哈希值，它们是克隆
+            // 如果有多个方法具有相同的哈希值，进行碰撞验证后配对
             if (methods.length >= 2) {
-                // 两两配对
-                for (let i = 0; i < methods.length; i++) {
-                    for (let j = i + 1; j < methods.length; j++) {
-                        const pair: ClonePair = {
-                            method1: methods[i],
-                            method2: methods[j]
-                        };
-                        this.reportClonePair(pair);
+                // 按 normalizedContent 分组，验证哈希碰撞
+                const contentGroups = new Map<string, MethodInfo[]>();
+                for (const m of methods) {
+                    const existing = contentGroups.get(m.normalizedContent);
+                    if (existing) {
+                        existing.push(m);
+                    } else {
+                        contentGroups.set(m.normalizedContent, [m]);
+                    }
+                }
+
+                // 只有 normalizedContent 完全相同的方法才是真正的克隆
+                for (const group of contentGroups.values()) {
+                    if (group.length < 2) {
+                        continue;  // 哈希碰撞，跳过
+                    }
+                    for (let i = 0; i < group.length; i++) {
+                        for (let j = i + 1; j < group.length; j++) {
+                            const pair: ClonePair = {
+                                method1: group[i],
+                                method2: group[j]
+                            };
+                            this.reportClonePair(pair);
+                        }
                     }
                 }
             }
@@ -347,6 +378,45 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
     protected getIgnoreLogs(): boolean {
         const option = getRuleOption(this.rule, { ignoreLogs: true });
         return option.ignoreLogs;
+    }
+
+    /**
+     * 从配置中获取是否忽略类型注解
+     *
+     * 类型注解（: string, : number, as Type 等）在 Type-1/Type-2 检测中
+     * 可能导致仅类型不同的方法被认为不同。开启后可减少此类误报。
+     *
+     * 默认值：false（不忽略）
+     */
+    protected getIgnoreTypes(): boolean {
+        const option = getRuleOption(this.rule, { ignoreTypes: false });
+        return option.ignoreTypes;
+    }
+
+    /**
+     * 从配置中获取是否忽略装饰器
+     *
+     * 装饰器（@Component, @State 等）在 ArkTS 中广泛使用，
+     * 可能导致仅装饰器不同的方法被认为不同。开启后可减少此类误报。
+     *
+     * 默认值：false（不忽略）
+     */
+    protected getIgnoreDecorators(): boolean {
+        const option = getRuleOption(this.rule, { ignoreDecorators: false });
+        return option.ignoreDecorators;
+    }
+
+    /**
+     * 从配置中获取最小复杂度阈值
+     *
+     * 复杂度以方法规范化内容中不同 token 的数量衡量。
+     * 低于阈值的方法被认为过于简单（如纯 getter/setter），将被跳过。
+     *
+     * 默认值：0（禁用，不过滤任何方法）
+     */
+    protected getMinComplexity(): number {
+        const option = getRuleOption(this.rule, { minComplexity: this.DEFAULT_MIN_COMPLEXITY });
+        return option.minComplexity;
     }
 
     /**

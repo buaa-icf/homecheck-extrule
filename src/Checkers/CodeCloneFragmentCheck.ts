@@ -103,7 +103,10 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     private readonly DEFAULT_MINIMUM_TOKENS = 100;
     private readonly DEFAULT_NORMALIZE_IDENTIFIERS = true;
     private readonly DEFAULT_NORMALIZE_LITERALS = false;
+    private readonly DEFAULT_IGNORE_TYPES = false;
+    private readonly DEFAULT_IGNORE_DECORATORS = false;
     private readonly DEFAULT_IGNORE_LOGS = true;
+    private readonly DEFAULT_MIN_DISTINCT_TOKEN_TYPES = 0;
 
     // 克隆匹配器和合并器
     private cloneMatcher: CloneMatcher;
@@ -124,7 +127,9 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         this.cloneMerger = new CloneMerger(windowSize);
         this.tokenizer = new Tokenizer({
             normalizeIdentifiers: this.DEFAULT_NORMALIZE_IDENTIFIERS,
-            normalizeLiterals: this.DEFAULT_NORMALIZE_LITERALS
+            normalizeLiterals: this.DEFAULT_NORMALIZE_LITERALS,
+            ignoreTypes: this.DEFAULT_IGNORE_TYPES,
+            ignoreDecorators: this.DEFAULT_IGNORE_DECORATORS
         });
     }
 
@@ -141,7 +146,9 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         this.cloneMerger = new CloneMerger(minimumTokens);
         this.tokenizer = new Tokenizer({
             normalizeIdentifiers,
-            normalizeLiterals
+            normalizeLiterals,
+            ignoreTypes: this.getIgnoreTypes(),
+            ignoreDecorators: this.getIgnoreDecorators()
         });
 
         this.fileCache.clear();
@@ -188,6 +195,15 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
 
             if (tokens.length < minimumTokens) {
                 return;
+            }
+
+            // 复杂度门控：如果不同 token 类型数量低于阈值，则跳过该文件
+            const minDistinctTokenTypes = this.getMinDistinctTokenTypes();
+            if (minDistinctTokenTypes > 0) {
+                const distinctTypes = new Set(tokens.map(t => t.type)).size;
+                if (distinctTypes < minDistinctTokenTypes) {
+                    return;
+                }
             }
 
             // 送入匹配器
@@ -510,7 +526,10 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             minimumTokens: this.DEFAULT_MINIMUM_TOKENS,
             normalizeIdentifiers: this.DEFAULT_NORMALIZE_IDENTIFIERS,
             normalizeLiterals: this.DEFAULT_NORMALIZE_LITERALS,
-            ignoreLogs: this.DEFAULT_IGNORE_LOGS
+            ignoreTypes: this.DEFAULT_IGNORE_TYPES,
+            ignoreDecorators: this.DEFAULT_IGNORE_DECORATORS,
+            ignoreLogs: this.DEFAULT_IGNORE_LOGS,
+            minDistinctTokenTypes: this.DEFAULT_MIN_DISTINCT_TOKEN_TYPES
         });
     }
 
@@ -528,5 +547,25 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
 
     private getNormalizeLiterals(): boolean {
         return this.getConfig().normalizeLiterals;
+    }
+
+    private getIgnoreTypes(): boolean {
+        return this.getConfig().ignoreTypes;
+    }
+
+    private getIgnoreDecorators(): boolean {
+        return this.getConfig().ignoreDecorators;
+    }
+
+    /**
+     * 从配置中获取最小不同 token 类型数阈值
+     *
+     * 用于过滤过于简单的文件（例如只包含关键字和标点的简单声明文件）。
+     * 只有当文件的 token 类型多样性达到阈值时才进行克隆检测。
+     *
+     * 默认值：0（禁用，不过滤任何文件）
+     */
+    private getMinDistinctTokenTypes(): number {
+        return this.getConfig().minDistinctTokenTypes;
     }
 }
