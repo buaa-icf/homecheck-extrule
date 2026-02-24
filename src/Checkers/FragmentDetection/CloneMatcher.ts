@@ -1,12 +1,13 @@
 /**
  * 克隆匹配器模块
  * 
- * 实现克隆片段的检测和匹配
+ * 使用 Rabin-Karp 滚动哈希实现 O(n) 的克隆片段检测和匹配。
+ * 指纹验证采用惰性计算，仅在哈希碰撞时才生成指纹。
  */
 
 import { Token } from './Token';
-import { createSlidingWindows } from './SlidingWindow';
-import { HashIndex, FragmentLocation, computeWindowHash, createLocationFromWindow } from './HashIndex';
+import { HashIndex, FragmentLocation, computeFingerprint } from './HashIndex';
+import { RollingHash } from './RollingHash';
 
 /**
  * 克隆匹配结果
@@ -36,7 +37,8 @@ export interface ClonePair {
 /**
  * 克隆匹配器
  * 
- * 使用滑动窗口 + 哈希的方式检测代码克隆
+ * 使用 Rabin-Karp 滚动哈希 + 惰性指纹验证检测代码克隆。
+ * 相比旧的 O(n*k) 滑动窗口方案，哈希计算降为 O(n)。
  */
 export class CloneMatcher {
     /** 哈希索引 */
@@ -44,6 +46,12 @@ export class CloneMatcher {
     
     /** 窗口大小（最小重复 Token 数） */
     private windowSize: number;
+
+    /** Token 词汇表：token value → 整数 ID */
+    private tokenVocab: Map<string, number> = new Map();
+
+    /** 每个文件的 Token 序列引用（用于惰性指纹计算） */
+    private fileTokens: Map<string, Token[]> = new Map();
     
     /**
      * 构造函数
@@ -53,21 +61,72 @@ export class CloneMatcher {
     constructor(windowSize: number = 100) {
         this.windowSize = windowSize;
     }
+
+    /**
+     * 将 Token 值映射为整数 ID
+     * 
+     * @param tokenValue Token 的值
+     * @returns 整数 ID
+     */
+    private getTokenId(tokenValue: string): number {
+        const existing = this.tokenVocab.get(tokenValue);
+        if (existing !== undefined) {
+            return existing;
+        }
+        // ID 从 1 开始，避免 0 导致哈希退化
+        const id = this.tokenVocab.size + 1;
+        this.tokenVocab.set(tokenValue, id);
+        return id;
+    }
     
     /**
      * 处理单个文件的 Token 序列
      * 
-     * 将文件中所有窗口的哈希添加到索引
+     * 使用 Rabin-Karp 滚动哈希在 O(n) 时间内计算所有窗口哈希，
+     * 不再需要逐个创建滑动窗口。指纹验证延迟到 getClonePairs() 阶段。
      * 
      * @param tokens Token 序列
      * @param file 文件路径
      */
     processFile(tokens: Token[], file: string): void {
-        const windows = createSlidingWindows(tokens, this.windowSize);
-        for (const window of windows) {
-            const { hash, tokenFingerprint } = computeWindowHash(window);
-            const location = createLocationFromWindow(window, file, tokenFingerprint);
-            this.hashIndex.add(hash, location);
+        if (tokens.length < this.windowSize) {
+            return;
+        }
+
+        // 保存 Token 序列引用，用于惰性指纹计算
+        this.fileTokens.set(file, tokens);
+
+        // 将 Token 值映射为整数 ID
+        const tokenIds = tokens.map(t => this.getTokenId(t.value));
+
+        const rollingHash = new RollingHash(this.windowSize);
+
+        // 初始化首个窗口
+        const firstHash = rollingHash.init(tokenIds.slice(0, this.windowSize));
+        const firstEndLine = tokens[this.windowSize - 1].line;
+
+        this.hashIndex.add(firstHash, {
+            file,
+            startIndex: 0,
+            startLine: tokens[0].line,
+            endLine: firstEndLine,
+            allTokens: tokens
+        });
+
+        // 滑动计算后续窗口（每步 O(1)）
+        for (let i = 1; i <= tokens.length - this.windowSize; i++) {
+            const hash = rollingHash.slide(
+                tokenIds[i - 1],
+                tokenIds[i + this.windowSize - 1]
+            );
+
+            this.hashIndex.add(hash, {
+                file,
+                startIndex: i,
+                startLine: tokens[i].line,
+                endLine: tokens[i + this.windowSize - 1].line,
+                allTokens: tokens
+            });
         }
     }
     
@@ -88,7 +147,8 @@ export class CloneMatcher {
     /**
      * 获取所有克隆对
      * 
-     * 将每个匹配展开为两两配对
+     * 惰性指纹验证：仅当同一哈希值下有多个位置时，
+     * 才计算 tokenFingerprint 进行碰撞排除。
      * 
      * @returns 克隆对列表
      */
@@ -96,17 +156,18 @@ export class CloneMatcher {
         const matches = this.getMatches();
         const pairs: ClonePair[] = [];
         for (const match of matches) {
-            // 按 tokenFingerprint 分组，验证哈希碰撞
+            // 惰性计算指纹，按指纹分组验证碰撞
             const fingerprintGroups = new Map<string, FragmentLocation[]>();
             for (const loc of match.locations) {
-                const existing = fingerprintGroups.get(loc.tokenFingerprint);
+                const fingerprint = this.resolveFingerprint(loc);
+                const existing = fingerprintGroups.get(fingerprint);
                 if (existing) {
                     existing.push(loc);
                 } else {
-                    fingerprintGroups.set(loc.tokenFingerprint, [loc]);
+                    fingerprintGroups.set(fingerprint, [loc]);
                 }
             }
-            // 只有 tokenFingerprint 完全相同的位置才是真正的克隆
+            // 只有指纹完全相同的位置才是真正的克隆
             for (const group of fingerprintGroups.values()) {
                 if (group.length < 2) {
                     continue;  // 哈希碰撞，跳过
@@ -124,6 +185,31 @@ export class CloneMatcher {
         }
         return pairs;
     }
+
+    /**
+     * 解析位置的 Token 指纹
+     * 
+     * 如果已有 tokenFingerprint 则直接使用，
+     * 否则从 allTokens 惰性计算。
+     */
+    private resolveFingerprint(loc: FragmentLocation): string {
+        if (loc.tokenFingerprint) {
+            return loc.tokenFingerprint;
+        }
+        if (loc.allTokens) {
+            const fp = computeFingerprint(loc.allTokens, loc.startIndex, this.windowSize);
+            loc.tokenFingerprint = fp;
+            return fp;
+        }
+        // 兜底：从 fileTokens 中获取
+        const tokens = this.fileTokens.get(loc.file);
+        if (tokens) {
+            const fp = computeFingerprint(tokens, loc.startIndex, this.windowSize);
+            loc.tokenFingerprint = fp;
+            return fp;
+        }
+        return '';
+    }
     
     /**
      * 获取索引大小
@@ -137,6 +223,8 @@ export class CloneMatcher {
      */
     clear(): void {
         this.hashIndex.clear();
+        this.tokenVocab.clear();
+        this.fileTokens.clear();
     }
     
     /**

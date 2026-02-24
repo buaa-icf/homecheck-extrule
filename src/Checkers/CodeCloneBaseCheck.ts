@@ -55,6 +55,8 @@ export interface MethodInfo {
 export interface ClonePair {
     method1: MethodInfo;
     method2: MethodInfo;
+    /** 相似度（1.0 = 完全相同，< 1.0 = 近似克隆） */
+    similarity?: number;
 }
 
 /**
@@ -84,6 +86,12 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
     // 最小复杂度阈值（不同规范化 token 数），0 = 禁用
     protected readonly DEFAULT_MIN_COMPLEXITY = 0;
 
+    // 近似克隆：相似度阈值（1.0 = 仅报告完全相同，0.8 = 报告 80% 以上相似）
+    protected readonly DEFAULT_SIMILARITY_THRESHOLD = 1.0;
+
+    // 是否启用克隆类分组
+    protected readonly DEFAULT_ENABLE_CLONE_CLASSES = false;
+
     // 存储所有方法信息，按哈希值分组
     protected methodsByHash: Map<string, MethodInfo[]> = new Map();
 
@@ -109,7 +117,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
     /**
      * 生成问题描述（子类可覆盖）
      */
-    protected getDescription(method: MethodInfo, cloneWith: MethodInfo): string {
+    protected getDescription(method: MethodInfo, cloneWith: MethodInfo, pair?: ClonePair): string {
         const cloneFileName = cloneWith.filePath.split('/').pop() ?? cloneWith.filePath;
         return `Code Clone ${this.getCloneType()}: Method '${method.methodName}' (lines ${method.startLine}-${method.endLine}) ` +
             `is identical to '${cloneWith.className}.${cloneWith.methodName}' in ${cloneFileName}:${cloneWith.startLine}-${cloneWith.endLine}. ` +
@@ -176,6 +184,11 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      */
     public afterCheck(): void {
         this.findClonePairs();
+        // 近似克隆检测（仅当 similarityThreshold < 1.0 时启用）
+        const threshold = this.getSimilarityThreshold();
+        if (threshold < 1.0) {
+            this.findNearMissClones(threshold);
+        }
     }
 
     /**
@@ -309,7 +322,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
         this.reportedPairs.add(pairKey);
 
         // 为第一个方法生成报告
-        this.addIssueReport(pair.method1, pair.method2);
+        this.addIssueReport(pair.method1, pair.method2, pair);
     }
 
     /**
@@ -325,9 +338,9 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
     /**
      * 添加问题报告
      */
-    protected addIssueReport(method: MethodInfo, cloneWith: MethodInfo): void {
+    protected addIssueReport(method: MethodInfo, cloneWith: MethodInfo, pair?: ClonePair): void {
         const severity = this.rule?.alert ?? this.metaData.severity;
-        const description = this.getDescription(method, cloneWith);
+        const description = this.getDescription(method, cloneWith, pair);
 
         this.issues.push(createDefects({
             line: method.startLine,
@@ -417,6 +430,123 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
     protected getMinComplexity(): number {
         const option = getRuleOption(this.rule, { minComplexity: this.DEFAULT_MIN_COMPLEXITY });
         return option.minComplexity;
+    }
+
+    /**
+     * 从配置中获取近似克隆相似度阈值
+     *
+     * 设为 1.0 时仅报告完全相同的克隆（默认行为）。
+     * 设为 0.8 时，还会报告 80% 以上相似的方法对。
+     *
+     * 默认值：1.0（禁用近似克隆检测，保持向后兼容）
+     */
+    protected getSimilarityThreshold(): number {
+        const option = getRuleOption(this.rule, { similarityThreshold: this.DEFAULT_SIMILARITY_THRESHOLD });
+        return option.similarityThreshold;
+    }
+
+    /**
+     * 从配置中获取是否启用克隆类分组
+     *
+     * 默认值：false（不启用）
+     */
+    protected getEnableCloneClasses(): boolean {
+        const option = getRuleOption(this.rule, { enableCloneClasses: this.DEFAULT_ENABLE_CLONE_CLASSES });
+        return option.enableCloneClasses;
+    }
+
+    /**
+     * 计算两个规范化内容的 Jaccard 相似度
+     *
+     * 将内容按 '|' 分割为 token 多重集合，
+     * 计算 Σmin(count1, count2) / Σmax(count1, count2)。
+     *
+     * @param content1 规范化内容 1
+     * @param content2 规范化内容 2
+     * @returns 相似度 [0, 1]
+     */
+    protected computeJaccardSimilarity(content1: string, content2: string): number {
+        const buildMultiset = (content: string): Map<string, number> => {
+            const multiset = new Map<string, number>();
+            for (const token of content.split('|')) {
+                if (token.length === 0) continue;
+                multiset.set(token, (multiset.get(token) ?? 0) + 1);
+            }
+            return multiset;
+        };
+
+        const set1 = buildMultiset(content1);
+        const set2 = buildMultiset(content2);
+
+        // 收集所有 key
+        const allKeys = new Set([...set1.keys(), ...set2.keys()]);
+
+        let sumMin = 0;
+        let sumMax = 0;
+        for (const key of allKeys) {
+            const c1 = set1.get(key) ?? 0;
+            const c2 = set2.get(key) ?? 0;
+            sumMin += Math.min(c1, c2);
+            sumMax += Math.max(c1, c2);
+        }
+
+        return sumMax === 0 ? 0 : sumMin / sumMax;
+    }
+
+    /**
+     * 查找近似克隆对
+     *
+     * 收集所有方法，按语句数进行长度比率分桶（±20%），
+     * 对桶内的方法对计算 Jaccard 相似度，
+     * 相似度 ≥ threshold 且 < 1.0 的对报告为近似克隆。
+     *
+     * @param threshold 相似度阈值
+     */
+    protected findNearMissClones(threshold: number): void {
+        // 收集所有方法（扁平化）
+        const allMethods: MethodInfo[] = [];
+        for (const methods of this.methodsByHash.values()) {
+            allMethods.push(...methods);
+        }
+
+        if (allMethods.length < 2) {
+            return;
+        }
+
+        // 按语句数排序，方便长度比率分桶
+        allMethods.sort((a, b) => a.stmtCount - b.stmtCount);
+
+        // 长度比率范围：0.8 ~ 1.25（即 1/1.25 ~ 1.25）
+        const RATIO_UPPER = 1.25;
+
+        for (let i = 0; i < allMethods.length; i++) {
+            for (let j = i + 1; j < allMethods.length; j++) {
+                const mi = allMethods[i];
+                const mj = allMethods[j];
+
+                // 长度比率过滤（已按 stmtCount 排序，mj >= mi）
+                if (mi.stmtCount > 0 && mj.stmtCount / mi.stmtCount > RATIO_UPPER) {
+                    break; // 后续的 j 只会更大，直接跳出
+                }
+
+                // 跳过完全相同的对（已被 findClonePairs 报告）
+                if (mi.normalizedContent === mj.normalizedContent) {
+                    continue;
+                }
+
+                // 计算 Jaccard 相似度
+                const similarity = this.computeJaccardSimilarity(mi.normalizedContent, mj.normalizedContent);
+
+                if (similarity >= threshold) {
+                    const pair: ClonePair = {
+                        method1: mi,
+                        method2: mj,
+                        similarity
+                    };
+                    this.reportClonePair(pair);
+                }
+            }
+        }
     }
 
     /**

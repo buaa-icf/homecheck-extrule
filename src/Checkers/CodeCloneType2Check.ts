@@ -15,7 +15,7 @@
 
 import { Stmt } from "arkanalyzer";
 import { BaseMetaData } from "homecheck";
-import { CodeCloneBaseCheck, MethodInfo } from "./CodeCloneBaseCheck";
+import { CodeCloneBaseCheck, ClonePair, MethodInfo } from "./CodeCloneBaseCheck";
 import { normalizeIdentifiers, normalizeLiterals } from "./utils";
 
 const gMetaData: BaseMetaData = {
@@ -82,8 +82,15 @@ export class CodeCloneType2Check extends CodeCloneBaseCheck {
      * - 数字（整数、小数、十六进制、科学计数法）→ NUM
      * - 字符串（双引号、单引号）→ STR
      */
-    protected getDescription(method: MethodInfo, cloneWith: MethodInfo): string {
+    protected getDescription(method: MethodInfo, cloneWith: MethodInfo, pair?: ClonePair): string {
         const cloneFileName = cloneWith.filePath.split('/').pop() ?? cloneWith.filePath;
+        // 近似克隆时显示相似度百分比
+        if (pair?.similarity !== undefined && pair.similarity < 1.0) {
+            const pct = Math.round(pair.similarity * 100);
+            return `Code Clone Type-2: Method '${method.methodName}' (lines ${method.startLine}-${method.endLine}) ` +
+                `is similar to '${cloneWith.className}.${cloneWith.methodName}' in ${cloneFileName}:${cloneWith.startLine}-${cloneWith.endLine}. ` +
+                `(${method.stmtCount} statements, ${pct}% similar)`;
+        }
         return `Code Clone Type-2: Method '${method.methodName}' (lines ${method.startLine}-${method.endLine}) ` +
             `is structurally identical to '${cloneWith.className}.${cloneWith.methodName}' in ${cloneFileName}:${cloneWith.startLine}-${cloneWith.endLine}. ` +
             `(${method.stmtCount} statements, renamed identifiers)`;

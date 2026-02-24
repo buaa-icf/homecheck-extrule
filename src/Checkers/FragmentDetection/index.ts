@@ -16,6 +16,7 @@ export {
     HashIndex,
     computeWindowHash,
     computeTokensHash,
+    computeFingerprint,
     createLocationFromWindow
 } from './HashIndex';
 
@@ -33,6 +34,13 @@ export {
     mergeClonePairs,
     CloneMerger
 } from './CloneMerger';
+
+export { UnionFind } from './UnionFind';
+
+export { CloneClass, CloneClassMember, classifyClones } from './CloneClassifier';
+
+// 滚动哈希
+export { RollingHash } from './RollingHash';
 
 // Tokenizer - ArkTS 词法分析器
 export {

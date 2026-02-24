@@ -25,7 +25,13 @@ export interface FragmentLocation {
     endLine: number;
 
     /** Token 指纹（规范化后的 Token 序列拼接），用于哈希碰撞验证 */
-    tokenFingerprint: string;
+    tokenFingerprint?: string;
+
+    /** 当前文件的 Token ID 序列引用（用于惰性校验） */
+    tokenIds?: number[];
+
+    /** 当前文件的 Token 序列引用（用于惰性生成指纹） */
+    allTokens?: Token[];
 }
 
 /**
@@ -95,16 +101,30 @@ export class HashIndex {
 }
 
 /**
+ * 计算指定窗口范围的 Token 指纹
+ *
+ * 仅拼接 Token 的 value 字段，保持与历史逻辑一致。
+ *
+ * @param tokens 完整 Token 序列
+ * @param startIndex 窗口起始索引
+ * @param windowSize 窗口大小
+ * @returns 指纹字符串
+ */
+export function computeFingerprint(tokens: Token[], startIndex: number, windowSize: number): string {
+    return tokens.slice(startIndex, startIndex + windowSize).map(t => t.value).join('|');
+}
+
+/**
  * 计算窗口的哈希值和 Token 指纹
  * 
  * 将窗口内的 Token 值拼接后计算哈希，同时返回拼接字符串作为指纹
  * 
  * @param window 窗口
  * @returns { hash, tokenFingerprint } 哈希值和 Token 指纹
+ * @deprecated 该函数仅用于兼容旧逻辑与测试，新实现请优先使用 RollingHash
  */
 export function computeWindowHash(window: TokenWindow): { hash: string; tokenFingerprint: string } {
-    // 使用 Token 的 value 拼接
-    const combined = window.tokens.map(t => t.value).join('|');
+    const combined = computeFingerprint(window.tokens, 0, window.tokens.length);
     return { hash: djb2Hash(combined), tokenFingerprint: combined };
 }
 

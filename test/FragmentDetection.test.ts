@@ -22,7 +22,10 @@ import {
     djb2Hash,
     computeWindowHash,
     computeTokensHash,
-    CloneMatcher
+    CloneMatcher,
+    classifyClones,
+    CloneClass,
+    UnionFind
 } from '../src/Checkers/FragmentDetection';
 import { isLogStatement } from '../src/Checkers/utils';
 
@@ -1674,5 +1677,303 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
             option: [{ ignoreLogs: true }]
         };
         expect(check.getIgnoreLogs()).toBe(true);
+    });
+});
+
+
+// ============================================================
+// Phase 2: RollingHash 测试
+// ============================================================
+
+import { RollingHash } from '../src/Checkers/FragmentDetection/RollingHash';
+
+describe('RollingHash', () => {
+    test('init 对相同 Token ID 返回一致的哈希', () => {
+        const rh1 = new RollingHash(3);
+        const rh2 = new RollingHash(3);
+        const ids = [10, 20, 30];
+        expect(rh1.init(ids)).toBe(rh2.init(ids));
+    });
+
+    test('不同 Token ID 产生不同哈希', () => {
+        const rh1 = new RollingHash(3);
+        const rh2 = new RollingHash(3);
+        const hash1 = rh1.init([10, 20, 30]);
+        const hash2 = rh2.init([40, 50, 60]);
+        expect(hash1).not.toBe(hash2);
+    });
+
+    test('slide 正确更新哈希（与 init 从零计算一致）', () => {
+        // 序列 [1, 2, 3, 4]，窗口大小 3
+        // 第一个窗口: [1, 2, 3]
+        // slide: 移除 1，加入 4 → 窗口 [2, 3, 4]
+        const rh1 = new RollingHash(3);
+        rh1.init([1, 2, 3]);
+        const slideHash = rh1.slide(1, 4);
+
+        // 直接初始化 [2, 3, 4] 应得到相同哈希
+        const rh2 = new RollingHash(3);
+        const directHash = rh2.init([2, 3, 4]);
+
+        expect(slideHash).toBe(directHash);
+    });
+
+    test('多步 slide 与逐窗口 init 一致', () => {
+        const sequence = [5, 12, 7, 99, 3, 42];
+        const windowSize = 3;
+        const rhSlide = new RollingHash(windowSize);
+        rhSlide.init(sequence.slice(0, windowSize));
+
+        for (let i = 1; i <= sequence.length - windowSize; i++) {
+            const slideHash = rhSlide.slide(sequence[i - 1], sequence[i + windowSize - 1]);
+            const rhDirect = new RollingHash(windowSize);
+            const directHash = rhDirect.init(sequence.slice(i, i + windowSize));
+            expect(slideHash).toBe(directHash);
+        }
+    });
+
+    test('windowSize=1 边界情况', () => {
+        const rh = new RollingHash(1);
+        const h1 = rh.init([42]);
+        expect(h1).toBeTruthy();
+
+        const h2 = rh.slide(42, 99);
+        const rh2 = new RollingHash(1);
+        expect(h2).toBe(rh2.init([99]));
+    });
+
+    test('windowSize=0 抛出异常', () => {
+        expect(() => new RollingHash(0)).toThrow('windowSize must be greater than 0');
+    });
+
+    test('init 长度不匹配抛出异常', () => {
+        const rh = new RollingHash(3);
+        expect(() => rh.init([1, 2])).toThrow('tokenIds length must equal windowSize');
+    });
+
+    test('getHashKey 返回 h1_h2 格式', () => {
+        const rh = new RollingHash(2);
+        const key = rh.init([1, 2]);
+        expect(key).toMatch(/^\d+_\d+$/);
+    });
+
+    test('负数 Token ID 不会导致问题', () => {
+        const rh = new RollingHash(3);
+        const hash = rh.init([-1, -2, -3]);
+        expect(hash).toBeTruthy();
+        expect(hash).toMatch(/^\d+_\d+$/);
+    });
+});
+
+// ============================================================
+// Phase 2: UnionFind 测试
+// ============================================================
+
+
+describe('UnionFind', () => {
+    test('find 自动创建新节点', () => {
+        const uf = new UnionFind();
+        expect(uf.find('a')).toBe('a');
+        expect(uf.find('b')).toBe('b');
+    });
+
+    test('union 合并两个集合', () => {
+        const uf = new UnionFind();
+        uf.union('a', 'b');
+        expect(uf.find('a')).toBe(uf.find('b'));
+    });
+
+    test('union 相同集合无副作用', () => {
+        const uf = new UnionFind();
+        uf.union('a', 'b');
+        const root = uf.find('a');
+        uf.union('a', 'b');
+        expect(uf.find('a')).toBe(root);
+    });
+
+    test('传递性合并: A-B, B-C → A,B,C 同一集合', () => {
+        const uf = new UnionFind();
+        uf.union('a', 'b');
+        uf.union('b', 'c');
+        expect(uf.find('a')).toBe(uf.find('c'));
+    });
+
+    test('getGroups 返回正确分组', () => {
+        const uf = new UnionFind();
+        uf.union('a', 'b');
+        uf.union('c', 'd');
+        uf.find('e'); // 单独节点
+
+        const groups = uf.getGroups();
+        // 至少 3 个组: {a,b}, {c,d}, {e}
+        expect(groups.size).toBe(3);
+
+        // 验证 a 和 b 在同一组
+        const rootA = uf.find('a');
+        expect(groups.get(rootA)).toContain('a');
+        expect(groups.get(rootA)).toContain('b');
+    });
+
+    test('路径压缩验证', () => {
+        const uf = new UnionFind();
+        // 构建链: a -> b -> c -> d
+        uf.union('a', 'b');
+        uf.union('b', 'c');
+        uf.union('c', 'd');
+
+        // find('a') 应触发路径压缩
+        const rootA = uf.find('a');
+        const rootD = uf.find('d');
+        expect(rootA).toBe(rootD);
+    });
+
+    test('按秩合并：大集合吸收小集合', () => {
+        const uf = new UnionFind();
+        // 构建较大集合
+        uf.union('a', 'b');
+        uf.union('a', 'c');
+        uf.union('a', 'd');
+
+        // 单节点
+        uf.find('x');
+
+        // 合并后 x 应加入 a 的集合
+        uf.union('x', 'a');
+        expect(uf.find('x')).toBe(uf.find('a'));
+    });
+});
+
+// ============================================================
+// Phase 2: CloneClassifier 测试
+// ============================================================
+
+
+describe('CloneClassifier', () => {
+    function makeMergedClone(
+        file1: string, sl1: number, el1: number, si1: number, ei1: number,
+        file2: string, sl2: number, el2: number, si2: number, ei2: number,
+        tokenCount: number = 100
+    ): MergedClone {
+        return {
+            location1: { file: file1, startLine: sl1, endLine: el1, startIndex: si1, endIndex: ei1 },
+            location2: { file: file2, startLine: sl2, endLine: el2, startIndex: si2, endIndex: ei2 },
+            tokenCount
+        };
+    }
+
+    test('空输入返回空', () => {
+        expect(classifyClones([])).toEqual([]);
+    });
+
+    test('单对克隆生成一个包含 2 成员的类', () => {
+        const clones = [makeMergedClone('a.ts', 1, 10, 0, 99, 'b.ts', 5, 14, 0, 99)];
+        const classes = classifyClones(clones);
+        expect(classes).toHaveLength(1);
+        expect(classes[0].members).toHaveLength(2);
+        expect(classes[0].classId).toBe(1);
+    });
+
+    test('传递性对 (A-B, B-C) 生成一个包含 3 成员的类', () => {
+        const clones = [
+            makeMergedClone('a.ts', 1, 10, 0, 99, 'b.ts', 1, 10, 0, 99),
+            makeMergedClone('b.ts', 1, 10, 0, 99, 'c.ts', 1, 10, 0, 99),
+        ];
+        const classes = classifyClones(clones);
+        expect(classes).toHaveLength(1);
+        expect(classes[0].members).toHaveLength(3);
+    });
+
+    test('不相交对生成多个独立类', () => {
+        const clones = [
+            makeMergedClone('a.ts', 1, 10, 0, 99, 'b.ts', 1, 10, 0, 99),
+            makeMergedClone('c.ts', 20, 30, 100, 199, 'd.ts', 20, 30, 100, 199),
+        ];
+        const classes = classifyClones(clones);
+        expect(classes).toHaveLength(2);
+        expect(classes[0].members).toHaveLength(2);
+        expect(classes[1].members).toHaveLength(2);
+    });
+
+    test('成员按 file → startLine → startIndex 排序', () => {
+        const clones = [
+            makeMergedClone('z.ts', 50, 60, 0, 99, 'a.ts', 1, 10, 0, 99),
+        ];
+        const classes = classifyClones(clones);
+        expect(classes[0].members[0].file).toBe('a.ts');
+        expect(classes[0].members[1].file).toBe('z.ts');
+    });
+
+    test('classId 从 1 递增', () => {
+        const clones = [
+            makeMergedClone('a.ts', 1, 10, 0, 99, 'b.ts', 1, 10, 0, 99),
+            makeMergedClone('c.ts', 1, 10, 0, 99, 'd.ts', 1, 10, 0, 99),
+        ];
+        const classes = classifyClones(clones);
+        expect(classes[0].classId).toBe(1);
+        expect(classes[1].classId).toBe(2);
+    });
+});
+
+// ============================================================
+// Phase 2: Jaccard 相似度测试
+// ============================================================
+
+import { CodeCloneBaseCheck } from '../src/Checkers/CodeCloneBaseCheck';
+
+describe('Jaccard 相似度 (computeJaccardSimilarity)', () => {
+    // 创建一个具体子类来测试 protected 方法
+    class TestableCheck extends CodeCloneBaseCheck {
+        readonly metaData = { severity: 2, ruleDocPath: '', description: '' };
+        protected getCloneType() { return 'Test'; }
+        protected computeHash(): { hash: string; normalizedContent: string } {
+            return { hash: '', normalizedContent: '' };
+        }
+        // 暴露 protected 方法
+        public testJaccard(c1: string, c2: string): number {
+            return this.computeJaccardSimilarity(c1, c2);
+        }
+    }
+
+    const check = new TestableCheck();
+
+    test('相同内容 → 1.0', () => {
+        expect(check.testJaccard('a|b|c', 'a|b|c')).toBe(1.0);
+    });
+
+    test('完全不同 → 0.0', () => {
+        expect(check.testJaccard('a|b|c', 'x|y|z')).toBe(0);
+    });
+
+    test('部分重叠 → 正确比率', () => {
+        // {a:1, b:1, c:1} vs {a:1, b:1, d:1}
+        // min: a=1, b=1, c=0, d=0 → 2
+        // max: a=1, b=1, c=1, d=1 → 4
+        // Jaccard = 2/4 = 0.5
+        expect(check.testJaccard('a|b|c', 'a|b|d')).toBe(0.5);
+    });
+
+    test('空内容 → 0', () => {
+        expect(check.testJaccard('', '')).toBe(0);
+    });
+
+    test('一边为空 → 0', () => {
+        expect(check.testJaccard('a|b', '')).toBe(0);
+    });
+
+    test('多重集合：重复 token 正确计数', () => {
+        // {a:2, b:1} vs {a:1, b:2}
+        // min: a=1, b=1 → 2
+        // max: a=2, b=2 → 4
+        // Jaccard = 2/4 = 0.5
+        expect(check.testJaccard('a|a|b', 'a|b|b')).toBe(0.5);
+    });
+
+    test('高相似度', () => {
+        // {a:5, b:5} vs {a:5, b:4, c:1}
+        // min: a=5, b=4, c=0 → 9
+        // max: a=5, b=5, c=1 → 11
+        // Jaccard = 9/11 ≈ 0.818
+        const result = check.testJaccard('a|a|a|a|a|b|b|b|b|b', 'a|a|a|a|a|b|b|b|b|c');
+        expect(result).toBeCloseTo(9 / 11, 5);
     });
 });

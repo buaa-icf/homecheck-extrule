@@ -37,7 +37,9 @@ import {
     Tokenizer,
     CloneMatcher,
     CloneMerger,
-    MergedClone
+    MergedClone,
+    CloneClass,
+    classifyClones
 } from "./FragmentDetection";
 
 /**
@@ -81,6 +83,16 @@ export interface FragmentCloneReport {
     lineCount: number;
 }
 
+/**
+ * 片段级克隆类报告
+ */
+export interface FragmentCloneClassReport {
+    cloneType: 'Type-1' | 'Type-2';
+    scope: CloneScope;
+    classId: number;
+    members: CodeLocation[];
+}
+
 const gMetaData: BaseMetaData = {
     severity: 2,
     ruleDocPath: "docs/code-clone-fragment-check.md",
@@ -107,6 +119,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     private readonly DEFAULT_IGNORE_DECORATORS = false;
     private readonly DEFAULT_IGNORE_LOGS = true;
     private readonly DEFAULT_MIN_DISTINCT_TOKEN_TYPES = 0;
+    private readonly DEFAULT_ENABLE_CLONE_CLASSES = false;
 
     // 克隆匹配器和合并器
     private cloneMatcher: CloneMatcher;
@@ -228,6 +241,14 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         // 合并连续片段
         const mergedClones = this.cloneMerger.merge(clonePairs);
 
+        if (this.getEnableCloneClasses()) {
+            const classReports = this.createCloneClassReports(mergedClones);
+            for (const report of classReports) {
+                this.addCloneClassIssueReport(report);
+            }
+            return;
+        }
+
         // 生成报告
         for (const clone of mergedClones) {
             const report = this.createCloneReport(clone);
@@ -236,6 +257,32 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             }
         }
 
+    }
+
+    private createCloneClassReports(clones: MergedClone[]): FragmentCloneClassReport[] {
+        const classes = classifyClones(clones);
+        const reports: FragmentCloneClassReport[] = [];
+
+        for (const cloneClass of classes) {
+            const members = cloneClass.members.map(member => this.resolveCodeLocation(
+                member.file,
+                member.startLine,
+                member.endLine
+            ));
+
+            if (members.length < 2) {
+                continue;
+            }
+
+            reports.push({
+                cloneType: this.determineCloneType(),
+                scope: this.determineClassScope(members),
+                classId: cloneClass.classId,
+                members
+            });
+        }
+
+        return reports;
     }
 
     /**
@@ -429,6 +476,54 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         }
     }
 
+    private determineClassScope(members: CodeLocation[]): CloneScope {
+        if (members.length < 2) {
+            return CloneScope.DIFFERENT_CLASS;
+        }
+
+        const first = members[0];
+        const allSameMethod = members.every(member =>
+            member.file === first.file &&
+            member.className === first.className &&
+            member.methodName === first.methodName &&
+            member.methodName !== undefined
+        );
+        if (allSameMethod) {
+            return CloneScope.SAME_METHOD;
+        }
+
+        const allSameClass = members.every(member =>
+            member.file === first.file &&
+            member.className === first.className &&
+            member.className !== undefined
+        );
+        if (allSameClass) {
+            return CloneScope.SAME_CLASS;
+        }
+
+        return CloneScope.DIFFERENT_CLASS;
+    }
+
+    private addCloneClassIssueReport(report: FragmentCloneClassReport): void {
+        const anchor = report.members[0];
+        const severity = this.rule?.alert ?? this.metaData.severity;
+        const scopeDesc = this.getScopeDescription(report.scope);
+        const memberDesc = report.members.map(member => this.formatLocation(member)).join('; ');
+        const description = `Code Clone ${report.cloneType} (${scopeDesc}) [Class #${report.classId}, ${report.members.length} members]: ${memberDesc}.`;
+
+        this.issues.push(createDefects({
+            line: anchor.startLine,
+            startCol: 0,
+            endCol: 0,
+            description,
+            severity,
+            ruleId: this.rule.ruleId,
+            filePath: anchor.file,
+            ruleDocPath: this.metaData.ruleDocPath,
+            methodName: anchor.methodName ?? ''
+        }));
+    }
+
     /**
      * 格式化位置信息
      * 
@@ -529,8 +624,13 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             ignoreTypes: this.DEFAULT_IGNORE_TYPES,
             ignoreDecorators: this.DEFAULT_IGNORE_DECORATORS,
             ignoreLogs: this.DEFAULT_IGNORE_LOGS,
-            minDistinctTokenTypes: this.DEFAULT_MIN_DISTINCT_TOKEN_TYPES
+            minDistinctTokenTypes: this.DEFAULT_MIN_DISTINCT_TOKEN_TYPES,
+            enableCloneClasses: this.DEFAULT_ENABLE_CLONE_CLASSES
         });
+    }
+
+    private getEnableCloneClasses(): boolean {
+        return this.getConfig().enableCloneClasses;
     }
 
     private getIgnoreLogs(): boolean {
