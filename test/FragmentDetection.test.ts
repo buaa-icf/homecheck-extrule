@@ -25,7 +25,16 @@ import {
     CloneMatcher,
     classifyClones,
     CloneClass,
-    UnionFind
+    UnionFind,
+    MergedClone,
+    lcsLength,
+    lcsSimilarity,
+    buildQGramProfile,
+    qgramJaccard,
+    NearMissDetector,
+    linesOverlap,
+    filterSelfOverlappingClones,
+    deduplicateMergedClones
 } from '../src/Checkers/FragmentDetection';
 import { isLogStatement } from '../src/Checkers/utils';
 
@@ -393,7 +402,6 @@ describe('同文件重叠窗口过滤', () => {
 // ============================================================
 
 import {
-    MergedClone,
     isConsecutive,
     createMergedClone,
     extendMergedClone,
@@ -2013,5 +2021,306 @@ describe('Jaccard 相似度 (computeJaccardSimilarity)', () => {
         // Jaccard = 9/11 ≈ 0.818
         const result = check.testJaccard('a|a|a|a|a|b|b|b|b|b', 'a|a|a|a|a|b|b|b|b|c');
         expect(result).toBeCloseTo(9 / 11, 5);
+    });
+});
+
+// ============================================================
+// SimilarityScorer 测试
+// ============================================================
+
+describe('LCS 长度计算', () => {
+    test('相同序列 → 长度等于序列长度', () => {
+        expect(lcsLength(['a', 'b', 'c'], ['a', 'b', 'c'])).toBe(3);
+    });
+
+    test('完全不同 → 0', () => {
+        expect(lcsLength(['a', 'b', 'c'], ['x', 'y', 'z'])).toBe(0);
+    });
+
+    test('部分重叠 → 正确 LCS', () => {
+        // LCS of [a,b,c,d] and [a,c,d,e] is [a,c,d] = 3
+        expect(lcsLength(['a', 'b', 'c', 'd'], ['a', 'c', 'd', 'e'])).toBe(3);
+    });
+
+    test('空序列 → 0', () => {
+        expect(lcsLength([], ['a', 'b'])).toBe(0);
+        expect(lcsLength(['a'], [])).toBe(0);
+        expect(lcsLength([], [])).toBe(0);
+    });
+
+    test('单元素相同 → 1', () => {
+        expect(lcsLength(['a'], ['a'])).toBe(1);
+    });
+
+    test('单元素不同 → 0', () => {
+        expect(lcsLength(['a'], ['b'])).toBe(0);
+    });
+
+    test('经典 LCS 测试', () => {
+        // LCS of ABCBDAB and BDCAB is BCAB = 4
+        expect(lcsLength(
+            ['A', 'B', 'C', 'B', 'D', 'A', 'B'],
+            ['B', 'D', 'C', 'A', 'B']
+        )).toBe(4);
+    });
+});
+
+describe('LCS 相似度', () => {
+    test('相同序列 → 1.0', () => {
+        expect(lcsSimilarity(['a', 'b', 'c'], ['a', 'b', 'c'])).toBe(1.0);
+    });
+
+    test('完全不同 → 0.0', () => {
+        expect(lcsSimilarity(['a', 'b', 'c'], ['x', 'y', 'z'])).toBe(0.0);
+    });
+
+    test('空序列 → 特殊值', () => {
+        expect(lcsSimilarity([], [])).toBe(1.0);
+        expect(lcsSimilarity(['a'], [])).toBe(0.0);
+    });
+
+    test('部分重叠 → 正确比率', () => {
+        // LCS([a,b,c,d], [a,c,d,e]) = 3
+        // similarity = 2 * 3 / (4 + 4) = 0.75
+        expect(lcsSimilarity(['a', 'b', 'c', 'd'], ['a', 'c', 'd', 'e'])).toBe(0.75);
+    });
+
+    test('对称性：lcsSimilarity(a,b) === lcsSimilarity(b,a)', () => {
+        const seq1 = ['a', 'b', 'c', 'x'];
+        const seq2 = ['a', 'c', 'y', 'z'];
+        expect(lcsSimilarity(seq1, seq2)).toBe(lcsSimilarity(seq2, seq1));
+    });
+});
+
+describe('Q-gram 轮廓', () => {
+    test('构建 2-gram 轮廓', () => {
+        const profile = buildQGramProfile(['a', 'b', 'c', 'a', 'b'], 2);
+        // 2-grams: a\0b, b\0c, c\0a, a\0b
+        expect(profile.get('a\0b')).toBe(2);
+        expect(profile.get('b\0c')).toBe(1);
+        expect(profile.get('c\0a')).toBe(1);
+    });
+
+    test('序列短于 q → 空轮廓', () => {
+        const profile = buildQGramProfile(['a'], 3);
+        expect(profile.size).toBe(0);
+    });
+
+    test('q = 1 → 每个 token 一个 gram', () => {
+        const profile = buildQGramProfile(['a', 'b', 'a'], 1);
+        expect(profile.get('a')).toBe(2);
+        expect(profile.get('b')).toBe(1);
+    });
+});
+
+describe('Q-gram Jaccard', () => {
+    test('相同轮廓 → 1.0', () => {
+        const p = buildQGramProfile(['a', 'b', 'c'], 2);
+        expect(qgramJaccard(p, p)).toBe(1.0);
+    });
+
+    test('不同轮廓 → 0.0', () => {
+        const p1 = buildQGramProfile(['a', 'b'], 2);
+        const p2 = buildQGramProfile(['x', 'y'], 2);
+        expect(qgramJaccard(p1, p2)).toBe(0.0);
+    });
+
+    test('空轮廓 → 0', () => {
+        expect(qgramJaccard(new Map(), new Map())).toBe(0);
+    });
+
+    test('部分重叠 → 正确比率', () => {
+        const p1 = buildQGramProfile(['a', 'b', 'c'], 2); // a\0b:1, b\0c:1
+        const p2 = buildQGramProfile(['a', 'b', 'd'], 2); // a\0b:1, b\0d:1
+        // min: a\0b=1; max: a\0b=1, b\0c=1, b\0d=1 → 1/3
+        expect(qgramJaccard(p1, p2)).toBeCloseTo(1/3, 5);
+    });
+});
+
+// ============================================================
+// NearMissDetector 测试
+// ============================================================
+
+describe('NearMissDetector', () => {
+    function createTokenSeq(values: string[], file: string, startLine: number = 1): Token[] {
+        return values.map((v, i) => createToken(v, TokenType.IDENTIFIER, startLine + Math.floor(i / 5), i));
+    }
+
+    test('两个相同文件 → 不报告（由精确匹配器处理）', () => {
+        const detector = new NearMissDetector(5, 0.7);
+        const tokens = createTokenSeq(['a', 'b', 'c', 'd', 'e'], 'file1.ts');
+        detector.addFile(tokens, 'file1.ts');
+        // 复制相同序列到另一个文件
+        const tokens2 = createTokenSeq(['a', 'b', 'c', 'd', 'e'], 'file2.ts');
+        detector.addFile(tokens2, 'file2.ts');
+        const results = detector.detect();
+        // 完全相同的不报告（similarity = 1.0）
+        expect(results.every(r => r.similarity < 1.0)).toBe(true);
+    });
+
+    test('两个近似序列 → 报告 Type-3', () => {
+        const detector = new NearMissDetector(5, 0.6, 2);
+        // 80% 相似：5个中4个相同，qgramSize=2 使预筛选可区分
+        const tokens1 = createTokenSeq(['a', 'b', 'c', 'd', 'e'], 'file1.ts');
+        const tokens2 = createTokenSeq(['a', 'b', 'c', 'd', 'x'], 'file2.ts');
+        detector.addFile(tokens1, 'file1.ts');
+        detector.addFile(tokens2, 'file2.ts');
+        const results = detector.detect();
+        expect(results.length).toBeGreaterThanOrEqual(1);
+        expect(results[0].similarity).toBeGreaterThanOrEqual(0.6);
+        expect(results[0].similarity).toBeLessThan(1.0);
+    });
+
+    test('完全不同序列 → 不报告', () => {
+        const detector = new NearMissDetector(5, 0.7);
+        const tokens1 = createTokenSeq(['a', 'b', 'c', 'd', 'e'], 'file1.ts');
+        const tokens2 = createTokenSeq(['v', 'w', 'x', 'y', 'z'], 'file2.ts');
+        detector.addFile(tokens1, 'file1.ts');
+        detector.addFile(tokens2, 'file2.ts');
+        const results = detector.detect();
+        expect(results.length).toBe(0);
+    });
+
+    test('同文件重叠块 → 不报告', () => {
+        const detector = new NearMissDetector(5, 0.5);
+        // 10 个 token，会产生多个重叠块，但同文件重叠应被跳过
+        const tokens = createTokenSeq(['a', 'b', 'c', 'd', 'e', 'a', 'b', 'c', 'd', 'f'], 'file1.ts');
+        detector.addFile(tokens, 'file1.ts');
+        const results = detector.detect();
+        // 如果有结果，它们不应是同文件重叠的
+        for (const r of results) {
+            if (r.location1.file === r.location2.file) {
+                expect(Math.abs(r.location1.startIndex - r.location2.startIndex)).toBeGreaterThanOrEqual(5);
+            }
+        }
+    });
+
+    test('clear 应重置状态', () => {
+        const detector = new NearMissDetector(5, 0.6);
+        const tokens = createTokenSeq(['a', 'b', 'c', 'd', 'e'], 'file1.ts');
+        detector.addFile(tokens, 'file1.ts');
+        detector.clear();
+        const results = detector.detect();
+        expect(results.length).toBe(0);
+    });
+
+    test('NearMissClone 包含 similarity 字段', () => {
+        const detector = new NearMissDetector(5, 0.5, 2);
+        const tokens1 = createTokenSeq(['a', 'b', 'c', 'd', 'e'], 'file1.ts');
+        const tokens2 = createTokenSeq(['a', 'b', 'c', 'x', 'y'], 'file2.ts');
+        detector.addFile(tokens1, 'file1.ts');
+        detector.addFile(tokens2, 'file2.ts');
+        const results = detector.detect();
+        for (const r of results) {
+            expect(typeof r.similarity).toBe('number');
+            expect(r.similarity).toBeGreaterThanOrEqual(0);
+            expect(r.similarity).toBeLessThanOrEqual(1);
+        }
+    });
+});
+
+// ============================================================
+// ClonePipelineUtils 测试
+// ============================================================
+
+describe('linesOverlap', () => {
+    test('不重叠 → false', () => {
+        expect(linesOverlap(1, 5, 6, 10)).toBe(false);
+        expect(linesOverlap(10, 20, 1, 5)).toBe(false);
+    });
+
+    test('完全重叠 → true', () => {
+        expect(linesOverlap(1, 10, 1, 10)).toBe(true);
+    });
+
+    test('部分重叠 → true', () => {
+        expect(linesOverlap(1, 5, 3, 8)).toBe(true);
+    });
+
+    test('边界重叠 → true', () => {
+        expect(linesOverlap(1, 5, 5, 10)).toBe(true);
+    });
+
+    test('包含关系 → true', () => {
+        expect(linesOverlap(1, 10, 3, 5)).toBe(true);
+    });
+});
+
+describe('filterSelfOverlappingClones', () => {
+    function makeMerged(f1: string, s1: number, e1: number, f2: string, s2: number, e2: number): MergedClone {
+        return {
+            location1: { file: f1, startLine: s1, endLine: e1, startIndex: 0, endIndex: 0 },
+            location2: { file: f2, startLine: s2, endLine: e2, startIndex: 0, endIndex: 0 },
+            tokenCount: 100
+        };
+    }
+
+    test('不同文件 → 保留', () => {
+        const clones = [makeMerged('a.ts', 1, 10, 'b.ts', 1, 10)];
+        expect(filterSelfOverlappingClones(clones)).toHaveLength(1);
+    });
+
+    test('同文件非重叠 → 保留', () => {
+        const clones = [makeMerged('a.ts', 1, 5, 'a.ts', 10, 15)];
+        expect(filterSelfOverlappingClones(clones)).toHaveLength(1);
+    });
+
+    test('同文件重叠 → 过滤', () => {
+        const clones = [makeMerged('a.ts', 1, 10, 'a.ts', 5, 15)];
+        expect(filterSelfOverlappingClones(clones)).toHaveLength(0);
+    });
+
+    test('混合情况', () => {
+        const clones = [
+            makeMerged('a.ts', 1, 10, 'b.ts', 1, 10),  // 不同文件，保留
+            makeMerged('a.ts', 1, 10, 'a.ts', 5, 15),  // 同文件重叠，过滤
+            makeMerged('a.ts', 1, 5, 'a.ts', 20, 25),   // 同文件非重叠，保留
+        ];
+        expect(filterSelfOverlappingClones(clones)).toHaveLength(2);
+    });
+});
+
+describe('deduplicateMergedClones', () => {
+    function makeMerged(f1: string, s1: number, e1: number, f2: string, s2: number, e2: number, tc: number = 100): MergedClone {
+        return {
+            location1: { file: f1, startLine: s1, endLine: e1, startIndex: 0, endIndex: 0 },
+            location2: { file: f2, startLine: s2, endLine: e2, startIndex: 0, endIndex: 0 },
+            tokenCount: tc
+        };
+    }
+
+    test('无重复 → 全部保留', () => {
+        const clones = [
+            makeMerged('a.ts', 1, 5, 'b.ts', 1, 5),
+            makeMerged('a.ts', 10, 15, 'b.ts', 10, 15),
+        ];
+        expect(deduplicateMergedClones(clones)).toHaveLength(2);
+    });
+
+    test('重叠行范围 → 保留最大 tokenCount', () => {
+        const clones = [
+            makeMerged('a.ts', 1, 10, 'b.ts', 1, 10, 100),
+            makeMerged('a.ts', 2, 8, 'b.ts', 2, 8, 50),
+        ];
+        const result = deduplicateMergedClones(clones);
+        expect(result).toHaveLength(1);
+        expect(result[0].tokenCount).toBe(100);
+    });
+
+    test('空列表 → 空结果', () => {
+        expect(deduplicateMergedClones([])).toHaveLength(0);
+    });
+
+    test('单个元素 → 直接返回', () => {
+        const clones = [makeMerged('a.ts', 1, 5, 'b.ts', 1, 5)];
+        expect(deduplicateMergedClones(clones)).toHaveLength(1);
+    });
+
+    test('不同文件对 → 不去重', () => {
+        const clones = [
+            makeMerged('a.ts', 1, 10, 'b.ts', 1, 10, 100),
+            makeMerged('a.ts', 1, 10, 'c.ts', 1, 10, 50),
+        ];
+        expect(deduplicateMergedClones(clones)).toHaveLength(2);
     });
 });

@@ -51,3 +51,12 @@ export {
     mapSyntaxKindToTokenType,
     offsetToLineColumn
 } from './Tokenizer';
+
+// 相似度计算
+export { lcsLength, lcsSimilarity, buildQGramProfile, qgramJaccard } from './SimilarityScorer';
+
+// 近似克隆检测器
+export { NearMissClone, NearMissDetector } from './NearMissDetector';
+
+// 管线共享工具
+export { linesOverlap, filterSelfOverlappingClones, deduplicateMergedClones } from './ClonePipelineUtils';

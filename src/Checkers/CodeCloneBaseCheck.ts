@@ -33,6 +33,7 @@ import {
     shouldSkipClass,
     shouldSkipMethod
 } from "./utils";
+import { UnionFind } from "./FragmentDetection";
 
 /**
  * 方法信息，用于克隆检测
@@ -98,6 +99,9 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
     // 已报告的克隆对（避免重复报告）
     protected reportedPairs: Set<string> = new Set();
 
+    // 克隆类模式：收集所有克隆对用于分组
+    protected collectedPairs: ClonePair[] = [];
+
     // 文件匹配器 - 匹配所有文件
     private fileMatcher: FileMatcher = {
         matcherType: MatcherTypes.FILE
@@ -130,6 +134,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
     public beforeCheck(): void {
         this.methodsByHash.clear();
         this.reportedPairs.clear();
+        this.collectedPairs = [];
         this.issues = [];
     }
 
@@ -188,6 +193,12 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
         const threshold = this.getSimilarityThreshold();
         if (threshold < 1.0) {
             this.findNearMissClones(threshold);
+        }
+
+        // 克隆类分组模式：将逐对报告替换为分组报告
+        if (this.getEnableCloneClasses() && this.collectedPairs.length > 0) {
+            this.issues = [];
+            this.reportCloneClasses();
         }
     }
 
@@ -321,6 +332,9 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
         }
         this.reportedPairs.add(pairKey);
 
+        // 收集克隆对（用于后续克隆类分组）
+        this.collectedPairs.push(pair);
+
         // 为第一个方法生成报告
         this.addIssueReport(pair.method1, pair.method2, pair);
     }
@@ -353,6 +367,67 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
             ruleDocPath: this.metaData.ruleDocPath,
             methodName: method.methodName
         }));
+    }
+
+    /**
+     * 将收集到的克隆对分组为克隆类并上报
+     *
+     * 使用 Union-Find 将共享克隆关系的方法分为等价类。
+     * 每个等价类作为一条克隆类报告。
+     */
+    protected reportCloneClasses(): void {
+        const uf = new UnionFind();
+        const methodByKey = new Map<string, MethodInfo>();
+
+        const getMethodKey = (m: MethodInfo): string =>
+            `${m.filePath}:${m.className}.${m.methodName}:${m.startLine}`;
+
+        for (const pair of this.collectedPairs) {
+            const key1 = getMethodKey(pair.method1);
+            const key2 = getMethodKey(pair.method2);
+            methodByKey.set(key1, pair.method1);
+            methodByKey.set(key2, pair.method2);
+            uf.find(key1);
+            uf.find(key2);
+            uf.union(key1, key2);
+        }
+
+        const groups = uf.getGroups();
+        const severity = this.rule?.alert ?? this.metaData.severity;
+        let classId = 0;
+
+        for (const keys of groups.values()) {
+            if (keys.length < 2) continue;
+            classId++;
+
+            const members = keys
+                .map(k => methodByKey.get(k))
+                .filter((m): m is MethodInfo => m !== undefined)
+                .sort((a, b) => {
+                    if (a.filePath !== b.filePath) return a.filePath.localeCompare(b.filePath);
+                    return a.startLine - b.startLine;
+                });
+
+            const anchor = members[0];
+            const memberDesc = members.map(m => {
+                const fileName = m.filePath.split('/').pop() ?? m.filePath;
+                return `${m.className}.${m.methodName}() in ${fileName}:${m.startLine}-${m.endLine}`;
+            }).join('; ');
+
+            const description = `Code Clone ${this.getCloneType()} [Class #${classId}, ${members.length} members]: ${memberDesc}.`;
+
+            this.issues.push(createDefects({
+                line: anchor.startLine,
+                startCol: 0,
+                endCol: anchor.methodName.length,
+                description,
+                severity,
+                ruleId: this.rule.ruleId,
+                filePath: anchor.filePath,
+                ruleDocPath: this.metaData.ruleDocPath,
+                methodName: anchor.methodName
+            }));
+        }
     }
 
     /**

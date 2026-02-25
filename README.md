@@ -81,6 +81,7 @@ ArkTS 代码检查自定义规则项目，基于 [homecheck](https://gitcode.com
 | `ignoreDecorators` | boolean | `false` | 是否忽略装饰器的 Token |
 | `minDistinctTokenTypes` | number | `0` | 最小不同 Token 类型数，低于此值的片段不报告（过滤重复度过高的简单代码） |
 | `enableCloneClasses` | boolean | `false` | 是否启用克隆类分组报告 |
+| `similarityThreshold` | number | `1.0` | LCS 相似度阈值（范围 0~1），设为 `1.0` 仅报告精确匹配（Type-1/Type-2），低于 `1.0` 启用 Type-3 近似克隆检测 |
 
 配置示例：
 

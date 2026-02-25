@@ -35,11 +35,16 @@ import {
 
 import {
     Tokenizer,
+    Token,
     CloneMatcher,
     CloneMerger,
     MergedClone,
     CloneClass,
-    classifyClones
+    classifyClones,
+    NearMissDetector,
+    NearMissClone,
+    filterSelfOverlappingClones,
+    deduplicateMergedClones
 } from "./FragmentDetection";
 
 /**
@@ -70,7 +75,7 @@ export interface CodeLocation {
  */
 export interface FragmentCloneReport {
     /** 克隆类型：根据规范化配置决定 */
-    cloneType: 'Type-1' | 'Type-2';
+    cloneType: 'Type-1' | 'Type-2' | 'Type-3';
     /** 克隆范围 */
     scope: CloneScope;
     /** 位置 1 */
@@ -81,13 +86,15 @@ export interface FragmentCloneReport {
     tokenCount: number;
     /** 行数 */
     lineCount: number;
+    /** 近似克隆相似度（仅 Type-3 报告有值） */
+    similarity?: number;
 }
 
 /**
  * 片段级克隆类报告
  */
 export interface FragmentCloneClassReport {
-    cloneType: 'Type-1' | 'Type-2';
+    cloneType: 'Type-1' | 'Type-2' | 'Type-3';
     scope: CloneScope;
     classId: number;
     members: CodeLocation[];
@@ -120,11 +127,15 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     private readonly DEFAULT_IGNORE_LOGS = true;
     private readonly DEFAULT_MIN_DISTINCT_TOKEN_TYPES = 0;
     private readonly DEFAULT_ENABLE_CLONE_CLASSES = false;
+    private readonly DEFAULT_SIMILARITY_THRESHOLD = 1.0;
 
     // 克隆匹配器和合并器
     private cloneMatcher: CloneMatcher;
     private cloneMerger: CloneMerger;
     private tokenizer: Tokenizer;
+
+    // 缓存每个文件的 Token 序列（用于近似克隆检测）
+    private fileTokenCache: Map<string, Token[]> = new Map();
 
     // 缓存 ArkFile 用于反查
     private fileCache: Map<string, ArkFile> = new Map();
@@ -166,6 +177,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
 
         this.fileCache.clear();
         this.issues = [];
+        this.fileTokenCache.clear();
     }
 
     /**
@@ -222,6 +234,9 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             // 送入匹配器
             this.cloneMatcher.processFile(tokens, filePath);
 
+            // 缓存 Token 序列（用于近似克隆检测）
+            this.fileTokenCache.set(filePath, tokens);
+
         } catch {
             return;
         }
@@ -234,92 +249,79 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         // 获取克隆对
         const clonePairs = this.cloneMatcher.getClonePairs();
 
-        if (clonePairs.length === 0) {
+        // 合并连续片段（精确匹配）
+        const allMergedClones = clonePairs.length > 0
+            ? this.cloneMerger.merge(clonePairs)
+            : [];
+
+        // 过滤1：排除同文件重叠行范围的自身克隆（使用共享工具）
+        const nonSelfClones = filterSelfOverlappingClones(allMergedClones);
+
+        // 过滤2：去重行范围重叠的克隆（使用共享工具）
+        const exactClones = deduplicateMergedClones(nonSelfClones);
+
+        // Type-3 近似克隆检测
+        const threshold = this.getSimilarityThreshold();
+        let nearMissClones: NearMissClone[] = [];
+        if (threshold < 1.0) {
+            nearMissClones = this.findNearMissClones(threshold);
+        }
+
+        // 合并精确匹配和近似匹配结果
+        const allClones: MergedClone[] = [...exactClones, ...nearMissClones];
+
+        if (allClones.length === 0) {
             return;
         }
 
-        // 合并连续片段
-        const allMergedClones = this.cloneMerger.merge(clonePairs);
-
-        // 过滤1：排除同文件重叠行范围的自身克隆
-        const nonSelfClones = allMergedClones.filter(clone => {
-            if (clone.location1.file !== clone.location2.file) {
-                return true;
-            }
-            // 同文件：检查行范围是否重叠
-            const overlapStart = Math.max(clone.location1.startLine, clone.location2.startLine);
-            const overlapEnd = Math.min(clone.location1.endLine, clone.location2.endLine);
-            return overlapStart > overlapEnd;
-        });
-
-        // 过滤2：去重行范围重叠的克隆（同一文件对、行范围重叠时只保留最大的）
-        const mergedClones = this.deduplicateMergedClones(nonSelfClones);
-
         if (this.getEnableCloneClasses()) {
-            const classReports = this.createCloneClassReports(mergedClones);
+            const classReports = this.createCloneClassReports(exactClones);
             for (const report of classReports) {
                 this.addCloneClassIssueReport(report);
             }
             return;
         }
 
-        // 生成报告
-        for (const clone of mergedClones) {
+        // 生成精确匹配报告
+        for (const clone of exactClones) {
             const report = this.createCloneReport(clone);
             if (report) {
                 this.addIssueReport(report);
             }
         }
 
-    }
-
-    /**
-     * 去重合并克隆：同一文件对、行范围重叠的克隆只保留 tokenCount 最大的
-     */
-    private deduplicateMergedClones(clones: MergedClone[]): MergedClone[] {
-        if (clones.length <= 1) {
-            return clones;
-        }
-
-        // 按 (file1, file2, startLine1, startLine2) 排序，tokenCount 大的在前
-        const sorted = [...clones].sort((a, b) => {
-            const f1 = a.location1.file.localeCompare(b.location1.file);
-            if (f1 !== 0) return f1;
-            const f2 = a.location2.file.localeCompare(b.location2.file);
-            if (f2 !== 0) return f2;
-            const s1 = a.location1.startLine - b.location1.startLine;
-            if (s1 !== 0) return s1;
-            const s2 = a.location2.startLine - b.location2.startLine;
-            if (s2 !== 0) return s2;
-            return b.tokenCount - a.tokenCount;  // 大的在前
-        });
-
-        const result: MergedClone[] = [];
-        for (const clone of sorted) {
-            const isDuplicate = result.some(existing =>
-                existing.location1.file === clone.location1.file &&
-                existing.location2.file === clone.location2.file &&
-                this.linesOverlap(
-                    existing.location1.startLine, existing.location1.endLine,
-                    clone.location1.startLine, clone.location1.endLine
-                ) &&
-                this.linesOverlap(
-                    existing.location2.startLine, existing.location2.endLine,
-                    clone.location2.startLine, clone.location2.endLine
-                )
-            );
-            if (!isDuplicate) {
-                result.push(clone);
+        // 生成近似匹配报告
+        for (const clone of nearMissClones) {
+            const report = this.createNearMissReport(clone);
+            if (report) {
+                this.addIssueReport(report);
             }
         }
-        return result;
     }
 
     /**
-     * 判断两个行范围是否重叠
+     * 执行 Type-3 近似克隆检测
+     *
+     * 使用 NearMissDetector 对缓存的 Token 序列进行两阶段检测：
+     * 1. Q-gram 轮廓 Jaccard 预筛选（候选生成）
+     * 2. LCS 相似度精确验证
+     *
+     * @param threshold 相似度阈值
+     * @returns 近似克隆列表
      */
-    private linesOverlap(s1: number, e1: number, s2: number, e2: number): boolean {
-        return Math.max(s1, s2) <= Math.min(e1, e2);
+    private findNearMissClones(threshold: number): NearMissClone[] {
+        const minimumTokens = this.getMinimumTokens();
+        const detector = new NearMissDetector(minimumTokens, threshold);
+
+        for (const [filePath, tokens] of this.fileTokenCache) {
+            detector.addFile(tokens, filePath);
+        }
+
+        const rawResults = detector.detect();
+
+        // 过滤自身重叠 + 去重
+        const nonSelf = filterSelfOverlappingClones(rawResults);
+        return deduplicateMergedClones(nonSelf) as NearMissClone[];
     }
 
     private createCloneClassReports(clones: MergedClone[]): FragmentCloneClassReport[] {
@@ -395,6 +397,39 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             location2: codeLocation2,
             tokenCount,
             lineCount
+        };
+    }
+
+    /**
+     * 创建近似克隆报告（Type-3）
+     */
+    private createNearMissReport(clone: NearMissClone): FragmentCloneReport | null {
+        const { location1, location2, tokenCount, similarity } = clone;
+
+        const codeLocation1 = this.resolveCodeLocation(
+            location1.file,
+            location1.startLine,
+            location1.endLine
+        );
+        const codeLocation2 = this.resolveCodeLocation(
+            location2.file,
+            location2.startLine,
+            location2.endLine
+        );
+
+        const scope = this.determineScope(codeLocation1, codeLocation2);
+        const lineCount1 = location1.endLine - location1.startLine + 1;
+        const lineCount2 = location2.endLine - location2.startLine + 1;
+        const lineCount = Math.max(lineCount1, lineCount2);
+
+        return {
+            cloneType: 'Type-3',
+            scope,
+            location1: codeLocation1,
+            location2: codeLocation2,
+            tokenCount,
+            lineCount,
+            similarity
         };
     }
 
@@ -514,11 +549,16 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      * 格式化描述信息
      */
     private formatDescription(report: FragmentCloneReport): string {
-        const { cloneType, scope, location1, location2, tokenCount, lineCount } = report;
+        const { cloneType, scope, location1, location2, tokenCount, lineCount, similarity } = report;
 
         const scopeDesc = this.getScopeDescription(scope);
         const loc1Desc = this.formatLocation(location1);
         const loc2Desc = this.formatLocation(location2);
+
+        if (similarity !== undefined && similarity < 1.0) {
+            const pct = Math.round(similarity * 100);
+            return `Code Clone ${cloneType} (${scopeDesc}): ${loc1Desc} is similar to ${loc2Desc}. (${tokenCount} tokens, ${lineCount} lines, ${pct}% similar)`;
+        }
 
         return `Code Clone ${cloneType} (${scopeDesc}): ${loc1Desc} is similar to ${loc2Desc}. (${tokenCount} tokens, ${lineCount} lines)`;
     }
@@ -688,10 +728,10 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             ignoreDecorators: this.DEFAULT_IGNORE_DECORATORS,
             ignoreLogs: this.DEFAULT_IGNORE_LOGS,
             minDistinctTokenTypes: this.DEFAULT_MIN_DISTINCT_TOKEN_TYPES,
-            enableCloneClasses: this.DEFAULT_ENABLE_CLONE_CLASSES
+            enableCloneClasses: this.DEFAULT_ENABLE_CLONE_CLASSES,
+            similarityThreshold: this.DEFAULT_SIMILARITY_THRESHOLD
         });
     }
-
     private getEnableCloneClasses(): boolean {
         return this.getConfig().enableCloneClasses;
     }
@@ -730,5 +770,17 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      */
     private getMinDistinctTokenTypes(): number {
         return this.getConfig().minDistinctTokenTypes;
+    }
+
+    /**
+     * 从配置中获取片段级近似克隆相似度阈值
+     *
+     * 设为 1.0 时仅报告精确匹配的克隆（默认行为）。
+     * 设为 0.7~0.9 时，还会报告对应百分比以上相似的片段（Type-3）。
+     *
+     * 默认值：1.0（禁用近似克隆检测，保持向后兼容）
+     */
+    private getSimilarityThreshold(): number {
+        return this.getConfig().similarityThreshold;
     }
 }
