@@ -174,6 +174,11 @@ export class CloneMatcher {
                 }
                 for (let i = 0; i < group.length; i++) {
                     for (let j = i + 1; j < group.length; j++) {
+                        // 跳过同文件重叠窗口（自身克隆误报）
+                        if (group[i].file === group[j].file &&
+                            Math.abs(group[i].startIndex - group[j].startIndex) < this.windowSize) {
+                            continue;
+                        }
                         pairs.push({
                             location1: group[i],
                             location2: group[j],

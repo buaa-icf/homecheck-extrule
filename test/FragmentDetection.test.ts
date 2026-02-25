@@ -350,6 +350,44 @@ describe('克隆匹配器', () => {
     });
 });
 
+describe('同文件重叠窗口过滤', () => {
+    test('同文件重叠窗口不应生成克隆对', () => {
+        const matcher = new CloneMatcher(3);
+        // ['a', 'a', 'a', 'a', 'a'] — 所有窗口哈希相同，但都在同文件且重叠
+        const tokens = mockTokens(['a', 'a', 'a', 'a', 'a']);
+        matcher.processFile(tokens, 'test.ets');
+
+        const pairs = matcher.getClonePairs();
+        // 窗口 0-2, 1-3, 2-4 哈希都相同，但彼此重叠（间距 < windowSize=3），应全部过滤
+        expect(pairs.length).toBe(0);
+    });
+
+    test('同文件不重叠窗口应正常生成克隆对', () => {
+        const matcher = new CloneMatcher(3);
+        // 位置 0-2 和 位置 4-6 都是 ['a','b','c']，间距=4 >= windowSize=3
+        const tokens = mockTokens(['a', 'b', 'c', 'x', 'a', 'b', 'c']);
+        matcher.processFile(tokens, 'test.ets');
+
+        const pairs = matcher.getClonePairs();
+        expect(pairs.length).toBe(1);
+        expect(pairs[0].location1.startIndex).toBe(0);
+        expect(pairs[0].location2.startIndex).toBe(4);
+    });
+
+    test('跨文件相同窗口不应被过滤', () => {
+        const matcher = new CloneMatcher(3);
+        const tokensA = mockTokens(['a', 'b', 'c']);
+        const tokensB = mockTokens(['a', 'b', 'c']);
+        matcher.processFile(tokensA, 'a.ets');
+        matcher.processFile(tokensB, 'b.ets');
+
+        const pairs = matcher.getClonePairs();
+        expect(pairs.length).toBe(1);
+        expect(pairs[0].location1.file).toBe('a.ets');
+        expect(pairs[0].location2.file).toBe('b.ets');
+    });
+});
+
 // ============================================================
 // 导入克隆合并器
 // ============================================================

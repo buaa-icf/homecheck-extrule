@@ -239,7 +239,21 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         }
 
         // 合并连续片段
-        const mergedClones = this.cloneMerger.merge(clonePairs);
+        const allMergedClones = this.cloneMerger.merge(clonePairs);
+
+        // 过滤1：排除同文件重叠行范围的自身克隆
+        const nonSelfClones = allMergedClones.filter(clone => {
+            if (clone.location1.file !== clone.location2.file) {
+                return true;
+            }
+            // 同文件：检查行范围是否重叠
+            const overlapStart = Math.max(clone.location1.startLine, clone.location2.startLine);
+            const overlapEnd = Math.min(clone.location1.endLine, clone.location2.endLine);
+            return overlapStart > overlapEnd;
+        });
+
+        // 过滤2：去重行范围重叠的克隆（同一文件对、行范围重叠时只保留最大的）
+        const mergedClones = this.deduplicateMergedClones(nonSelfClones);
 
         if (this.getEnableCloneClasses()) {
             const classReports = this.createCloneClassReports(mergedClones);
@@ -257,6 +271,55 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             }
         }
 
+    }
+
+    /**
+     * 去重合并克隆：同一文件对、行范围重叠的克隆只保留 tokenCount 最大的
+     */
+    private deduplicateMergedClones(clones: MergedClone[]): MergedClone[] {
+        if (clones.length <= 1) {
+            return clones;
+        }
+
+        // 按 (file1, file2, startLine1, startLine2) 排序，tokenCount 大的在前
+        const sorted = [...clones].sort((a, b) => {
+            const f1 = a.location1.file.localeCompare(b.location1.file);
+            if (f1 !== 0) return f1;
+            const f2 = a.location2.file.localeCompare(b.location2.file);
+            if (f2 !== 0) return f2;
+            const s1 = a.location1.startLine - b.location1.startLine;
+            if (s1 !== 0) return s1;
+            const s2 = a.location2.startLine - b.location2.startLine;
+            if (s2 !== 0) return s2;
+            return b.tokenCount - a.tokenCount;  // 大的在前
+        });
+
+        const result: MergedClone[] = [];
+        for (const clone of sorted) {
+            const isDuplicate = result.some(existing =>
+                existing.location1.file === clone.location1.file &&
+                existing.location2.file === clone.location2.file &&
+                this.linesOverlap(
+                    existing.location1.startLine, existing.location1.endLine,
+                    clone.location1.startLine, clone.location1.endLine
+                ) &&
+                this.linesOverlap(
+                    existing.location2.startLine, existing.location2.endLine,
+                    clone.location2.startLine, clone.location2.endLine
+                )
+            );
+            if (!isDuplicate) {
+                result.push(clone);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 判断两个行范围是否重叠
+     */
+    private linesOverlap(s1: number, e1: number, s2: number, e2: number): boolean {
+        return Math.max(s1, s2) <= Math.min(e1, e2);
     }
 
     private createCloneClassReports(clones: MergedClone[]): FragmentCloneClassReport[] {
