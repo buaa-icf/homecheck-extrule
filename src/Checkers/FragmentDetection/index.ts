@@ -14,13 +14,12 @@ export { TokenWindow, createSlidingWindows, getWindowCount } from './SlidingWind
 export {
     FragmentLocation,
     HashIndex,
-    computeWindowHash,
     computeTokensHash,
     computeFingerprint,
     createLocationFromWindow
 } from './HashIndex';
 
-export { djb2Hash } from '../utils';
+export { djb2Hash } from '../shared';
 
 // 克隆匹配器
 export { CloneMatch, ClonePair, CloneMatcher } from './CloneMatcher';

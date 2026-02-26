@@ -7,7 +7,7 @@ import { CodeCloneFragmentCheck } from "../src/Checkers/CodeCloneFragmentCheck";
 import { CodeCloneType1Check } from "../src/Checkers/CodeCloneType1Check";
 import { CodeCloneType2Check } from "../src/Checkers/CodeCloneType2Check";
 import { LongMethodCheck } from "../src/Checkers/LongMethodCheck";
-import { djb2Hash } from "../src/Checkers/utils";
+import { djb2Hash } from "../src/Checkers/shared";
 
 const LONG_METHOD_PROJECT_DIR = path.resolve(__dirname, "sample/LongMethod");
 const CODE_CLONE_PROJECT_DIR = path.resolve(__dirname, "sample/CodeClone");

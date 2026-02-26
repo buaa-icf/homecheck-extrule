@@ -1,4 +1,4 @@
-import { ForeachArgsCheck } from "./ForEachArgsCheck";
+import { ForEachArgsCheck } from "./ForEachArgsCheck";
 import { LongMethodCheck } from "./LongMethodCheck";
 import { CodeCloneType1Check } from "./CodeCloneType1Check";
 import { CodeCloneType2Check } from "./CodeCloneType2Check";
@@ -10,7 +10,7 @@ import { AdviceChecker, BaseChecker } from "homecheck";
 type CheckerClass = new () => BaseChecker | AdviceChecker;
 
 const fileCheckerRegistry: Array<[string, CheckerClass]> = [
-    ["@extrulesproject/foreach-args-check", ForeachArgsCheck],
+    ["@extrulesproject/foreach-args-check", ForEachArgsCheck],
     ["@extrulesproject/long-method-check", LongMethodCheck],
     ["@extrulesproject/feature-envy-check", FeatureEnvyCheck],
     ["@extrulesproject/switch-statement-check", SwitchStatementCheck]

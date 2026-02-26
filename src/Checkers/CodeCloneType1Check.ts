@@ -15,8 +15,9 @@
 
 import { Stmt } from "arkanalyzer";
 import { BaseMetaData } from "homecheck";
-import { CodeCloneBaseCheck, MethodInfo } from "./CodeCloneBaseCheck";
-import { stripDecorators, stripTypeAnnotations } from "./utils";
+import { CodeCloneBaseCheck } from "./CodeCloneBaseCheck";
+import { MethodInfo } from "./method-clone";
+import { stripDecorators, stripTypeAnnotations } from "./shared";
 
 const gMetaData: BaseMetaData = {
     severity: 2,
@@ -50,10 +51,10 @@ export class CodeCloneType1Check extends CodeCloneBaseCheck {
         const stmtStrings = stmts.map(stmt => {
             let text = stmt.toString();
             text = this.normalizeBasic(text);
-            if (this.getIgnoreTypes()) {
+            if (this.option("ignoreTypes")) {
                 text = stripTypeAnnotations(text);
             }
-            if (this.getIgnoreDecorators()) {
+            if (this.option("ignoreDecorators")) {
                 text = stripDecorators(text);
             }
             return text;

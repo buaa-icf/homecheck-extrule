@@ -9,7 +9,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { normalizeBasic, normalizeIdentifiers, normalizeLiterals, djb2Hash as simpleHash } from '../src/Checkers/utils';
+import { normalizeBasic, normalizeIdentifiers, normalizeLiterals, djb2Hash as simpleHash } from '../src/Checkers/shared';
 import { CodeCloneType1Check } from '../src/Checkers/CodeCloneType1Check';
 
 // 测试用例目录

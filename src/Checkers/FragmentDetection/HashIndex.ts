@@ -6,7 +6,7 @@
 
 import { Token } from './Token';
 import { TokenWindow } from './SlidingWindow';
-import { djb2Hash } from '../utils';
+import { djb2Hash } from '../shared';
 
 /**
  * 片段位置信息
@@ -112,20 +112,6 @@ export class HashIndex {
  */
 export function computeFingerprint(tokens: Token[], startIndex: number, windowSize: number): string {
     return tokens.slice(startIndex, startIndex + windowSize).map(t => t.value).join('|');
-}
-
-/**
- * 计算窗口的哈希值和 Token 指纹
- * 
- * 将窗口内的 Token 值拼接后计算哈希，同时返回拼接字符串作为指纹
- * 
- * @param window 窗口
- * @returns { hash, tokenFingerprint } 哈希值和 Token 指纹
- * @deprecated 该函数仅用于兼容旧逻辑与测试，新实现请优先使用 RollingHash
- */
-export function computeWindowHash(window: TokenWindow): { hash: string; tokenFingerprint: string } {
-    const combined = computeFingerprint(window.tokens, 0, window.tokens.length);
-    return { hash: djb2Hash(combined), tokenFingerprint: combined };
 }
 
 /**

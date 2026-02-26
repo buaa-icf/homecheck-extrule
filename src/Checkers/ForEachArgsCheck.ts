@@ -18,18 +18,15 @@ import { ClassCategory } from "arkanalyzer/lib/core/model/ArkClass";
 import Logger, { LOG_MODULE_TYPE } from "arkanalyzer/lib/utils/logger";
 import {
     BaseMetaData,
-    BaseChecker,
-    Rule,
     ClassMatcher,
     MatcherTypes,
     MethodMatcher,
     MatcherCallback,
-    CheckerUtils,
-    IssueReport
+    CheckerUtils
 } from "homecheck";
-import { parseRuleOptions, RuleOptionSchema } from "./config/parseRuleOptions";
+import { RuleOptionSchema } from "./config/parseRuleOptions";
 import { ForeachArgsRuleOptions } from "./config/types";
-import { createDefects } from "./utils";
+import { BaseRuleChecker } from "./BaseRuleChecker";
 
 const logger = Logger.getLogger(LOG_MODULE_TYPE.HOMECHECK, "ForeachArgsCheck");
 const gMetaData: BaseMetaData = {
@@ -42,19 +39,17 @@ const FOREACH_ARGS_SCHEMA: RuleOptionSchema<ForeachArgsRuleOptions> = {
     minArgs: { type: "number", min: 1 }
 };
 
-export class ForeachArgsCheck implements BaseChecker {
+const DEFAULT_OPTIONS: ForeachArgsRuleOptions = {
+    minArgs: 3
+};
+
+export class ForEachArgsCheck extends BaseRuleChecker<ForeachArgsRuleOptions> {
     readonly metaData: BaseMetaData = gMetaData;
     readonly FOREACH_CLASS: string = "ForEach";
     readonly CREATE_METHOD: string = "create";
-    public rule: Rule;
-    public issues: IssueReport[] = [];
 
-    private readonly defaultOptions: ForeachArgsRuleOptions = {
-        minArgs: 3
-    };
-
-    private options: ForeachArgsRuleOptions = this.defaultOptions;
-    private optionsInitialized: boolean = false;
+    protected readonly optionSchema = FOREACH_ARGS_SCHEMA;
+    protected readonly defaultOptions = DEFAULT_OPTIONS;
 
     private clsMatcher: ClassMatcher = {
         matcherType: MatcherTypes.CLASS,
@@ -69,20 +64,6 @@ export class ForeachArgsCheck implements BaseChecker {
         matcherType: MatcherTypes.METHOD,
         decorators: ["Builder"]
     };
-
-    public beforeCheck(): void {
-        this.issues = [];
-        this.options = parseRuleOptions(this.rule, FOREACH_ARGS_SCHEMA, this.defaultOptions);
-        this.optionsInitialized = true;
-    }
-
-    private getOptions(): ForeachArgsRuleOptions {
-        if (!this.optionsInitialized) {
-            this.options = parseRuleOptions(this.rule, FOREACH_ARGS_SCHEMA, this.defaultOptions);
-            this.optionsInitialized = true;
-        }
-        return this.options;
-    }
 
     public registerMatchers(): MatcherCallback[] {
         const matchBuildCb: MatcherCallback = {
@@ -116,18 +97,14 @@ export class ForeachArgsCheck implements BaseChecker {
     };
 
     private addIssueReport(stmt: Stmt) {
-        const severity = this.rule?.alert ?? this.metaData.severity;
         const warnInfo = this.getLineAndColumn(stmt);
-        this.issues.push(createDefects({
+        this.reportIssue({
             line: warnInfo.line,
             startCol: warnInfo.startCol,
             endCol: warnInfo.endCol,
             description: this.metaData.description,
-            severity,
-            ruleId: this.rule.ruleId,
             filePath: warnInfo.filePath,
-            ruleDocPath: this.metaData.ruleDocPath
-        }));
+        });
     }
 
     private getLineAndColumn(stmt: Stmt) {

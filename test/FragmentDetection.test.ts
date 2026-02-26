@@ -20,7 +20,7 @@ import {
     getWindowCount,
     HashIndex,
     djb2Hash,
-    computeWindowHash,
+    computeFingerprint,
     computeTokensHash,
     CloneMatcher,
     classifyClones,
@@ -36,7 +36,7 @@ import {
     filterSelfOverlappingClones,
     deduplicateMergedClones
 } from '../src/Checkers/FragmentDetection';
-import { isLogStatement } from '../src/Checkers/utils';
+import { isLogStatement } from '../src/Checkers/shared';
 
 // ============================================================
 // 辅助函数：创建 mock Token
@@ -180,14 +180,14 @@ describe('哈希计算', () => {
         expect(computeTokensHash(tokens1)).not.toBe(computeTokensHash(tokens3));
     });
     
-    test('computeWindowHash 应基于 Token value 计算', () => {
+    test('computeFingerprint 应基于 Token value 计算', () => {
         const tokens = mockTokens(['a', 'b', 'c']);
         const windows = createSlidingWindows(tokens, 3);
         
-        const result = computeWindowHash(windows[0]);
+        const result = computeFingerprint(windows[0].tokens, 0, windows[0].tokens.length);
         const expectedHash = djb2Hash('a|b|c');
-        expect(result.hash).toBe(expectedHash);
-        expect(result.tokenFingerprint).toBe('a|b|c');
+        expect(djb2Hash(result)).toBe(expectedHash);
+        expect(result).toBe('a|b|c');
     });
 });
 
@@ -964,7 +964,20 @@ describe('Tokenizer - 边界情况', () => {
 
 // ==================== CodeCloneFragmentCheck 测试 ====================
 
-import { CodeCloneFragmentCheck, CloneScope, CodeLocation, FragmentCloneReport } from '../src/Checkers/CodeCloneFragmentCheck';
+import { CodeCloneFragmentCheck } from '../src/Checkers/CodeCloneFragmentCheck';
+import {
+    CloneScope,
+    CodeLocation,
+    FragmentCloneReport,
+    collectLogLines,
+    detectCloneType,
+    determineScope,
+    formatDescription,
+    formatLocation,
+    getScopeDescription,
+    parseFragmentCloneOptions,
+    removeLogLines
+} from '../src/Checkers/fragment-clone';
 
 describe('CodeCloneFragmentCheck - CloneScope 枚举', () => {
     test('CloneScope 枚举值正确', () => {
@@ -1003,15 +1016,7 @@ describe('CodeCloneFragmentCheck - 规则类创建', () => {
 });
 
 describe('CodeCloneFragmentCheck - 范围判定逻辑', () => {
-    // 创建一个测试用的私有方法访问器
-    const createTestCheck = () => {
-        const check = new CodeCloneFragmentCheck();
-        return check as any; // 允许访问私有方法
-    };
-    
     test('同一方法内 - SAME_METHOD', () => {
-        const check = createTestCheck();
-        
         const loc1: CodeLocation = {
             file: '/test/file.ts',
             startLine: 10,
@@ -1026,14 +1031,12 @@ describe('CodeCloneFragmentCheck - 范围判定逻辑', () => {
             className: 'MyClass',
             methodName: 'myMethod'
         };
-        
-        const scope = check.determineScope(loc1, loc2);
+
+        const scope = determineScope(loc1, loc2);
         expect(scope).toBe(CloneScope.SAME_METHOD);
     });
     
     test('同一类不同方法 - SAME_CLASS', () => {
-        const check = createTestCheck();
-        
         const loc1: CodeLocation = {
             file: '/test/file.ts',
             startLine: 10,
@@ -1048,14 +1051,12 @@ describe('CodeCloneFragmentCheck - 范围判定逻辑', () => {
             className: 'MyClass',
             methodName: 'method2'
         };
-        
-        const scope = check.determineScope(loc1, loc2);
+
+        const scope = determineScope(loc1, loc2);
         expect(scope).toBe(CloneScope.SAME_CLASS);
     });
     
     test('不同类 - DIFFERENT_CLASS', () => {
-        const check = createTestCheck();
-        
         const loc1: CodeLocation = {
             file: '/test/file1.ts',
             startLine: 10,
@@ -1070,14 +1071,12 @@ describe('CodeCloneFragmentCheck - 范围判定逻辑', () => {
             className: 'ClassB',
             methodName: 'method1'
         };
-        
-        const scope = check.determineScope(loc1, loc2);
+
+        const scope = determineScope(loc1, loc2);
         expect(scope).toBe(CloneScope.DIFFERENT_CLASS);
     });
     
     test('没有方法名 - DIFFERENT_CLASS', () => {
-        const check = createTestCheck();
-        
         const loc1: CodeLocation = {
             file: '/test/file.ts',
             startLine: 10,
@@ -1089,136 +1088,92 @@ describe('CodeCloneFragmentCheck - 范围判定逻辑', () => {
             startLine: 30,
             endLine: 35
         };
-        
-        const scope = check.determineScope(loc1, loc2);
+
+        const scope = determineScope(loc1, loc2);
         expect(scope).toBe(CloneScope.DIFFERENT_CLASS);
     });
 });
 
 describe('CodeCloneFragmentCheck - 克隆类型判定', () => {
     test('未规范化 - Type-1', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
-            option: [{ normalizeIdentifiers: false, normalizeLiterals: false }]
-        };
-        check.beforeCheck();
-        
-        const type = check.determineCloneType();
+        const type = detectCloneType({ normalizeIdentifiers: false, normalizeLiterals: false });
         expect(type).toBe('Type-1');
     });
     
     test('规范化标识符 - Type-2', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
-            option: [{ normalizeIdentifiers: true, normalizeLiterals: false }]
-        };
-        check.beforeCheck();
-        
-        const type = check.determineCloneType();
+        const type = detectCloneType({ normalizeIdentifiers: true, normalizeLiterals: false });
         expect(type).toBe('Type-2');
     });
     
     test('规范化字面量 - Type-2', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
-            option: [{ normalizeIdentifiers: false, normalizeLiterals: true }]
-        };
-        check.beforeCheck();
-        
-        const type = check.determineCloneType();
+        const type = detectCloneType({ normalizeIdentifiers: false, normalizeLiterals: true });
         expect(type).toBe('Type-2');
     });
     
     test('两者都规范化 - Type-2', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
-            option: [{ normalizeIdentifiers: true, normalizeLiterals: true }]
-        };
-        check.beforeCheck();
-        
-        const type = check.determineCloneType();
+        const type = detectCloneType({ normalizeIdentifiers: true, normalizeLiterals: true });
         expect(type).toBe('Type-2');
     });
 });
 
 describe('CodeCloneFragmentCheck - 配置读取', () => {
     test('默认 minimumTokens', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
-        const value = check.getMinimumTokens();
+        const value = parseFragmentCloneOptions(undefined as any).minimumTokens;
         expect(value).toBe(100);
     });
     
     test('自定义 minimumTokens', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
+        const rule: any = {
             option: [{ minimumTokens: 50 }]
         };
-        
-        const value = check.getMinimumTokens();
+        const value = parseFragmentCloneOptions(rule).minimumTokens;
         expect(value).toBe(50);
     });
     
     test('默认 normalizeIdentifiers', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
-        const value = check.getNormalizeIdentifiers();
+        const value = parseFragmentCloneOptions(undefined as any).normalizeIdentifiers;
         expect(value).toBe(true);
     });
     
     test('自定义 normalizeIdentifiers', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
+        const rule: any = {
             option: [{ normalizeIdentifiers: false }]
         };
-        
-        const value = check.getNormalizeIdentifiers();
+        const value = parseFragmentCloneOptions(rule).normalizeIdentifiers;
         expect(value).toBe(false);
     });
     
     test('默认 normalizeLiterals', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
-        const value = check.getNormalizeLiterals();
+        const value = parseFragmentCloneOptions(undefined as any).normalizeLiterals;
         expect(value).toBe(false);
     });
     
     test('自定义 normalizeLiterals', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
+        const rule: any = {
             option: [{ normalizeLiterals: true }]
         };
-        
-        const value = check.getNormalizeLiterals();
+        const value = parseFragmentCloneOptions(rule).normalizeLiterals;
         expect(value).toBe(true);
     });
 });
 
 describe('CodeCloneFragmentCheck - 描述格式化', () => {
     test('格式化范围描述 - SAME_METHOD', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
-        const desc = check.getScopeDescription(CloneScope.SAME_METHOD);
+        const desc = getScopeDescription(CloneScope.SAME_METHOD);
         expect(desc).toBe('same method');
     });
     
     test('格式化范围描述 - SAME_CLASS', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
-        const desc = check.getScopeDescription(CloneScope.SAME_CLASS);
+        const desc = getScopeDescription(CloneScope.SAME_CLASS);
         expect(desc).toBe('same class');
     });
     
     test('格式化范围描述 - DIFFERENT_CLASS', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
-        const desc = check.getScopeDescription(CloneScope.DIFFERENT_CLASS);
+        const desc = getScopeDescription(CloneScope.DIFFERENT_CLASS);
         expect(desc).toBe('different classes');
     });
     
     test('格式化位置 - 带类和方法（使用文件名）', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const loc: CodeLocation = {
             file: '/path/to/file.ts',
             startLine: 10,
@@ -1226,54 +1181,46 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
             className: 'MyClass',
             methodName: 'myMethod'
         };
-        
-        const formatted = check.formatLocation(loc);
+
+        const formatted = formatLocation(loc);
         expect(formatted).toBe('file.ts > MyClass.myMethod():10-20');
     });
     
     test('格式化位置 - 只有类（使用文件名）', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const loc: CodeLocation = {
             file: '/path/to/file.ts',
             startLine: 10,
             endLine: 20,
             className: 'MyClass'
         };
-        
-        const formatted = check.formatLocation(loc);
+
+        const formatted = formatLocation(loc);
         expect(formatted).toBe('file.ts > MyClass:10-20');
     });
     
     test('格式化位置 - 无类无方法（使用文件名）', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const loc: CodeLocation = {
             file: '/path/to/file.ts',
             startLine: 10,
             endLine: 20
         };
-        
-        const formatted = check.formatLocation(loc);
+
+        const formatted = formatLocation(loc);
         expect(formatted).toBe('file.ts:10-20');
     });
     
     test('格式化位置 - 长路径只保留文件名', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const loc: CodeLocation = {
             file: '/very/long/path/to/src/utils/Logger.ets',
             startLine: 1,
             endLine: 20
         };
-        
-        const formatted = check.formatLocation(loc);
+
+        const formatted = formatLocation(loc);
         expect(formatted).toBe('Logger.ets:1-20');
     });
     
     test('不同路径同名文件会产生相同的格式化结果（仅文件名）', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const loc1: CodeLocation = {
             file: '/project/moduleA/src/utils/Logger.ets',
             startLine: 5,
@@ -1284,15 +1231,13 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
             startLine: 5,
             endLine: 23
         };
-        
-        const formatted1 = check.formatLocation(loc1);
-        const formatted2 = check.formatLocation(loc2);
+
+        const formatted1 = formatLocation(loc1);
+        const formatted2 = formatLocation(loc2);
         expect(formatted1).toBe(formatted2);
     });
     
     test('格式化完整描述', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const report: FragmentCloneReport = {
             cloneType: 'Type-2',
             scope: CloneScope.SAME_CLASS,
@@ -1313,8 +1258,8 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
             tokenCount: 150,
             lineCount: 11
         };
-        
-        const desc = check.formatDescription(report);
+
+        const desc = formatDescription(report);
         expect(desc).toContain('Code Clone Type-2');
         expect(desc).toContain('same class');
         expect(desc).toContain('150 tokens');
@@ -1361,8 +1306,6 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
     });
 
     test('collectLogLines 收集单行日志的行号', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         // 构造 mock ArkFile
         const mockStmts = [
             { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 5 }) },
@@ -1389,8 +1332,8 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
             getFilePath: () => '/test.ets',
             getClasses: () => [mockClass]
         };
-        
-        const logLines = check.collectLogLines(mockArkFile);
+
+        const logLines = collectLogLines(mockArkFile as any);
         expect(logLines.has(6)).toBe(true);
         expect(logLines.has(5)).toBe(false);
         expect(logLines.has(7)).toBe(false);
@@ -1398,8 +1341,6 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
     });
 
     test('collectLogLines 收集多行日志的行号范围', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         // 日志语句在第 10 行，下一条语句在第 13 行
         // → 日志占据 10, 11, 12 三行
         const mockStmts = [
@@ -1426,8 +1367,8 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
             getFilePath: () => '/test.ets',
             getClasses: () => [mockClass]
         };
-        
-        const logLines = check.collectLogLines(mockArkFile);
+
+        const logLines = collectLogLines(mockArkFile as any);
         expect(logLines.has(10)).toBe(true);
         expect(logLines.has(11)).toBe(true);
         expect(logLines.has(12)).toBe(true);
@@ -1436,8 +1377,6 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
     });
 
     test('collectLogLines 处理末尾日志（用方法结束行作为边界）', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         // 日志是方法的最后一条语句
         const mockStmts = [
             { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 5 }) },
@@ -1465,8 +1404,8 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
             getFilePath: () => '/test.ets',
             getClasses: () => [mockClass]
         };
-        
-        const logLines = check.collectLogLines(mockArkFile);
+
+        const logLines = collectLogLines(mockArkFile as any);
         // 最后一条语句是日志，endLine = getMethodEndLine(method)
         // getMethodEndLine 遍历 stmts 找最大行号 = max(5, 6) = 6
         // 所以只有第 6 行
@@ -1475,8 +1414,6 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
     });
 
     test('removeLogLines 将日志行替换为空行', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const sourceCode = [
             'import { something } from "module"',   // line 1
             '',                                       // line 2
@@ -1515,8 +1452,8 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
             getFilePath: () => '/test.ets',
             getClasses: () => [mockClass]
         };
-        
-        const result = check.removeLogLines(sourceCode, mockArkFile);
+
+        const result = removeLogLines(sourceCode, mockArkFile as any);
         const lines = result.split('\n');
         
         // 总行数不变
@@ -1529,8 +1466,6 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
     });
 
     test('removeLogLines 保持行号不变（多行日志）', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const sourceCode = [
             'function test() {',                       // line 1
             '    let a = 1;',                          // line 2
@@ -1567,8 +1502,8 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
             getFilePath: () => '/test.ets',
             getClasses: () => [mockClass]
         };
-        
-        const result = check.removeLogLines(sourceCode, mockArkFile);
+
+        const result = removeLogLines(sourceCode, mockArkFile as any);
         const lines = result.split('\n');
         
         // 总行数不变
@@ -1583,8 +1518,6 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
     });
 
     test('collectLogLines 末尾多行日志仅清除到 methodEndLine（边界：endLine=startLine）', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         // 方法最后一条语句是一个跨 3 行的 hilog.info，起始行 10
         // getMethodEndLine 遍历 stmts 取 max lineNo = 10（日志自身起始行）
         // 因此 endLine = methodEndLine = 10，只有第 10 行被标记，11/12 行漏掉
@@ -1613,8 +1546,8 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
             getFilePath: () => '/test.ets',
             getClasses: () => [mockClass]
         };
-        
-        const logLines = check.collectLogLines(mockArkFile);
+
+        const logLines = collectLogLines(mockArkFile as any);
         // methodEndLine = max(8, 10) = 10，所以 endLine = 10
         // 只有第 10 行被标记；如果实际源码中该日志跨 10-12 行，11/12 不会被清除
         expect(logLines.has(10)).toBe(true);
@@ -1624,8 +1557,6 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
     });
 
     test('removeLogLines 末尾多行日志：后续行未被清除（已知局限）', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const sourceCode = [
             'function test() {',                        // line 1
             '    let x = 1;',                           // line 2
@@ -1660,8 +1591,8 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
             getFilePath: () => '/test.ets',
             getClasses: () => [mockClass]
         };
-        
-        const result = check.removeLogLines(sourceCode, mockArkFile);
+
+        const result = removeLogLines(sourceCode, mockArkFile as any);
         const resultLines = result.split('\n');
         
         expect(resultLines.length).toBe(6);
@@ -1673,8 +1604,6 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
     });
 
     test('removeLogLines 无日志时原样返回', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const sourceCode = 'let x = 1;\nlet y = 2;';
         
         const mockStmts = [
@@ -1701,30 +1630,27 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
             getFilePath: () => '/test.ets',
             getClasses: () => [mockClass]
         };
-        
-        const result = check.removeLogLines(sourceCode, mockArkFile);
+
+        const result = removeLogLines(sourceCode, mockArkFile as any);
         expect(result).toBe(sourceCode);
     });
 
-    test('getIgnoreLogs 默认返回 true', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        expect(check.getIgnoreLogs()).toBe(true);
+    test('ignoreLogs 默认返回 true', () => {
+        expect(parseFragmentCloneOptions(undefined as any).ignoreLogs).toBe(true);
     });
 
-    test('getIgnoreLogs 从配置读取 false', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
+    test('ignoreLogs 从配置读取 false', () => {
+        const rule: any = {
             option: [{ ignoreLogs: false }]
         };
-        expect(check.getIgnoreLogs()).toBe(false);
+        expect(parseFragmentCloneOptions(rule).ignoreLogs).toBe(false);
     });
 
-    test('getIgnoreLogs 配置为 true', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
+    test('ignoreLogs 配置为 true', () => {
+        const rule: any = {
             option: [{ ignoreLogs: true }]
         };
-        expect(check.getIgnoreLogs()).toBe(true);
+        expect(parseFragmentCloneOptions(rule).ignoreLogs).toBe(true);
     });
 });
 

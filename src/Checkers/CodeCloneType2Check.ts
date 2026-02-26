@@ -15,8 +15,9 @@
 
 import { Stmt } from "arkanalyzer";
 import { BaseMetaData } from "homecheck";
-import { CodeCloneBaseCheck, ClonePair, MethodInfo } from "./CodeCloneBaseCheck";
-import { normalizeIdentifiers, normalizeLiterals, stripDecorators, stripTypeAnnotations } from "./utils";
+import { CodeCloneBaseCheck } from "./CodeCloneBaseCheck";
+import { ClonePair, MethodInfo } from "./method-clone";
+import { normalizeIdentifiers, normalizeLiterals, stripDecorators, stripTypeAnnotations } from "./shared";
 
 const gMetaData: BaseMetaData = {
     severity: 2,
@@ -52,17 +53,17 @@ export class CodeCloneType2Check extends CodeCloneBaseCheck {
         // 用于追踪已见过的标识符
         const identifierMap = new Map<string, string>();
         // 读取配置：是否忽略字面量差异
-        const ignoreLiterals = this.getIgnoreLiterals();
+        const ignoreLiterals = this.option("ignoreLiterals");
 
         const stmtStrings = stmts.map(stmt => {
             let text = stmt.toString();
             // 先做基础规范化（去除路径、类名）
             text = this.normalizeBasic(text);
             // 可选：去除类型注解和装饰器
-            if (this.getIgnoreTypes()) {
+            if (this.option("ignoreTypes")) {
                 text = stripTypeAnnotations(text);
             }
-            if (this.getIgnoreDecorators()) {
+            if (this.option("ignoreDecorators")) {
                 text = stripDecorators(text);
             }
             // 再做标识符规范化
