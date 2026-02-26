@@ -1,12 +1,18 @@
 import { ArkMethod, Stmt } from "arkanalyzer";
 import { BaseChecker, BaseMetaData, IssueReport, MatcherCallback, MatcherTypes, MethodMatcher, Rule } from "homecheck";
-import { createDefects, getRuleOption } from "./utils";
+import { RuleOptionSchema, parseRuleOptions } from "./config/parseRuleOptions";
+import { SwitchStatementRuleOptions } from "./config/types";
+import { createDefects } from "./utils";
 
 // Detect "Switch Statement" smell: large switch blocks that may signal missing polymorphism.
 const gMetaData: BaseMetaData = {
     severity: 2,
     ruleDocPath: "docs/switch-statement-check.md",
     description: "Large switch statement detected; consider replacing with polymorphism."
+};
+
+const SWITCH_OPTIONS_SCHEMA: RuleOptionSchema<SwitchStatementRuleOptions> = {
+    minCases: { type: "number", min: 1 }
 };
 
 /**
@@ -23,12 +29,31 @@ export class SwitchStatementCheck implements BaseChecker {
     };
 
     private readonly MIN_CASES = 5; // Heuristic threshold for a "large" switch.
+    private readonly defaultOptions: SwitchStatementRuleOptions = {
+        minCases: this.MIN_CASES
+    };
+    private options: SwitchStatementRuleOptions = this.defaultOptions;
+    private optionsInitialized: boolean = false;
 
     /**
      * Register the method-level matcher for this checker.
      */
     public registerMatchers(): MatcherCallback[] {
         return [{ matcher: this.methodMatcher, callback: this.check }];
+    }
+
+    public beforeCheck(): void {
+        this.issues = [];
+        this.options = parseRuleOptions(this.rule, SWITCH_OPTIONS_SCHEMA, this.defaultOptions);
+        this.optionsInitialized = true;
+    }
+
+    private getOptions(): SwitchStatementRuleOptions {
+        if (!this.optionsInitialized) {
+            this.options = parseRuleOptions(this.rule, SWITCH_OPTIONS_SCHEMA, this.defaultOptions);
+            this.optionsInitialized = true;
+        }
+        return this.options;
     }
 
     /**
@@ -265,8 +290,7 @@ export class SwitchStatementCheck implements BaseChecker {
      * Resolve the case-count threshold from rule options or defaults.
      */
     private getCaseThreshold(): number {
-        const option = getRuleOption(this.rule, { minCases: this.MIN_CASES });
-        return option.minCases;
+        return this.getOptions().minCases;
     }
 
     /**

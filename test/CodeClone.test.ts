@@ -10,9 +10,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { normalizeBasic, normalizeIdentifiers, normalizeLiterals, djb2Hash as simpleHash } from '../src/Checkers/utils';
+import { CodeCloneType1Check } from '../src/Checkers/CodeCloneType1Check';
 
 // 测试用例目录
 const SAMPLE_DIR = path.join(__dirname, 'sample/CodeClone');
+
+function mockStmt(text: string) {
+    return { toString: () => text } as any;
+}
 
 function isLogStatement(text: string): boolean {
     const trimmed = text.trim();
@@ -217,6 +222,38 @@ describe('Type-1 克隆检测模拟', () => {
         const hash2 = simpleHash(code2.map(normalizeBasic).join('|'));
 
         expect(hash1).not.toBe(hash2);
+    });
+});
+
+describe('Type-1 可选规范化（ignoreTypes / ignoreDecorators）', () => {
+    test('ignoreTypes=false 时，不同类型注解应产生不同哈希', () => {
+        const checker = new CodeCloneType1Check() as any;
+        checker.rule = { ruleId: 'test', alert: 2, option: [{ ignoreTypes: false }] };
+
+        const h1 = checker.computeHash([mockStmt('let count: number = 1'), mockStmt('return count')]).hash;
+        const h2 = checker.computeHash([mockStmt('let count: string = 1'), mockStmt('return count')]).hash;
+
+        expect(h1).not.toBe(h2);
+    });
+
+    test('ignoreTypes=true 时，类型注解差异应被忽略', () => {
+        const checker = new CodeCloneType1Check() as any;
+        checker.rule = { ruleId: 'test', alert: 2, option: [{ ignoreTypes: true }] };
+
+        const h1 = checker.computeHash([mockStmt('let count: number = 1'), mockStmt('return count')]).hash;
+        const h2 = checker.computeHash([mockStmt('let count: string = 1'), mockStmt('return count')]).hash;
+
+        expect(h1).toBe(h2);
+    });
+
+    test('ignoreDecorators=true 时，装饰器差异应被忽略', () => {
+        const checker = new CodeCloneType1Check() as any;
+        checker.rule = { ruleId: 'test', alert: 2, option: [{ ignoreDecorators: true }] };
+
+        const h1 = checker.computeHash([mockStmt('@Builder()'), mockStmt('foo()')]).hash;
+        const h2 = checker.computeHash([mockStmt('@Entry()'), mockStmt('foo()')]).hash;
+
+        expect(h1).toBe(h2);
     });
 });
 

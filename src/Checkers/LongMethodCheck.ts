@@ -16,7 +16,9 @@
 import { ArkMethod } from "arkanalyzer";
 import { ClassCategory } from "arkanalyzer/lib/core/model/ArkClass";
 import { BaseMetaData, BaseChecker, Rule, MethodMatcher, MatcherTypes, MatcherCallback, IssueReport } from "homecheck";
-import { createDefects, getRuleOption } from "./utils";
+import { RuleOptionSchema, parseRuleOptions } from "./config/parseRuleOptions";
+import { LongMethodRuleOptions } from "./config/types";
+import { createDefects } from "./utils";
 
 const gMetaData: BaseMetaData = {
     severity: 2,
@@ -31,6 +33,13 @@ const UI_LIFECYCLE_METHODS = new Set([
     'onPageHide',
     'onBackPress'
 ]);
+
+const LONG_METHOD_OPTIONS_SCHEMA: RuleOptionSchema<LongMethodRuleOptions> = {
+    maxStmts: { type: "number", min: 0 },
+    maxLines: { type: "number", min: 0, allowNaN: true },
+    maxUIStmtsSoft: { type: "number", min: 0 },
+    maxUIStmtsHard: { type: "number", min: 0 }
+};
 
 /**
  * Long Method 检测规则
@@ -56,11 +65,33 @@ export class LongMethodCheck implements BaseChecker {
     private readonly DEFAULT_MAX_STMTS = 50;
     private readonly DEFAULT_MAX_UI_STMTS_SOFT = 80;
     private readonly DEFAULT_MAX_UI_STMTS_HARD = 120;
+    private readonly defaultOptions: LongMethodRuleOptions = {
+        maxStmts: Number.NaN,
+        maxLines: Number.NaN,
+        maxUIStmtsSoft: Number.NaN,
+        maxUIStmtsHard: Number.NaN
+    };
+    private options: LongMethodRuleOptions = this.defaultOptions;
+    private optionsInitialized: boolean = false;
 
     // 匹配所有方法
     private methodMatcher: MethodMatcher = {
         matcherType: MatcherTypes.METHOD
     };
+
+    public beforeCheck(): void {
+        this.issues = [];
+        this.options = parseRuleOptions(this.rule, LONG_METHOD_OPTIONS_SCHEMA, this.defaultOptions);
+        this.optionsInitialized = true;
+    }
+
+    private getOptions(): LongMethodRuleOptions {
+        if (!this.optionsInitialized) {
+            this.options = parseRuleOptions(this.rule, LONG_METHOD_OPTIONS_SCHEMA, this.defaultOptions);
+            this.optionsInitialized = true;
+        }
+        return this.options;
+    }
 
     public registerMatchers(): MatcherCallback[] {
         const matchMethodCb: MatcherCallback = {
@@ -135,10 +166,7 @@ export class LongMethodCheck implements BaseChecker {
      * 从配置中获取普通方法的最大语句数阈值
      */
     private getMaxStmtsFromConfig(): number {
-        const option = getRuleOption(this.rule, {
-            maxStmts: Number.NaN,
-            maxLines: Number.NaN
-        });
+        const option = this.getOptions();
 
         if (Number.isFinite(option.maxStmts)) {
             return option.maxStmts;
@@ -151,10 +179,7 @@ export class LongMethodCheck implements BaseChecker {
     }
 
     private getUIThresholdsFromConfig(): { softLimit: number; hardLimit: number } {
-        const option = getRuleOption(this.rule, {
-            maxUIStmtsSoft: Number.NaN,
-            maxUIStmtsHard: Number.NaN
-        });
+        const option = this.getOptions();
 
         const softLimit = Number.isFinite(option.maxUIStmtsSoft)
             ? option.maxUIStmtsSoft

@@ -93,9 +93,6 @@ describe('校准：arkanalyzer CFG 语句数', () => {
         for (const m of methods) {
             methodInfo[getMethodKey(m)] = getStmtCount(m);
         }
-        console.log('=== 方法 CFG 语句数校准 ===');
-        console.log(JSON.stringify(methodInfo, null, 2));
-
         const longMethodKey = Object.keys(methodInfo).find(k => k.includes('longMethod'));
         if (longMethodKey) {
             expect(methodInfo[longMethodKey]).toBeGreaterThan(50);
@@ -158,7 +155,6 @@ describe('LongMethodCheck 集成测试：UIBuilderMethods.ets', () => {
         const longBuilder = builderMethods.find(m => m.getName() === 'longBuilderFunction');
         if (longBuilder) {
             const stmts = getStmtCount(longBuilder);
-            console.log(`longBuilderFunction CFG stmts: ${stmts}`);
             if (stmts > 80) {
                 expect(reportedMethods).toContain('longBuilderFunction');
                 const issue = checker.issues.find(i => i.defect.methodName === 'longBuilderFunction');
@@ -191,19 +187,12 @@ describe('LongMethodCheck 集成测试：ComponentMethods.ets', () => {
         }
 
         const reportedMethods = checker.issues.map(i => i.defect.methodName);
-        console.log('ComponentMethods issues:', checker.issues.map(i => ({
-            method: i.defect.methodName,
-            severity: i.defect.severity,
-            desc: i.defect.description
-        })));
-
         const buildMethod = componentMethods.find(m =>
             m.getName() === 'build' &&
             m.getDeclaringArkClass()?.getName() === 'LongBuildComponent'
         );
         if (buildMethod) {
             const stmts = getStmtCount(buildMethod);
-            console.log(`LongBuildComponent.build() CFG stmts: ${stmts}`);
             if (stmts > 80) {
                 expect(reportedMethods).toContain('build');
                 const issue = checker.issues.find(i =>
@@ -222,7 +211,6 @@ describe('LongMethodCheck 集成测试：ComponentMethods.ets', () => {
         );
         if (lifecycleMethod) {
             const stmts = getStmtCount(lifecycleMethod);
-            console.log(`LongBuildComponent.aboutToAppear() CFG stmts: ${stmts}`);
             if (stmts > 80) {
                 expect(reportedMethods).toContain('aboutToAppear');
                 const issue = checker.issues.find(i => i.defect.methodName === 'aboutToAppear');
@@ -238,7 +226,6 @@ describe('LongMethodCheck 集成测试：ComponentMethods.ets', () => {
         );
         if (helperMethod) {
             const stmts = getStmtCount(helperMethod);
-            console.log(`LongBuildComponent.helperMethod() CFG stmts: ${stmts}`);
             if (stmts > 50) {
                 expect(reportedMethods).toContain('helperMethod');
                 const issue = checker.issues.find(i => i.defect.methodName === 'helperMethod');
@@ -253,7 +240,6 @@ describe('LongMethodCheck 集成测试：ComponentMethods.ets', () => {
         );
         if (shortBuild) {
             const stmts = getStmtCount(shortBuild);
-            console.log(`ShortComponent.build() CFG stmts: ${stmts}`);
             expect(stmts).toBeLessThanOrEqual(80);
         }
     });
@@ -266,13 +252,6 @@ describe('LongMethodCheck 集成测试：全量检测', () => {
 
         for (const method of methods) {
             checker.check(method);
-        }
-
-        console.log(`\n=== 全量检测结果 ===`);
-        console.log(`总方法数: ${methods.length}`);
-        console.log(`触发 issue 数: ${checker.issues.length}`);
-        for (const issue of checker.issues) {
-            console.log(`  - ${issue.defect.methodName}: severity=${issue.defect.severity}, ${issue.defect.description}`);
         }
 
         expect(checker.issues.length).toBeGreaterThan(0);

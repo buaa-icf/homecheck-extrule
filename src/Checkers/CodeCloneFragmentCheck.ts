@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 
-import * as fs from 'fs';
 import { ArkFile, ArkMethod } from "arkanalyzer";
 import {
     BaseMetaData,
@@ -27,11 +26,18 @@ import {
 import {
     createDefects,
     getMethodEndLine,
-    getRuleOption,
-    isLogStatement,
     shouldSkipClass,
     shouldSkipMethod
 } from "./utils";
+import {
+    collectLogLines as collectLogLinesInSource,
+    FragmentCloneDiagnostics,
+    createEmptyDiagnostics,
+    parseFragmentCloneOptions,
+    removeLogLines as removeLogLinesInSource,
+    readSourceFile
+} from "./fragment-clone";
+import { FragmentCloneRuleOptions } from "./config/types";
 
 import {
     Tokenizer,
@@ -118,16 +124,10 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     public issues: IssueReport[] = [];
     public arkFiles: ArkFile[] = [];
 
-    // 默认配置
-    private readonly DEFAULT_MINIMUM_TOKENS = 100;
-    private readonly DEFAULT_NORMALIZE_IDENTIFIERS = true;
-    private readonly DEFAULT_NORMALIZE_LITERALS = false;
-    private readonly DEFAULT_IGNORE_TYPES = false;
-    private readonly DEFAULT_IGNORE_DECORATORS = false;
-    private readonly DEFAULT_IGNORE_LOGS = true;
-    private readonly DEFAULT_MIN_DISTINCT_TOKEN_TYPES = 0;
-    private readonly DEFAULT_ENABLE_CLONE_CLASSES = false;
-    private readonly DEFAULT_SIMILARITY_THRESHOLD = 1.0;
+    // 统一配置对象（beforeCheck 一次解析）
+    private options: FragmentCloneRuleOptions = parseFragmentCloneOptions();
+    private optionsInitialized: boolean = false;
+    private diagnostics: FragmentCloneDiagnostics = createEmptyDiagnostics();
 
     // 克隆匹配器和合并器
     private cloneMatcher: CloneMatcher;
@@ -146,14 +146,14 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     };
 
     constructor() {
-        const windowSize = this.DEFAULT_MINIMUM_TOKENS;
+        const windowSize = this.options.minimumTokens;
         this.cloneMatcher = new CloneMatcher(windowSize);
         this.cloneMerger = new CloneMerger(windowSize);
         this.tokenizer = new Tokenizer({
-            normalizeIdentifiers: this.DEFAULT_NORMALIZE_IDENTIFIERS,
-            normalizeLiterals: this.DEFAULT_NORMALIZE_LITERALS,
-            ignoreTypes: this.DEFAULT_IGNORE_TYPES,
-            ignoreDecorators: this.DEFAULT_IGNORE_DECORATORS
+            normalizeIdentifiers: this.options.normalizeIdentifiers,
+            normalizeLiterals: this.options.normalizeLiterals,
+            ignoreTypes: this.options.ignoreTypes,
+            ignoreDecorators: this.options.ignoreDecorators
         });
     }
 
@@ -161,9 +161,12 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      * 检测前初始化
      */
     public beforeCheck(): void {
-        const minimumTokens = this.getMinimumTokens();
-        const normalizeIdentifiers = this.getNormalizeIdentifiers();
-        const normalizeLiterals = this.getNormalizeLiterals();
+        this.options = parseFragmentCloneOptions(this.rule);
+        this.optionsInitialized = true;
+        this.diagnostics = createEmptyDiagnostics();
+        const minimumTokens = this.options.minimumTokens;
+        const normalizeIdentifiers = this.options.normalizeIdentifiers;
+        const normalizeLiterals = this.options.normalizeLiterals;
 
         // 重新初始化组件
         this.cloneMatcher = new CloneMatcher(minimumTokens);
@@ -171,8 +174,8 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         this.tokenizer = new Tokenizer({
             normalizeIdentifiers,
             normalizeLiterals,
-            ignoreTypes: this.getIgnoreTypes(),
-            ignoreDecorators: this.getIgnoreDecorators()
+            ignoreTypes: this.options.ignoreTypes,
+            ignoreDecorators: this.options.ignoreDecorators
         });
 
         this.fileCache.clear();
@@ -200,21 +203,27 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         const filePath = arkFile.getFilePath();
         const minimumTokens = this.getMinimumTokens();
 
+        const readResult = readSourceFile(filePath);
+        let sourceCode = readResult.content;
+        if (sourceCode === null) {
+            this.diagnostics.filesReadFailed++;
+            this.diagnostics.errors.push({
+                filePath,
+                phase: "read",
+                message: readResult.errorMessage ?? "failed to read source file"
+            });
+            return;
+        }
+
+        // 缓存 ArkFile 用于后续反查（放在日志过滤之前，因为过滤需要用到）
+        this.fileCache.set(filePath, arkFile);
+
+        // 日志过滤：在 Tokenize 之前，将日志语句行替换为空行
+        if (this.getIgnoreLogs()) {
+            sourceCode = this.removeLogLines(sourceCode, arkFile);
+        }
+
         try {
-            // 读取源文件内容
-            let sourceCode = this.readSourceFile(filePath);
-            if (!sourceCode) {
-                return;
-            }
-
-            // 缓存 ArkFile 用于后续反查（放在日志过滤之前，因为过滤需要用到）
-            this.fileCache.set(filePath, arkFile);
-
-            // 日志过滤：在 Tokenize 之前，将日志语句行替换为空行
-            if (this.getIgnoreLogs()) {
-                sourceCode = this.removeLogLines(sourceCode, arkFile);
-            }
-
             // Tokenize
             const tokens = this.tokenizer.tokenize(sourceCode, filePath);
 
@@ -236,8 +245,13 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
 
             // 缓存 Token 序列（用于近似克隆检测）
             this.fileTokenCache.set(filePath, tokens);
-
-        } catch {
+        } catch (error) {
+            this.diagnostics.filesProcessFailed++;
+            this.diagnostics.errors.push({
+                filePath,
+                phase: "process",
+                message: error instanceof Error ? error.message : "failed to process file"
+            });
             return;
         }
     }
@@ -348,17 +362,6 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         }
 
         return reports;
-    }
-
-    /**
-     * 读取源文件内容
-     */
-    private readSourceFile(filePath: string): string | null {
-        try {
-            return fs.readFileSync(filePath, 'utf-8');
-        } catch (error) {
-            return null;
-        }
     }
 
     /**
@@ -552,8 +555,8 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         const { cloneType, scope, location1, location2, tokenCount, lineCount, similarity } = report;
 
         const scopeDesc = this.getScopeDescription(scope);
-        const loc1Desc = this.formatLocation(location1);
-        const loc2Desc = this.formatLocation(location2);
+        const loc1Desc = this.formatLocation(location1, false);
+        const loc2Desc = this.formatLocation(location2, true);
 
         if (similarity !== undefined && similarity < 1.0) {
             const pct = Math.round(similarity * 100);
@@ -629,18 +632,19 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
 
     /**
      * 格式化位置信息
-     * 
-     * 使用完整路径，确保 Homecheck 的 mergeKey 绝对唯一，不会误合并。
-     * 之前用 shortPath（最后 3 级）导致不同子项目下的同名文件被去重，
-     * 271 个 issue 只剩 43 个。改为完整路径后彻底根治。
+     *
+     * 仅在 message 中显示文件名，避免描述过长。
+     * source 文件完整路径由 defect.filePath 单独提供。
      */
-    private formatLocation(loc: CodeLocation): string {
+    private formatLocation(loc: CodeLocation, useFullPath: boolean = false): string {
+        const fileName = loc.file.split('/').pop() ?? loc.file;
+        const filePart = useFullPath ? loc.file : fileName;
         if (loc.className && loc.methodName) {
-            return `${loc.file} > ${loc.className}.${loc.methodName}():${loc.startLine}-${loc.endLine}`;
+            return `${filePart} > ${loc.className}.${loc.methodName}():${loc.startLine}-${loc.endLine}`;
         } else if (loc.className) {
-            return `${loc.file} > ${loc.className}:${loc.startLine}-${loc.endLine}`;
+            return `${filePart} > ${loc.className}:${loc.startLine}-${loc.endLine}`;
         } else {
-            return `${loc.file}:${loc.startLine}-${loc.endLine}`;
+            return `${filePart}:${loc.startLine}-${loc.endLine}`;
         }
     }
 
@@ -656,42 +660,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      *   3. 将该范围内所有行号加入集合
      */
     public collectLogLines(arkFile: ArkFile): Set<number> {
-        const logLines = new Set<number>();
-
-        for (const arkClass of arkFile.getClasses()) {
-            for (const method of arkClass.getMethods()) {
-                const body = method.getBody();
-                if (!body) continue;
-
-                const stmts = body.getCfg().getStmts();
-                if (stmts.length === 0) continue;
-
-                // 计算方法结束行（作为最后一条语句的结束边界）
-                const methodEndLine = this.getMethodEndLine(method);
-
-                for (let i = 0; i < stmts.length; i++) {
-                    if (!isLogStatement(stmts[i])) continue;
-
-                    const startLine = stmts[i].getOriginPositionInfo().getLineNo();
-                    if (startLine <= 0) continue;
-
-                    // 结束行 = 下一条语句起始行 - 1，或方法结束行
-                    let endLine: number;
-                    if (i + 1 < stmts.length) {
-                        const nextLine = stmts[i + 1].getOriginPositionInfo().getLineNo();
-                        endLine = nextLine > startLine ? nextLine - 1 : startLine;
-                    } else {
-                        endLine = methodEndLine;
-                    }
-
-                    for (let line = startLine; line <= endLine; line++) {
-                        logLines.add(line);
-                    }
-                }
-            }
-        }
-
-        return logLines;
+        return collectLogLinesInSource(arkFile);
     }
 
     /**
@@ -700,64 +669,45 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      * 替换为空行而非删除，以保持行号不变。
      */
     public removeLogLines(sourceCode: string, arkFile: ArkFile): string {
-        const logLines = this.collectLogLines(arkFile);
-        if (logLines.size === 0) {
-            return sourceCode;
-        }
-
-        const lines = sourceCode.split('\n');
-        for (const lineNo of logLines) {
-            // ArkAnalyzer 行号从 1 开始，数组索引从 0 开始
-            const idx = lineNo - 1;
-            if (idx >= 0 && idx < lines.length) {
-                lines[idx] = '';
-            }
-        }
-
-        return lines.join('\n');
+        return removeLogLinesInSource(sourceCode, arkFile);
     }
 
     // ========== 配置读取方法 ==========
 
-    private getConfig() {
-        return getRuleOption(this.rule, {
-            minimumTokens: this.DEFAULT_MINIMUM_TOKENS,
-            normalizeIdentifiers: this.DEFAULT_NORMALIZE_IDENTIFIERS,
-            normalizeLiterals: this.DEFAULT_NORMALIZE_LITERALS,
-            ignoreTypes: this.DEFAULT_IGNORE_TYPES,
-            ignoreDecorators: this.DEFAULT_IGNORE_DECORATORS,
-            ignoreLogs: this.DEFAULT_IGNORE_LOGS,
-            minDistinctTokenTypes: this.DEFAULT_MIN_DISTINCT_TOKEN_TYPES,
-            enableCloneClasses: this.DEFAULT_ENABLE_CLONE_CLASSES,
-            similarityThreshold: this.DEFAULT_SIMILARITY_THRESHOLD
-        });
+    private getOptions(): FragmentCloneRuleOptions {
+        if (!this.optionsInitialized) {
+            this.options = parseFragmentCloneOptions(this.rule);
+            this.optionsInitialized = true;
+        }
+        return this.options;
     }
+
     private getEnableCloneClasses(): boolean {
-        return this.getConfig().enableCloneClasses;
+        return this.getOptions().enableCloneClasses;
     }
 
     private getIgnoreLogs(): boolean {
-        return this.getConfig().ignoreLogs;
+        return this.getOptions().ignoreLogs;
     }
 
     private getMinimumTokens(): number {
-        return this.getConfig().minimumTokens;
+        return this.getOptions().minimumTokens;
     }
 
     private getNormalizeIdentifiers(): boolean {
-        return this.getConfig().normalizeIdentifiers;
+        return this.getOptions().normalizeIdentifiers;
     }
 
     private getNormalizeLiterals(): boolean {
-        return this.getConfig().normalizeLiterals;
+        return this.getOptions().normalizeLiterals;
     }
 
     private getIgnoreTypes(): boolean {
-        return this.getConfig().ignoreTypes;
+        return this.getOptions().ignoreTypes;
     }
 
     private getIgnoreDecorators(): boolean {
-        return this.getConfig().ignoreDecorators;
+        return this.getOptions().ignoreDecorators;
     }
 
     /**
@@ -769,7 +719,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      * 默认值：0（禁用，不过滤任何文件）
      */
     private getMinDistinctTokenTypes(): number {
-        return this.getConfig().minDistinctTokenTypes;
+        return this.getOptions().minDistinctTokenTypes;
     }
 
     /**
@@ -781,6 +731,13 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      * 默认值：1.0（禁用近似克隆检测，保持向后兼容）
      */
     private getSimilarityThreshold(): number {
-        return this.getConfig().similarityThreshold;
+        return this.getOptions().similarityThreshold;
+    }
+
+    public getDiagnostics(): FragmentCloneDiagnostics {
+        return {
+            ...this.diagnostics,
+            errors: [...this.diagnostics.errors]
+        };
     }
 }

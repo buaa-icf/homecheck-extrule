@@ -1,6 +1,8 @@
 import { ArkMethod } from "arkanalyzer";
 import { BaseChecker, BaseMetaData, CheckerUtils, IssueReport, MatcherCallback, MatcherTypes, MethodMatcher, Rule } from "homecheck";
-import { createDefects, getRuleOption } from "./utils";
+import { RuleOptionSchema, parseRuleOptions } from "./config/parseRuleOptions";
+import { FeatureEnvyRuleOptions } from "./config/types";
+import { createDefects } from "./utils";
 
 // Heuristic detection for "Feature Envy" code smell: a method that tends to
 // interact much more with another class than with its own.
@@ -8,6 +10,12 @@ const gMetaData: BaseMetaData = {
     severity: 2,
     ruleDocPath: "docs/feature-envy-check.md",
     description: "Method excessively uses members of another class (Feature Envy)."
+};
+
+const FEATURE_ENVY_OPTIONS_SCHEMA: RuleOptionSchema<FeatureEnvyRuleOptions> = {
+    minTotalCalls: { type: "number", min: 1 },
+    minForeignCalls: { type: "number", min: 1 },
+    ratioThreshold: { type: "number", min: 0, max: 1 }
 };
 
 /**
@@ -33,12 +41,25 @@ export class FeatureEnvyCheck implements BaseChecker {
     private readonly MIN_TOTAL_CALLS = 3;
     private readonly MIN_FOREIGN_CALLS = 3;
     private readonly RATIO_THRESHOLD = 0.6; // 60% or more calls to the same foreign class.
+    private readonly defaultOptions: FeatureEnvyRuleOptions = {
+        minTotalCalls: this.MIN_TOTAL_CALLS,
+        minForeignCalls: this.MIN_FOREIGN_CALLS,
+        ratioThreshold: this.RATIO_THRESHOLD
+    };
+    private options: FeatureEnvyRuleOptions = this.defaultOptions;
+    private optionsInitialized: boolean = false;
 
     /**
      * Register the method-level matcher for this checker.
      */
     public registerMatchers(): MatcherCallback[] {
         return [{ matcher: this.methodMatcher, callback: this.check }];
+    }
+
+    public beforeCheck(): void {
+        this.issues = [];
+        this.options = parseRuleOptions(this.rule, FEATURE_ENVY_OPTIONS_SCHEMA, this.defaultOptions);
+        this.optionsInitialized = true;
     }
 
     /**
@@ -112,11 +133,11 @@ export class FeatureEnvyCheck implements BaseChecker {
      * Resolve thresholds, falling back to defaults if rule options are missing.
      */
     private getThresholds() {
-        return getRuleOption(this.rule, {
-            minTotalCalls: this.MIN_TOTAL_CALLS,
-            minForeignCalls: this.MIN_FOREIGN_CALLS,
-            ratioThreshold: this.RATIO_THRESHOLD
-        });
+        if (!this.optionsInitialized) {
+            this.options = parseRuleOptions(this.rule, FEATURE_ENVY_OPTIONS_SCHEMA, this.defaultOptions);
+            this.optionsInitialized = true;
+        }
+        return this.options;
     }
 
     /**

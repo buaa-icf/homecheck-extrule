@@ -1216,7 +1216,7 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
         expect(desc).toBe('different classes');
     });
     
-    test('格式化位置 - 带类和方法（使用完整路径）', () => {
+    test('格式化位置 - 带类和方法（使用文件名）', () => {
         const check = new CodeCloneFragmentCheck() as any;
         
         const loc: CodeLocation = {
@@ -1228,10 +1228,10 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
         };
         
         const formatted = check.formatLocation(loc);
-        expect(formatted).toBe('/path/to/file.ts > MyClass.myMethod():10-20');
+        expect(formatted).toBe('file.ts > MyClass.myMethod():10-20');
     });
     
-    test('格式化位置 - 只有类（使用完整路径）', () => {
+    test('格式化位置 - 只有类（使用文件名）', () => {
         const check = new CodeCloneFragmentCheck() as any;
         
         const loc: CodeLocation = {
@@ -1242,10 +1242,10 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
         };
         
         const formatted = check.formatLocation(loc);
-        expect(formatted).toBe('/path/to/file.ts > MyClass:10-20');
+        expect(formatted).toBe('file.ts > MyClass:10-20');
     });
     
-    test('格式化位置 - 无类无方法（使用完整路径）', () => {
+    test('格式化位置 - 无类无方法（使用文件名）', () => {
         const check = new CodeCloneFragmentCheck() as any;
         
         const loc: CodeLocation = {
@@ -1255,10 +1255,10 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
         };
         
         const formatted = check.formatLocation(loc);
-        expect(formatted).toBe('/path/to/file.ts:10-20');
+        expect(formatted).toBe('file.ts:10-20');
     });
     
-    test('格式化位置 - 长路径保持完整（确保 mergeKey 唯一）', () => {
+    test('格式化位置 - 长路径只保留文件名', () => {
         const check = new CodeCloneFragmentCheck() as any;
         
         const loc: CodeLocation = {
@@ -1268,10 +1268,10 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
         };
         
         const formatted = check.formatLocation(loc);
-        expect(formatted).toBe('/very/long/path/to/src/utils/Logger.ets:1-20');
+        expect(formatted).toBe('Logger.ets:1-20');
     });
     
-    test('不同完整路径的同名文件应产生不同的格式化结果', () => {
+    test('不同路径同名文件会产生相同的格式化结果（仅文件名）', () => {
         const check = new CodeCloneFragmentCheck() as any;
         
         const loc1: CodeLocation = {
@@ -1287,7 +1287,7 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
         
         const formatted1 = check.formatLocation(loc1);
         const formatted2 = check.formatLocation(loc2);
-        expect(formatted1).not.toBe(formatted2);
+        expect(formatted1).toBe(formatted2);
     });
     
     test('格式化完整描述', () => {
@@ -1319,6 +1319,8 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
         expect(desc).toContain('same class');
         expect(desc).toContain('150 tokens');
         expect(desc).toContain('11 lines');
+        expect(desc).toContain('file.ts > MyClass.method1():10-20');
+        expect(desc).toContain('/path/to/file.ts > MyClass.method2():30-40');
     });
 });
 
@@ -1974,9 +1976,23 @@ describe('Jaccard 相似度 (computeJaccardSimilarity)', () => {
         protected computeHash(): { hash: string; normalizedContent: string } {
             return { hash: '', normalizedContent: '' };
         }
+        private createMethod(content: string): any {
+            return {
+                method: {} as any,
+                filePath: '',
+                className: 'TestClass',
+                methodName: 'testMethod',
+                startLine: 1,
+                endLine: 1,
+                hash: '',
+                normalizedContent: content,
+                normalizedTokens: content.length > 0 ? content.split('|').filter(Boolean) : [],
+                stmtCount: 1
+            };
+        }
         // 暴露 protected 方法
         public testJaccard(c1: string, c2: string): number {
-            return this.computeJaccardSimilarity(c1, c2);
+            return this.computeJaccardSimilarity(this.createMethod(c1), this.createMethod(c2));
         }
     }
 
@@ -2021,6 +2037,70 @@ describe('Jaccard 相似度 (computeJaccardSimilarity)', () => {
         // Jaccard = 9/11 ≈ 0.818
         const result = check.testJaccard('a|a|a|a|a|b|b|b|b|b', 'a|a|a|a|a|b|b|b|b|c');
         expect(result).toBeCloseTo(9 / 11, 5);
+    });
+});
+
+describe('CodeCloneBaseCheck 采集阶段去重', () => {
+    class DedupCheck extends CodeCloneBaseCheck {
+        readonly metaData = { severity: 2, ruleDocPath: '', description: '' };
+        protected getCloneType() { return 'Dedup'; }
+        protected computeHash(): { hash: string; normalizedContent: string } {
+            return { hash: 'H', normalizedContent: 'A|B' };
+        }
+
+        protected extractMethodInfo(method: any, filePath: string, className: string): any {
+            const startLine = method.getLine?.() ?? 1;
+            return {
+                method,
+                filePath,
+                className,
+                methodName: method.getName?.() ?? 'build',
+                startLine,
+                endLine: startLine + 1,
+                hash: 'same_hash',
+                normalizedContent: 'A|B',
+                normalizedTokens: ['A', 'B'],
+                stmtCount: 10
+            };
+        }
+
+        public getCollectedMethodCount(): number {
+            let count = 0;
+            for (const methods of this.methodsByHash.values()) {
+                count += methods.length;
+            }
+            return count;
+        }
+    }
+
+    test('同一方法被重复采集时，只应保留一份记录', () => {
+        const checker = new DedupCheck() as any;
+        checker.rule = {
+            ruleId: '@extrulesproject/code-clone-type1-check',
+            alert: 1,
+            option: [{ minStmts: 5 }]
+        };
+        checker.beforeCheck();
+
+        const method = {
+            getName: () => 'build',
+            getLine: () => 29
+        };
+        const arkClass = {
+            getName: () => 'BackgroundTest',
+            getMethods: () => [method]
+        };
+        const arkFile = {
+            getFilePath: () => '/tmp/BackgroundTest.ets',
+            getClasses: () => [arkClass]
+        };
+
+        checker.collectMethods(arkFile);
+        checker.collectMethods(arkFile);
+        checker.afterCheck();
+
+        expect(checker.getCollectedMethodCount()).toBe(1);
+        expect(checker.issues.length).toBe(0);
     });
 });
 

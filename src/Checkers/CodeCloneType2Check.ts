@@ -16,7 +16,7 @@
 import { Stmt } from "arkanalyzer";
 import { BaseMetaData } from "homecheck";
 import { CodeCloneBaseCheck, ClonePair, MethodInfo } from "./CodeCloneBaseCheck";
-import { normalizeIdentifiers, normalizeLiterals } from "./utils";
+import { normalizeIdentifiers, normalizeLiterals, stripDecorators, stripTypeAnnotations } from "./utils";
 
 const gMetaData: BaseMetaData = {
     severity: 2,
@@ -58,6 +58,13 @@ export class CodeCloneType2Check extends CodeCloneBaseCheck {
             let text = stmt.toString();
             // 先做基础规范化（去除路径、类名）
             text = this.normalizeBasic(text);
+            // 可选：去除类型注解和装饰器
+            if (this.getIgnoreTypes()) {
+                text = stripTypeAnnotations(text);
+            }
+            if (this.getIgnoreDecorators()) {
+                text = stripDecorators(text);
+            }
             // 再做标识符规范化
             text = normalizeIdentifiers(text, identifierMap);
             // 如果配置了 ignoreLiterals，进行字面量规范化
@@ -83,7 +90,7 @@ export class CodeCloneType2Check extends CodeCloneBaseCheck {
      * - 字符串（双引号、单引号）→ STR
      */
     protected getDescription(method: MethodInfo, cloneWith: MethodInfo, pair?: ClonePair): string {
-        const cloneFileName = cloneWith.filePath.split('/').pop() ?? cloneWith.filePath;
+        const cloneFileName = cloneWith.filePath;
         // 近似克隆时显示相似度百分比
         if (pair?.similarity !== undefined && pair.similarity < 1.0) {
             const pct = Math.round(pair.similarity * 100);

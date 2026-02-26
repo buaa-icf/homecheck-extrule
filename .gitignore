@@ -3,8 +3,9 @@ node_modules/
 .github/
 .vscode/
 lib/
-config/
+/config/
 report/
 
 .DS_Store
 *.log
+__snapshots__/

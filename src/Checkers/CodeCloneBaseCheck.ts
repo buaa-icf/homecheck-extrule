@@ -27,13 +27,19 @@ import {
     createDefects,
     djb2Hash,
     getMethodEndLine,
-    getRuleOption,
     isLogStatement as isLogStatementUtil,
     normalizeBasic as normalizeBasicText,
     shouldSkipClass,
     shouldSkipMethod
 } from "./utils";
-import { UnionFind } from "./FragmentDetection";
+import { RuleOptionSchema, parseRuleOptions } from "./config/parseRuleOptions";
+import { MethodCloneRuleOptions } from "./config/types";
+import {
+    buildTokenMultiset,
+    classifyMethodClonePairs,
+    getPairKey as buildPairKey,
+    jaccardSimilarityFromMultisets
+} from "./method-clone";
 
 /**
  * 方法信息，用于克隆检测
@@ -47,6 +53,8 @@ export interface MethodInfo {
     endLine: number;
     hash: string;  // 计算后的哈希值
     normalizedContent: string;  // 规范化后的内容，用于哈希碰撞验证
+    normalizedTokens: string[]; // 规范化后的 token 序列（按语句切分）
+    tokenMultiset?: Map<string, number>; // 近似检测时惰性构建
     stmtCount: number;
 }
 
@@ -59,6 +67,17 @@ export interface ClonePair {
     /** 相似度（1.0 = 完全相同，< 1.0 = 近似克隆） */
     similarity?: number;
 }
+
+const METHOD_CLONE_OPTIONS_SCHEMA: RuleOptionSchema<MethodCloneRuleOptions> = {
+    minStmts: { type: "number", min: 1 },
+    ignoreLiterals: { type: "boolean" },
+    ignoreLogs: { type: "boolean" },
+    ignoreTypes: { type: "boolean" },
+    ignoreDecorators: { type: "boolean" },
+    minComplexity: { type: "number", min: 0 },
+    similarityThreshold: { type: "number", min: 0, max: 1 },
+    enableCloneClasses: { type: "boolean" }
+};
 
 /**
  * Code Clone 检测基类
@@ -93,8 +112,25 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
     // 是否启用克隆类分组
     protected readonly DEFAULT_ENABLE_CLONE_CLASSES = false;
 
+    protected readonly defaultOptions: MethodCloneRuleOptions = {
+        minStmts: this.DEFAULT_MIN_STMTS,
+        ignoreLiterals: false,
+        ignoreLogs: true,
+        ignoreTypes: false,
+        ignoreDecorators: false,
+        minComplexity: this.DEFAULT_MIN_COMPLEXITY,
+        similarityThreshold: this.DEFAULT_SIMILARITY_THRESHOLD,
+        enableCloneClasses: this.DEFAULT_ENABLE_CLONE_CLASSES
+    };
+
+    protected options: MethodCloneRuleOptions = this.defaultOptions;
+    protected optionsInitialized: boolean = false;
+
     // 存储所有方法信息，按哈希值分组
     protected methodsByHash: Map<string, MethodInfo[]> = new Map();
+
+    // 已收集的方法身份键（用于采集阶段去重）
+    protected collectedMethodKeys: Set<string> = new Set();
 
     // 已报告的克隆对（避免重复报告）
     protected reportedPairs: Set<string> = new Set();
@@ -133,9 +169,12 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      */
     public beforeCheck(): void {
         this.methodsByHash.clear();
+        this.collectedMethodKeys.clear();
         this.reportedPairs.clear();
         this.collectedPairs = [];
         this.issues = [];
+        this.options = parseRuleOptions(this.rule, METHOD_CLONE_OPTIONS_SCHEMA, this.defaultOptions);
+        this.optionsInitialized = true;
     }
 
     /**
@@ -177,6 +216,11 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
 
                 if (methodInfo) {
                     if (methodInfo.stmtCount >= this.getMinStmts()) {
+                        const methodKey = this.getMethodIdentityKey(methodInfo);
+                        if (this.collectedMethodKeys.has(methodKey)) {
+                            continue;
+                        }
+                        this.collectedMethodKeys.add(methodKey);
                         this.addMethodToHash(methodInfo);
                     }
                 }
@@ -224,6 +268,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
 
         // 计算哈希值和规范化内容（由子类实现具体算法）
         const { hash, normalizedContent } = this.computeHash(stmts);
+        const normalizedTokens = normalizedContent.split('|').filter(token => token.length > 0);
 
         // 复杂度门控：如果不同 token 数量低于阈值，则跳过
         const minComplexity = this.getMinComplexity();
@@ -247,6 +292,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
             endLine,
             hash,
             normalizedContent,
+            normalizedTokens,
             stmtCount: stmts.length  // 使用过滤后的语句数
         };
     }
@@ -343,10 +389,11 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 生成克隆对的唯一标识
      */
     protected getPairKey(pair: ClonePair): string {
-        const key1 = `${pair.method1.filePath}:${pair.method1.methodName}`;
-        const key2 = `${pair.method2.filePath}:${pair.method2.methodName}`;
-        // 排序确保相同对生成相同的 key
-        return [key1, key2].sort().join('|');
+        return buildPairKey(pair.method1, pair.method2);
+    }
+
+    protected getMethodIdentityKey(methodInfo: MethodInfo): string {
+        return `${methodInfo.filePath}:${methodInfo.className}.${methodInfo.methodName}:${methodInfo.startLine}`;
     }
 
     /**
@@ -376,45 +423,17 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 每个等价类作为一条克隆类报告。
      */
     protected reportCloneClasses(): void {
-        const uf = new UnionFind();
-        const methodByKey = new Map<string, MethodInfo>();
-
-        const getMethodKey = (m: MethodInfo): string =>
-            `${m.filePath}:${m.className}.${m.methodName}:${m.startLine}`;
-
-        for (const pair of this.collectedPairs) {
-            const key1 = getMethodKey(pair.method1);
-            const key2 = getMethodKey(pair.method2);
-            methodByKey.set(key1, pair.method1);
-            methodByKey.set(key2, pair.method2);
-            uf.find(key1);
-            uf.find(key2);
-            uf.union(key1, key2);
-        }
-
-        const groups = uf.getGroups();
         const severity = this.rule?.alert ?? this.metaData.severity;
-        let classId = 0;
-
-        for (const keys of groups.values()) {
-            if (keys.length < 2) continue;
-            classId++;
-
-            const members = keys
-                .map(k => methodByKey.get(k))
-                .filter((m): m is MethodInfo => m !== undefined)
-                .sort((a, b) => {
-                    if (a.filePath !== b.filePath) return a.filePath.localeCompare(b.filePath);
-                    return a.startLine - b.startLine;
-                });
-
+        const cloneClasses = classifyMethodClonePairs(this.collectedPairs);
+        for (const cloneClass of cloneClasses) {
+            const members = cloneClass.members;
             const anchor = members[0];
             const memberDesc = members.map(m => {
                 const fileName = m.filePath.split('/').pop() ?? m.filePath;
                 return `${m.className}.${m.methodName}() in ${fileName}:${m.startLine}-${m.endLine}`;
             }).join('; ');
 
-            const description = `Code Clone ${this.getCloneType()} [Class #${classId}, ${members.length} members]: ${memberDesc}.`;
+            const description = `Code Clone ${this.getCloneType()} [Class #${cloneClass.classId}, ${members.length} members]: ${memberDesc}.`;
 
             this.issues.push(createDefects({
                 line: anchor.startLine,
@@ -433,9 +452,19 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
     /**
      * 从配置中获取最小语句数阈值
      */
+    protected getOptions(): MethodCloneRuleOptions {
+        if (!this.optionsInitialized) {
+            this.options = parseRuleOptions(this.rule, METHOD_CLONE_OPTIONS_SCHEMA, this.defaultOptions);
+            this.optionsInitialized = true;
+        }
+        return this.options;
+    }
+
+    /**
+     * 从配置中获取最小语句数阈值
+     */
     protected getMinStmts(): number {
-        const option = getRuleOption(this.rule, { minStmts: this.DEFAULT_MIN_STMTS });
-        return option.minStmts;
+        return this.getOptions().minStmts;
     }
 
     /**
@@ -448,8 +477,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * "@extrulesproject/code-clone-type2-check": ["error", { "ignoreLiterals": true }]
      */
     protected getIgnoreLiterals(): boolean {
-        const option = getRuleOption(this.rule, { ignoreLiterals: false });
-        return option.ignoreLiterals;
+        return this.getOptions().ignoreLiterals;
     }
 
     /**
@@ -464,8 +492,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 默认值：true（开启日志过滤）
      */
     protected getIgnoreLogs(): boolean {
-        const option = getRuleOption(this.rule, { ignoreLogs: true });
-        return option.ignoreLogs;
+        return this.getOptions().ignoreLogs;
     }
 
     /**
@@ -477,8 +504,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 默认值：false（不忽略）
      */
     protected getIgnoreTypes(): boolean {
-        const option = getRuleOption(this.rule, { ignoreTypes: false });
-        return option.ignoreTypes;
+        return this.getOptions().ignoreTypes;
     }
 
     /**
@@ -490,8 +516,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 默认值：false（不忽略）
      */
     protected getIgnoreDecorators(): boolean {
-        const option = getRuleOption(this.rule, { ignoreDecorators: false });
-        return option.ignoreDecorators;
+        return this.getOptions().ignoreDecorators;
     }
 
     /**
@@ -503,8 +528,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 默认值：0（禁用，不过滤任何方法）
      */
     protected getMinComplexity(): number {
-        const option = getRuleOption(this.rule, { minComplexity: this.DEFAULT_MIN_COMPLEXITY });
-        return option.minComplexity;
+        return this.getOptions().minComplexity;
     }
 
     /**
@@ -516,8 +540,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 默认值：1.0（禁用近似克隆检测，保持向后兼容）
      */
     protected getSimilarityThreshold(): number {
-        const option = getRuleOption(this.rule, { similarityThreshold: this.DEFAULT_SIMILARITY_THRESHOLD });
-        return option.similarityThreshold;
+        return this.getOptions().similarityThreshold;
     }
 
     /**
@@ -526,8 +549,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 默认值：false（不启用）
      */
     protected getEnableCloneClasses(): boolean {
-        const option = getRuleOption(this.rule, { enableCloneClasses: this.DEFAULT_ENABLE_CLONE_CLASSES });
-        return option.enableCloneClasses;
+        return this.getOptions().enableCloneClasses;
     }
 
     /**
@@ -536,36 +558,18 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 将内容按 '|' 分割为 token 多重集合，
      * 计算 Σmin(count1, count2) / Σmax(count1, count2)。
      *
-     * @param content1 规范化内容 1
-     * @param content2 规范化内容 2
+     * @param method1 方法 1
+     * @param method2 方法 2
      * @returns 相似度 [0, 1]
      */
-    protected computeJaccardSimilarity(content1: string, content2: string): number {
-        const buildMultiset = (content: string): Map<string, number> => {
-            const multiset = new Map<string, number>();
-            for (const token of content.split('|')) {
-                if (token.length === 0) continue;
-                multiset.set(token, (multiset.get(token) ?? 0) + 1);
-            }
-            return multiset;
-        };
-
-        const set1 = buildMultiset(content1);
-        const set2 = buildMultiset(content2);
-
-        // 收集所有 key
-        const allKeys = new Set([...set1.keys(), ...set2.keys()]);
-
-        let sumMin = 0;
-        let sumMax = 0;
-        for (const key of allKeys) {
-            const c1 = set1.get(key) ?? 0;
-            const c2 = set2.get(key) ?? 0;
-            sumMin += Math.min(c1, c2);
-            sumMax += Math.max(c1, c2);
+    protected computeJaccardSimilarity(method1: MethodInfo, method2: MethodInfo): number {
+        if (!method1.tokenMultiset) {
+            method1.tokenMultiset = buildTokenMultiset(method1.normalizedTokens);
         }
-
-        return sumMax === 0 ? 0 : sumMin / sumMax;
+        if (!method2.tokenMultiset) {
+            method2.tokenMultiset = buildTokenMultiset(method2.normalizedTokens);
+        }
+        return jaccardSimilarityFromMultisets(method1.tokenMultiset, method2.tokenMultiset);
     }
 
     /**
@@ -610,7 +614,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
                 }
 
                 // 计算 Jaccard 相似度
-                const similarity = this.computeJaccardSimilarity(mi.normalizedContent, mj.normalizedContent);
+                const similarity = this.computeJaccardSimilarity(mi, mj);
 
                 if (similarity >= threshold) {
                     const pair: ClonePair = {

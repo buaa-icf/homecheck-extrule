@@ -16,6 +16,7 @@
 import { Stmt } from "arkanalyzer";
 import { BaseMetaData } from "homecheck";
 import { CodeCloneBaseCheck, MethodInfo } from "./CodeCloneBaseCheck";
+import { stripDecorators, stripTypeAnnotations } from "./utils";
 
 const gMetaData: BaseMetaData = {
     severity: 2,
@@ -49,6 +50,12 @@ export class CodeCloneType1Check extends CodeCloneBaseCheck {
         const stmtStrings = stmts.map(stmt => {
             let text = stmt.toString();
             text = this.normalizeBasic(text);
+            if (this.getIgnoreTypes()) {
+                text = stripTypeAnnotations(text);
+            }
+            if (this.getIgnoreDecorators()) {
+                text = stripDecorators(text);
+            }
             return text;
         });
         
@@ -57,7 +64,7 @@ export class CodeCloneType1Check extends CodeCloneBaseCheck {
     }
 
     protected getDescription(method: MethodInfo, cloneWith: MethodInfo): string {
-        const cloneFileName = cloneWith.filePath.split('/').pop() ?? cloneWith.filePath;
+        const cloneFileName = cloneWith.filePath;
         return `Code Clone Type-1: Method '${method.methodName}' (lines ${method.startLine}-${method.endLine}) ` +
             `is identical to '${cloneWith.className}.${cloneWith.methodName}' in ${cloneFileName}:${cloneWith.startLine}-${cloneWith.endLine}. ` +
             `(${method.stmtCount} statements)`;
