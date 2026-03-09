@@ -13,84 +13,63 @@
  * limitations under the License.
  */
 
-import * as fs from 'fs';
-import { ArkFile, ArkMethod } from "arkanalyzer";
+import { ArkFile } from "arkanalyzer";
 import {
+    AdviceChecker,
     BaseMetaData,
-    Rule,
-    MatcherCallback,
-    IssueReport,
     FileMatcher,
+    IssueReport,
+    MatcherCallback,
     MatcherTypes,
-    AdviceChecker
+    Rule
 } from "homecheck";
+import { createDefects } from "./shared";
 import {
-    createDefects,
-    getMethodEndLine,
-    getRuleOption,
-    shouldSkipClass,
-    shouldSkipMethod
-} from "./utils";
-
+    buildFragmentCloneReport,
+    CodeLocation,
+    detectCloneType,
+    determineClassScope,
+    determineScope,
+    formatDescription as formatDescriptionUtil,
+    formatLocation as formatLocationUtil,
+    FragmentCloneClassReport,
+    FragmentCloneDiagnostics,
+    FragmentCloneReport,
+    getScopeDescription as getScopeDescriptionUtil,
+    parseFragmentCloneOptions,
+    removeLogLines,
+    resolveCodeLocationFromCache,
+    createEmptyDiagnostics,
+    readSourceFile
+} from "./fragment-clone";
+import { FragmentCloneRuleOptions } from "./config/types";
 import {
-    Tokenizer,
+    classifyClones,
     CloneMatcher,
     CloneMerger,
-    MergedClone
+    deduplicateMergedClones,
+    filterSelfOverlappingClones,
+    MergedClone,
+    NearMissClone,
+    NearMissDetector,
+    Token,
+    Tokenizer
 } from "./FragmentDetection";
-
-/**
- * 克隆范围枚举
- */
-export enum CloneScope {
-    /** 同一方法内的两段相同代码 */
-    SAME_METHOD = 'SAME_METHOD',
-    /** 同一类的不同方法中有相同代码 */
-    SAME_CLASS = 'SAME_CLASS',
-    /** 不同类或顶级函数 */
-    DIFFERENT_CLASS = 'DIFFERENT_CLASS'
-}
-
-/**
- * 代码位置信息（含方法/类归属）
- */
-export interface CodeLocation {
-    file: string;
-    startLine: number;
-    endLine: number;
-    className?: string;
-    methodName?: string;
-}
-
-/**
- * 片段级克隆报告
- */
-export interface FragmentCloneReport {
-    /** 克隆类型：根据规范化配置决定 */
-    cloneType: 'Type-1' | 'Type-2';
-    /** 克隆范围 */
-    scope: CloneScope;
-    /** 位置 1 */
-    location1: CodeLocation;
-    /** 位置 2 */
-    location2: CodeLocation;
-    /** Token 数量 */
-    tokenCount: number;
-    /** 行数 */
-    lineCount: number;
-}
 
 const gMetaData: BaseMetaData = {
     severity: 2,
     ruleDocPath: "docs/code-clone-fragment-check.md",
-    description: 'Code Clone Fragment detected: Similar code fragments found.'
+    description: "Code Clone Fragment detected: Similar code fragments found."
 };
 
 /**
- * 代码片段级克隆检测规则
- * 
- * 使用 Token 级别的滑动窗口算法检测代码克隆，
- * 可以发现方法内部、跨方法、跨文件的重复代码。
+ * 片段级克隆规则实现。
+ *
+ * 主要流程：
+ * 1. 文件读取与可选日志过滤；
+ * 2. Token 化 + 滑窗匹配；
+ * 3. 克隆片段合并与去重；
+ * 4. 可选近似克隆检测与最终报告。
  */
 export class CodeCloneFragmentCheck implements AdviceChecker {
     readonly metaData: BaseMetaData = gMetaData;
@@ -98,59 +77,46 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     public issues: IssueReport[] = [];
     public arkFiles: ArkFile[] = [];
 
-    // 默认配置
-    private readonly DEFAULT_MINIMUM_TOKENS = 100;
-    private readonly DEFAULT_NORMALIZE_IDENTIFIERS = true;
-    private readonly DEFAULT_NORMALIZE_LITERALS = false;
+    private options: FragmentCloneRuleOptions = parseFragmentCloneOptions();
+    private diagnostics: FragmentCloneDiagnostics = createEmptyDiagnostics();
 
-    // 克隆匹配器和合并器
     private cloneMatcher: CloneMatcher;
     private cloneMerger: CloneMerger;
     private tokenizer: Tokenizer;
 
-    // 缓存 ArkFile 用于反查
+    private fileTokenCache: Map<string, Token[]> = new Map();
     private fileCache: Map<string, ArkFile> = new Map();
 
-    // 文件匹配器 - 匹配所有文件
     private fileMatcher: FileMatcher = {
         matcherType: MatcherTypes.FILE
     };
 
     constructor() {
-        const windowSize = this.DEFAULT_MINIMUM_TOKENS;
-        this.cloneMatcher = new CloneMatcher(windowSize);
-        this.cloneMerger = new CloneMerger(windowSize);
-        this.tokenizer = new Tokenizer({
-            normalizeIdentifiers: this.DEFAULT_NORMALIZE_IDENTIFIERS,
-            normalizeLiterals: this.DEFAULT_NORMALIZE_LITERALS
-        });
+        this.cloneMatcher = new CloneMatcher(this.options.minimumTokens);
+        this.cloneMerger = new CloneMerger(this.options.minimumTokens);
+        this.tokenizer = this.createTokenizer(this.options);
     }
 
     /**
-     * 检测前初始化
+     * 每轮检测开始时重置配置与缓存状态。
      */
     public beforeCheck(): void {
-        const minimumTokens = this.getMinimumTokens();
-        const normalizeIdentifiers = this.getNormalizeIdentifiers();
-        const normalizeLiterals = this.getNormalizeLiterals();
-
-        // 重新初始化组件
-        this.cloneMatcher = new CloneMatcher(minimumTokens);
-        this.cloneMerger = new CloneMerger(minimumTokens);
-        this.tokenizer = new Tokenizer({
-            normalizeIdentifiers,
-            normalizeLiterals
-        });
-
-        this.fileCache.clear();
+        this.options = parseFragmentCloneOptions(this.rule);
+        this.diagnostics = createEmptyDiagnostics();
         this.issues = [];
+        this.fileCache.clear();
+        this.fileTokenCache.clear();
+
+        this.cloneMatcher = new CloneMatcher(this.options.minimumTokens);
+        this.cloneMerger = new CloneMerger(this.options.minimumTokens);
+        this.tokenizer = this.createTokenizer(this.options);
     }
 
-    /**
-     * 空的 check 方法
-     */
     public check = (): void => {}
 
+    /**
+     * 注册 FILE 级回调，逐文件收集 token。
+     */
     public registerMatchers(): MatcherCallback[] {
         const matchFileCb: MatcherCallback = {
             matcher: this.fileMatcher,
@@ -160,209 +126,179 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     }
 
     /**
-     * 收集文件的 Token 并处理
+     * 读取源码、执行预处理并将 token 送入匹配器。
      */
     public collectTokens = (arkFile: ArkFile): void => {
         const filePath = arkFile.getFilePath();
-        const minimumTokens = this.getMinimumTokens();
+        const readResult = readSourceFile(filePath);
+        let sourceCode = readResult.content;
+
+        if (sourceCode === null) {
+            this.diagnostics.filesReadFailed++;
+            this.diagnostics.errors.push({
+                filePath,
+                phase: "read",
+                message: readResult.errorMessage ?? "failed to read source file"
+            });
+            return;
+        }
+
+        this.fileCache.set(filePath, arkFile);
+
+        if (this.options.ignoreLogs) {
+            sourceCode = removeLogLines(sourceCode, arkFile);
+        }
 
         try {
-            // 读取源文件内容
-            const sourceCode = this.readSourceFile(filePath);
-            if (!sourceCode) {
-                return;
-            }
-
-            // Tokenize
             const tokens = this.tokenizer.tokenize(sourceCode, filePath);
-
-            if (tokens.length < minimumTokens) {
+            if (tokens.length < this.options.minimumTokens) {
                 return;
             }
 
-            // 缓存 ArkFile 用于后续反查
-            this.fileCache.set(filePath, arkFile);
+            const minDistinctTokenTypes = this.options.minDistinctTokenTypes;
+            if (minDistinctTokenTypes > 0) {
+                const distinctTypes = new Set(tokens.map(token => token.type)).size;
+                if (distinctTypes < minDistinctTokenTypes) {
+                    return;
+                }
+            }
 
-            // 送入匹配器
             this.cloneMatcher.processFile(tokens, filePath);
-
-        } catch {
-            return;
+            this.fileTokenCache.set(filePath, tokens);
+        } catch (error) {
+            this.diagnostics.filesProcessFailed++;
+            this.diagnostics.errors.push({
+                filePath,
+                phase: "process",
+                message: error instanceof Error ? error.message : "failed to process file"
+            });
         }
     }
 
     /**
-     * 检测完成后，生成报告
+     * 收尾阶段统一生成 issue。
      */
     public afterCheck(): void {
-        // 获取克隆对
         const clonePairs = this.cloneMatcher.getClonePairs();
+        const merged = clonePairs.length > 0 ? this.cloneMerger.merge(clonePairs) : [];
+        const exactClones = deduplicateMergedClones(filterSelfOverlappingClones(merged));
 
-        if (clonePairs.length === 0) {
+        const threshold = this.options.similarityThreshold;
+        const nearMissClones = threshold < 1.0 ? this.findNearMissClones(threshold) : [];
+
+        if (exactClones.length === 0 && nearMissClones.length === 0) {
             return;
         }
 
-        // 合并连续片段
-        const mergedClones = this.cloneMerger.merge(clonePairs);
-
-        // 生成报告
-        for (const clone of mergedClones) {
-            const report = this.createCloneReport(clone);
-            if (report) {
-                this.addIssueReport(report);
+        if (this.options.enableCloneClasses) {
+            const classReports = this.createCloneClassReports(exactClones);
+            for (const report of classReports) {
+                this.addCloneClassIssueReport(report);
             }
+            return;
         }
 
-    }
+        for (const clone of exactClones) {
+            this.addIssueReport(this.createCloneReport(clone));
+        }
 
-    /**
-     * 读取源文件内容
-     */
-    private readSourceFile(filePath: string): string | null {
-        try {
-            return fs.readFileSync(filePath, 'utf-8');
-        } catch (error) {
-            return null;
+        for (const clone of nearMissClones) {
+            this.addIssueReport(this.createNearMissReport(clone));
         }
     }
 
     /**
-     * 创建克隆报告
+     * 根据配置构造 Tokenizer。
      */
-    private createCloneReport(clone: MergedClone): FragmentCloneReport | null {
-        const { location1, location2, tokenCount } = clone;
-
-        // 反查方法/类归属
-        const codeLocation1 = this.resolveCodeLocation(
-            location1.file,
-            location1.startLine,
-            location1.endLine
-        );
-        const codeLocation2 = this.resolveCodeLocation(
-            location2.file,
-            location2.startLine,
-            location2.endLine
-        );
-
-        // 判定克隆范围
-        const scope = this.determineScope(codeLocation1, codeLocation2);
-
-        // 判定克隆类型
-        const cloneType = this.determineCloneType();
-
-        // 计算行数
-        const lineCount1 = location1.endLine - location1.startLine + 1;
-        const lineCount2 = location2.endLine - location2.startLine + 1;
-        const lineCount = Math.max(lineCount1, lineCount2);
-
-        return {
-            cloneType,
-            scope,
-            location1: codeLocation1,
-            location2: codeLocation2,
-            tokenCount,
-            lineCount
-        };
+    private createTokenizer(options: FragmentCloneRuleOptions): Tokenizer {
+        return new Tokenizer({
+            normalizeIdentifiers: options.normalizeIdentifiers,
+            normalizeLiterals: options.normalizeLiterals,
+            ignoreTypes: options.ignoreTypes,
+            ignoreDecorators: options.ignoreDecorators
+        });
     }
 
     /**
-     * 反查代码位置的方法/类归属
+     * 近似克隆（Type-3）检测并做同文件重叠过滤与去重。
      */
-    private resolveCodeLocation(file: string, startLine: number, endLine: number): CodeLocation {
-        const location: CodeLocation = {
-            file,
-            startLine,
-            endLine
-        };
+    private findNearMissClones(threshold: number): NearMissClone[] {
+        const detector = new NearMissDetector(this.options.minimumTokens, threshold);
 
-        const arkFile = this.fileCache.get(file);
-        if (!arkFile) {
-            return location;
+        for (const [filePath, tokens] of this.fileTokenCache) {
+            detector.addFile(tokens, filePath);
         }
 
-        // 遍历类和方法，查找包含该行范围的方法
-        for (const arkClass of arkFile.getClasses()) {
-            const className = arkClass.getName();
+        const rawResults = detector.detect();
+        return deduplicateMergedClones(filterSelfOverlappingClones(rawResults)) as NearMissClone[];
+    }
 
-            // 跳过默认类
-            if (shouldSkipClass(className)) {
+    /**
+     * 将克隆对聚合为克隆类报告对象。
+     */
+    private createCloneClassReports(clones: MergedClone[]): FragmentCloneClassReport[] {
+        const classes = classifyClones(clones);
+        const reports: FragmentCloneClassReport[] = [];
+
+        for (const cloneClass of classes) {
+            const members = cloneClass.members.map(member => this.resolveCodeLocation(
+                member.file,
+                member.startLine,
+                member.endLine
+            ));
+
+            if (members.length < 2) {
                 continue;
             }
 
-            for (const method of arkClass.getMethods()) {
-                const methodName = method.getName();
-
-                // 跳过默认方法
-                if (shouldSkipMethod(methodName)) {
-                    continue;
-                }
-
-                const methodStartLine = method.getLine() ?? 0;
-                const methodEndLine = this.getMethodEndLine(method);
-
-                // 检查行范围是否在方法内
-                if (startLine >= methodStartLine && endLine <= methodEndLine) {
-                    location.className = className;
-                    location.methodName = methodName;
-                    return location;
-                }
-            }
+            reports.push({
+                cloneType: detectCloneType(this.options),
+                scope: determineClassScope(members),
+                classId: cloneClass.classId,
+                members
+            });
         }
 
-        return location;
+        return reports;
     }
 
     /**
-     * 获取方法结束行号
+     * 精确克隆报告对象构建。
      */
-    private getMethodEndLine(method: ArkMethod): number {
-        return getMethodEndLine(method);
+    private createCloneReport(clone: MergedClone): FragmentCloneReport {
+        return buildFragmentCloneReport(
+            clone,
+            detectCloneType(this.options),
+            (loc1, loc2) => determineScope(loc1, loc2),
+            (file, startLine, endLine) => this.resolveCodeLocation(file, startLine, endLine)
+        );
     }
 
     /**
-     * 判定克隆范围
+     * 近似克隆报告对象构建。
      */
-    private determineScope(loc1: CodeLocation, loc2: CodeLocation): CloneScope {
-        // 同一方法
-        if (loc1.file === loc2.file &&
-            loc1.className === loc2.className &&
-            loc1.methodName === loc2.methodName &&
-            loc1.methodName !== undefined) {
-            return CloneScope.SAME_METHOD;
-        }
-
-        // 同一类的不同方法
-        if (loc1.file === loc2.file &&
-            loc1.className === loc2.className &&
-            loc1.className !== undefined) {
-            return CloneScope.SAME_CLASS;
-        }
-
-        // 不同类
-        return CloneScope.DIFFERENT_CLASS;
+    private createNearMissReport(clone: NearMissClone): FragmentCloneReport {
+        return buildFragmentCloneReport(
+            clone,
+            "Type-3",
+            (loc1, loc2) => determineScope(loc1, loc2),
+            (file, startLine, endLine) => this.resolveCodeLocation(file, startLine, endLine)
+        );
     }
 
     /**
-     * 判定克隆类型
+     * 基于缓存 ArkFile 反查片段归属（类/方法）。
      */
-    private determineCloneType(): 'Type-1' | 'Type-2' {
-        const normalizeIdentifiers = this.getNormalizeIdentifiers();
-        const normalizeLiterals = this.getNormalizeLiterals();
-
-        // 如果没有做任何规范化，就是 Type-1
-        if (!normalizeIdentifiers && !normalizeLiterals) {
-            return 'Type-1';
-        }
-
-        return 'Type-2';
+    private resolveCodeLocation(file: string, startLine: number, endLine: number): CodeLocation {
+        return resolveCodeLocationFromCache(this.fileCache, file, startLine, endLine);
     }
 
     /**
-     * 添加问题报告
+     * 单条片段克隆 issue 上报。
      */
     private addIssueReport(report: FragmentCloneReport): void {
         const severity = this.rule?.alert ?? this.metaData.severity;
-        const description = this.formatDescription(report);
+        const description = formatDescriptionUtil(report);
 
         this.issues.push(createDefects({
             line: report.location1.startLine,
@@ -373,76 +309,40 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             ruleId: this.rule.ruleId,
             filePath: report.location1.file,
             ruleDocPath: this.metaData.ruleDocPath,
-            methodName: report.location1.methodName ?? ''
+            methodName: report.location1.methodName ?? ""
         }));
     }
 
     /**
-     * 格式化描述信息
+     * 克隆类 issue 上报。
      */
-    private formatDescription(report: FragmentCloneReport): string {
-        const { cloneType, scope, location1, location2, tokenCount, lineCount } = report;
+    private addCloneClassIssueReport(report: FragmentCloneClassReport): void {
+        const anchor = report.members[0];
+        const severity = this.rule?.alert ?? this.metaData.severity;
+        const scopeDesc = getScopeDescriptionUtil(report.scope);
+        const memberDesc = report.members.map(member => formatLocationUtil(member)).join("; ");
+        const description = `Code Clone ${report.cloneType} (${scopeDesc}) [Class #${report.classId}, ${report.members.length} members]: ${memberDesc}.`;
 
-        const scopeDesc = this.getScopeDescription(scope);
-        const loc1Desc = this.formatLocation(location1);
-        const loc2Desc = this.formatLocation(location2);
-
-        return `Code Clone ${cloneType} (${scopeDesc}): ${loc1Desc} is similar to ${loc2Desc}. (${tokenCount} tokens, ${lineCount} lines)`;
+        this.issues.push(createDefects({
+            line: anchor.startLine,
+            startCol: 0,
+            endCol: 0,
+            description,
+            severity,
+            ruleId: this.rule.ruleId,
+            filePath: anchor.file,
+            ruleDocPath: this.metaData.ruleDocPath,
+            methodName: anchor.methodName ?? ""
+        }));
     }
 
     /**
-     * 获取范围描述
+     * 暴露可观测诊断数据，避免直接泄漏内部数组引用。
      */
-    private getScopeDescription(scope: CloneScope): string {
-        switch (scope) {
-            case CloneScope.SAME_METHOD:
-                return 'same method';
-            case CloneScope.SAME_CLASS:
-                return 'same class';
-            case CloneScope.DIFFERENT_CLASS:
-                return 'different classes';
-            default:
-                return 'unknown';
-        }
-    }
-
-    /**
-     * 格式化位置信息
-     */
-    private formatLocation(loc: CodeLocation): string {
-        const fileName = loc.file.split('/').pop() ?? loc.file;
-        
-        if (loc.className && loc.methodName) {
-            return `${fileName} > ${loc.className}.${loc.methodName}():${loc.startLine}-${loc.endLine}`;
-        } else if (loc.className) {
-            return `${fileName} > ${loc.className}:${loc.startLine}-${loc.endLine}`;
-        } else {
-            return `${fileName}:${loc.startLine}-${loc.endLine}`;
-        }
-    }
-
-    // ========== 配置读取方法 ==========
-
-    /**
-     * 获取最小 Token 数配置
-     */
-    private getConfig() {
-        return getRuleOption(this.rule, {
-            minimumTokens: this.DEFAULT_MINIMUM_TOKENS,
-            normalizeIdentifiers: this.DEFAULT_NORMALIZE_IDENTIFIERS,
-            normalizeLiterals: this.DEFAULT_NORMALIZE_LITERALS
-        });
-    }
-
-    private getMinimumTokens(): number {
-        return this.getConfig().minimumTokens;
-    }
-
-    private getNormalizeIdentifiers(): boolean {
-        return this.getConfig().normalizeIdentifiers;
-    }
-
-    private getNormalizeLiterals(): boolean {
-        return this.getConfig().normalizeLiterals;
+    public getDiagnostics(): FragmentCloneDiagnostics {
+        return {
+            ...this.diagnostics,
+            errors: [...this.diagnostics.errors]
+        };
     }
 }

@@ -9,10 +9,15 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { normalizeBasic, normalizeIdentifiers, normalizeLiterals, djb2Hash as simpleHash } from '../src/Checkers/utils';
+import { normalizeBasic, normalizeIdentifiers, normalizeLiterals, djb2Hash as simpleHash } from '../src/Checkers/shared';
+import { CodeCloneType1Check } from '../src/Checkers/CodeCloneType1Check';
 
 // 测试用例目录
 const SAMPLE_DIR = path.join(__dirname, 'sample/CodeClone');
+
+function mockStmt(text: string) {
+    return { toString: () => text } as any;
+}
 
 function isLogStatement(text: string): boolean {
     const trimmed = text.trim();
@@ -217,6 +222,38 @@ describe('Type-1 克隆检测模拟', () => {
         const hash2 = simpleHash(code2.map(normalizeBasic).join('|'));
 
         expect(hash1).not.toBe(hash2);
+    });
+});
+
+describe('Type-1 可选规范化（ignoreTypes / ignoreDecorators）', () => {
+    test('ignoreTypes=false 时，不同类型注解应产生不同哈希', () => {
+        const checker = new CodeCloneType1Check() as any;
+        checker.rule = { ruleId: 'test', alert: 2, option: [{ ignoreTypes: false }] };
+
+        const h1 = checker.computeHash([mockStmt('let count: number = 1'), mockStmt('return count')]).hash;
+        const h2 = checker.computeHash([mockStmt('let count: string = 1'), mockStmt('return count')]).hash;
+
+        expect(h1).not.toBe(h2);
+    });
+
+    test('ignoreTypes=true 时，类型注解差异应被忽略', () => {
+        const checker = new CodeCloneType1Check() as any;
+        checker.rule = { ruleId: 'test', alert: 2, option: [{ ignoreTypes: true }] };
+
+        const h1 = checker.computeHash([mockStmt('let count: number = 1'), mockStmt('return count')]).hash;
+        const h2 = checker.computeHash([mockStmt('let count: string = 1'), mockStmt('return count')]).hash;
+
+        expect(h1).toBe(h2);
+    });
+
+    test('ignoreDecorators=true 时，装饰器差异应被忽略', () => {
+        const checker = new CodeCloneType1Check() as any;
+        checker.rule = { ruleId: 'test', alert: 2, option: [{ ignoreDecorators: true }] };
+
+        const h1 = checker.computeHash([mockStmt('@Builder()'), mockStmt('foo()')]).hash;
+        const h2 = checker.computeHash([mockStmt('@Entry()'), mockStmt('foo()')]).hash;
+
+        expect(h1).toBe(h2);
     });
 });
 
@@ -559,6 +596,25 @@ describe('测试用例目录结构（片段级克隆）', () => {
         expect(fs.existsSync(path.join(dir, 'ClassB.ets'))).toBe(true);
         expect(fs.existsSync(path.join(dir, 'TopLevelFunc.ets'))).toBe(true);
     });
+
+    test('positive/fragment_with_logs 目录应包含测试文件（含日志的克隆）', () => {
+        const dir = path.join(SAMPLE_DIR, 'positive/fragment_with_logs');
+        expect(fs.existsSync(dir)).toBe(true);
+        expect(fs.existsSync(path.join(dir, 'FragmentWithLogsA.ets'))).toBe(true);
+        expect(fs.existsSync(path.join(dir, 'FragmentWithLogsB.ets'))).toBe(true);
+    });
+
+    test('positive/fragment_pure_logs 目录应包含测试文件（纯日志重复）', () => {
+        const dir = path.join(SAMPLE_DIR, 'positive/fragment_pure_logs');
+        expect(fs.existsSync(dir)).toBe(true);
+        expect(fs.existsSync(path.join(dir, 'PureLogsOnly.ets'))).toBe(true);
+    });
+
+    test('positive/fragment_multiline_logs 目录应包含测试文件（多行日志克隆）', () => {
+        const dir = path.join(SAMPLE_DIR, 'positive/fragment_multiline_logs');
+        expect(fs.existsSync(dir)).toBe(true);
+        expect(fs.existsSync(path.join(dir, 'MultilineLogClone.ets'))).toBe(true);
+    });
 });
 
 describe('expected.json 验证（片段级克隆）', () => {
@@ -592,6 +648,25 @@ describe('expected.json 验证（片段级克隆）', () => {
         expect(expected.positive.fragment_same_method.refactoringHint).toBeDefined();
         expect(expected.positive.fragment_same_class.refactoringHint).toBeDefined();
         expect(expected.positive.fragment_different_class.refactoringHint).toBeDefined();
+    });
+
+    test('positive.fragment_with_logs 应有期望的克隆（ignoreLogs 开启）', () => {
+        expect(expected.positive.fragment_with_logs).toBeDefined();
+        expect(expected.positive.fragment_with_logs.scope).toBe('DIFFERENT_CLASS');
+        expect(expected.positive.fragment_with_logs.expectedClones.length).toBeGreaterThan(0);
+        expect(expected.positive.fragment_with_logs.requiresConfig.ignoreLogs).toBe(true);
+    });
+
+    test('positive.fragment_pure_logs 期望无克隆（过滤后不报）', () => {
+        expect(expected.positive.fragment_pure_logs).toBeDefined();
+        expect(expected.positive.fragment_pure_logs.expectedClones).toEqual([]);
+        expect(expected.positive.fragment_pure_logs.requiresConfig.ignoreLogs).toBe(true);
+    });
+
+    test('positive.fragment_multiline_logs 应有期望的克隆（多行日志完整清理）', () => {
+        expect(expected.positive.fragment_multiline_logs).toBeDefined();
+        expect(expected.positive.fragment_multiline_logs.scope).toBe('SAME_CLASS');
+        expect(expected.positive.fragment_multiline_logs.expectedClones.length).toBeGreaterThan(0);
     });
 });
 
@@ -642,5 +717,30 @@ describe('片段级克隆测试文件标注验证', () => {
         const content = fs.readFileSync(filePath, 'utf-8');
         expect(content).toContain('独立函数');
         expect(content).toContain('顶级函数');
+    });
+});
+
+describe('片段级+日志过滤测试文件标注验证', () => {
+    test('fragment_with_logs 文件应包含 @expect 与 ignoreLogs 相关说明', () => {
+        const filePath = path.join(SAMPLE_DIR, 'positive/fragment_with_logs/FragmentWithLogsA.ets');
+        const content = fs.readFileSync(filePath, 'utf-8');
+        expect(content).toMatch(/@expect/);
+        expect(content).toMatch(/@scope:\s*DIFFERENT_CLASS/);
+        expect(content).toMatch(/ignoreLogs|过滤/);
+    });
+
+    test('fragment_pure_logs 文件应标注为过滤后不报克隆', () => {
+        const filePath = path.join(SAMPLE_DIR, 'positive/fragment_pure_logs/PureLogsOnly.ets');
+        const content = fs.readFileSync(filePath, 'utf-8');
+        expect(content).toMatch(/@expect/);
+        expect(content).toMatch(/no fragment-clone|不报为克隆/);
+    });
+
+    test('fragment_multiline_logs 文件应标注多行日志完整清理', () => {
+        const filePath = path.join(SAMPLE_DIR, 'positive/fragment_multiline_logs/MultilineLogClone.ets');
+        const content = fs.readFileSync(filePath, 'utf-8');
+        expect(content).toMatch(/@expect/);
+        expect(content).toMatch(/@scope:\s*SAME_CLASS/);
+        expect(content).toMatch(/多行|multiline/);
     });
 });

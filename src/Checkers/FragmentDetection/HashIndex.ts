@@ -6,7 +6,7 @@
 
 import { Token } from './Token';
 import { TokenWindow } from './SlidingWindow';
-import { djb2Hash } from '../utils';
+import { djb2Hash } from '../shared';
 
 /**
  * 片段位置信息
@@ -23,6 +23,15 @@ export interface FragmentLocation {
     
     /** 结束行号 */
     endLine: number;
+
+    /** Token 指纹（规范化后的 Token 序列拼接），用于哈希碰撞验证 */
+    tokenFingerprint?: string;
+
+    /** 当前文件的 Token ID 序列引用（用于惰性校验） */
+    tokenIds?: number[];
+
+    /** 当前文件的 Token 序列引用（用于惰性生成指纹） */
+    allTokens?: Token[];
 }
 
 /**
@@ -92,17 +101,17 @@ export class HashIndex {
 }
 
 /**
- * 计算窗口的哈希值
- * 
- * 将窗口内的 Token 值拼接后计算哈希
- * 
- * @param window 窗口
- * @returns 哈希值
+ * 计算指定窗口范围的 Token 指纹
+ *
+ * 仅拼接 Token 的 value 字段，保持与历史逻辑一致。
+ *
+ * @param tokens 完整 Token 序列
+ * @param startIndex 窗口起始索引
+ * @param windowSize 窗口大小
+ * @returns 指纹字符串
  */
-export function computeWindowHash(window: TokenWindow): string {
-    // 使用 Token 的 value 拼接
-    const combined = window.tokens.map(t => t.value).join('|');
-    return djb2Hash(combined);
+export function computeFingerprint(tokens: Token[], startIndex: number, windowSize: number): string {
+    return tokens.slice(startIndex, startIndex + windowSize).map(t => t.value).join('|');
 }
 
 /**
@@ -123,11 +132,12 @@ export function computeTokensHash(tokens: Token[]): string {
  * @param defaultFile 默认文件路径（如果窗口没有文件信息）
  * @returns 位置信息
  */
-export function createLocationFromWindow(window: TokenWindow, defaultFile: string = ''): FragmentLocation {
+export function createLocationFromWindow(window: TokenWindow, defaultFile: string = '', tokenFingerprint: string = ''): FragmentLocation {
     return {
         file: window.file || defaultFile,
         startIndex: window.startIndex,
         startLine: window.startLine,
-        endLine: window.endLine
+        endLine: window.endLine,
+        tokenFingerprint
     };
 }

@@ -1,6 +1,8 @@
-import { ArkMethod } from "arkanalyzer";
-import { BaseChecker, BaseMetaData, CheckerUtils, IssueReport, MatcherCallback, MatcherTypes, MethodMatcher, Rule } from "homecheck";
-import { createDefects, getRuleOption } from "./utils";
+import { ArkMethod, Stmt } from "arkanalyzer";
+import { BaseMetaData, CheckerUtils, MatcherCallback, MatcherTypes, MethodMatcher } from "homecheck";
+import { RuleOptionSchema } from "./config/parseRuleOptions";
+import { FeatureEnvyRuleOptions } from "./config/types";
+import { BaseRuleChecker } from "./BaseRuleChecker";
 
 // Heuristic detection for "Feature Envy" code smell: a method that tends to
 // interact much more with another class than with its own.
@@ -10,14 +12,27 @@ const gMetaData: BaseMetaData = {
     description: "Method excessively uses members of another class (Feature Envy)."
 };
 
+const FEATURE_ENVY_OPTIONS_SCHEMA: RuleOptionSchema<FeatureEnvyRuleOptions> = {
+    minTotalCalls: { type: "number", min: 1 },
+    minForeignCalls: { type: "number", min: 1 },
+    ratioThreshold: { type: "number", min: 0, max: 1 }
+};
+
+const DEFAULT_OPTIONS: FeatureEnvyRuleOptions = {
+    minTotalCalls: 3,
+    minForeignCalls: 3,
+    ratioThreshold: 0.6
+};
+
 /**
  * Detects "Feature Envy" by comparing call distribution to self vs. foreign classes.
  * Thresholds can be tuned via rule.option[0] (minTotalCalls, minForeignCalls, ratioThreshold).
  */
-export class FeatureEnvyCheck implements BaseChecker {
+export class FeatureEnvyCheck extends BaseRuleChecker<FeatureEnvyRuleOptions> {
     readonly metaData: BaseMetaData = gMetaData;
-    public rule: Rule;
-    public issues: IssueReport[] = [];
+
+    protected readonly optionSchema = FEATURE_ENVY_OPTIONS_SCHEMA;
+    protected readonly defaultOptions = DEFAULT_OPTIONS;
 
     // Ignore calls to built-in/native types to avoid false positives on literals/formatting.
     private readonly IGNORED_CLASSES = new Set<string>([
@@ -28,11 +43,6 @@ export class FeatureEnvyCheck implements BaseChecker {
     private methodMatcher: MethodMatcher = {
         matcherType: MatcherTypes.METHOD
     };
-
-    // Default thresholds to avoid noise; can be overridden via rule.option[0].
-    private readonly MIN_TOTAL_CALLS = 3;
-    private readonly MIN_FOREIGN_CALLS = 3;
-    private readonly RATIO_THRESHOLD = 0.6; // 60% or more calls to the same foreign class.
 
     /**
      * Register the method-level matcher for this checker.
@@ -59,7 +69,7 @@ export class FeatureEnvyCheck implements BaseChecker {
         const callCountByClass = new Map<string, number>();
         let totalCalls = 0;
 
-        const { minTotalCalls, minForeignCalls, ratioThreshold } = this.getThresholds();
+        const { minTotalCalls, minForeignCalls, ratioThreshold } = this.getOptions();
 
         for (const stmt of stmts) {
             const invokes = this.collectInvokes(stmt);
@@ -109,21 +119,10 @@ export class FeatureEnvyCheck implements BaseChecker {
     }
 
     /**
-     * Resolve thresholds, falling back to defaults if rule options are missing.
-     */
-    private getThresholds() {
-        return getRuleOption(this.rule, {
-            minTotalCalls: this.MIN_TOTAL_CALLS,
-            minForeignCalls: this.MIN_FOREIGN_CALLS,
-            ratioThreshold: this.RATIO_THRESHOLD
-        });
-    }
-
-    /**
      * Collect invoke expressions from a statement (best-effort across stmt/expr shapes).
      */
-    private collectInvokes(stmt: any) {
-        const invokes: any[] = [];
+    private collectInvokes(stmt: Stmt) {
+        const invokes: Array<ReturnType<typeof CheckerUtils.getInvokeExprFromStmt> & {}> = [];
 
         const direct = CheckerUtils.getInvokeExprFromStmt(stmt);
         if (direct) {
@@ -133,10 +132,11 @@ export class FeatureEnvyCheck implements BaseChecker {
         if (typeof stmt.getExprs === "function") {
             for (const expr of stmt.getExprs() ?? []) {
                 // Best-effort: some expr nodes may expose getInvokeExpr.
-                if (expr && typeof (expr as any).getInvokeExpr === "function") {
-                    const inv = (expr as any).getInvokeExpr();
+                const exprObj = expr as { getInvokeExpr?: () => unknown } | null;
+                if (exprObj && typeof exprObj.getInvokeExpr === "function") {
+                    const inv = exprObj.getInvokeExpr();
                     if (inv) {
-                        invokes.push(inv);
+                        invokes.push(inv as typeof invokes[number]);
                     }
                 }
             }
@@ -156,7 +156,6 @@ export class FeatureEnvyCheck implements BaseChecker {
      * Emit an IssueReport describing the detected Feature Envy.
      */
     private addIssueReport(method: ArkMethod, foreignClass: string, foreignCalls: number, totalCalls: number, ratio: number) {
-        const severity = this.rule?.alert ?? this.metaData.severity;
         const line = method.getLine() ?? 0;
         const startCol = method.getColumn() ?? 0;
         const endCol = startCol + (method.getName()?.length ?? 0);
@@ -165,16 +164,13 @@ export class FeatureEnvyCheck implements BaseChecker {
         const methodName = method.getName() ?? "<unknown>";
         const description = `Method '${methodName}' is highly coupled to '${foreignClass}' (${foreignCalls}/${totalCalls} calls, ${(ratio * 100).toFixed(0)}%). Consider moving logic or introducing delegation.`;
 
-        this.issues.push(createDefects({
+        this.reportIssue({
             line,
             startCol,
             endCol,
             description,
-            severity,
-            ruleId: this.rule.ruleId,
             filePath,
-            ruleDocPath: this.metaData.ruleDocPath,
-            methodName
-        }));
+            methodName,
+        });
     }
 }

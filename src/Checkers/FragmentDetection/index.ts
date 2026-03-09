@@ -14,12 +14,12 @@ export { TokenWindow, createSlidingWindows, getWindowCount } from './SlidingWind
 export {
     FragmentLocation,
     HashIndex,
-    computeWindowHash,
     computeTokensHash,
+    computeFingerprint,
     createLocationFromWindow
 } from './HashIndex';
 
-export { djb2Hash } from '../utils';
+export { djb2Hash } from '../shared';
 
 // 克隆匹配器
 export { CloneMatch, ClonePair, CloneMatcher } from './CloneMatcher';
@@ -34,6 +34,13 @@ export {
     CloneMerger
 } from './CloneMerger';
 
+export { UnionFind } from './UnionFind';
+
+export { CloneClass, CloneClassMember, classifyClones } from './CloneClassifier';
+
+// 滚动哈希
+export { RollingHash } from './RollingHash';
+
 // Tokenizer - ArkTS 词法分析器
 export {
     TokenizerOptions,
@@ -43,3 +50,12 @@ export {
     mapSyntaxKindToTokenType,
     offsetToLineColumn
 } from './Tokenizer';
+
+// 相似度计算
+export { lcsLength, lcsSimilarity, buildQGramProfile, qgramJaccard } from './SimilarityScorer';
+
+// 近似克隆检测器
+export { NearMissClone, NearMissDetector } from './NearMissDetector';
+
+// 管线共享工具
+export { linesOverlap, filterSelfOverlappingClones, deduplicateMergedClones } from './ClonePipelineUtils';

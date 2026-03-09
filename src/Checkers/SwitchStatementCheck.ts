@@ -1,6 +1,8 @@
 import { ArkMethod, Stmt } from "arkanalyzer";
-import { BaseChecker, BaseMetaData, IssueReport, MatcherCallback, MatcherTypes, MethodMatcher, Rule } from "homecheck";
-import { createDefects, getRuleOption } from "./utils";
+import { BaseMetaData, MatcherCallback, MatcherTypes, MethodMatcher } from "homecheck";
+import { RuleOptionSchema } from "./config/parseRuleOptions";
+import { SwitchStatementRuleOptions } from "./config/types";
+import { BaseRuleChecker } from "./BaseRuleChecker";
 
 // Detect "Switch Statement" smell: large switch blocks that may signal missing polymorphism.
 const gMetaData: BaseMetaData = {
@@ -9,20 +11,27 @@ const gMetaData: BaseMetaData = {
     description: "Large switch statement detected; consider replacing with polymorphism."
 };
 
+const SWITCH_OPTIONS_SCHEMA: RuleOptionSchema<SwitchStatementRuleOptions> = {
+    minCases: { type: "number", min: 1 }
+};
+
+const DEFAULT_OPTIONS: SwitchStatementRuleOptions = {
+    minCases: 5
+};
+
 /**
  * Detects large switch statements by counting case/default labels.
  * Uses CFG statements for structure and a source scan as a fallback.
  */
-export class SwitchStatementCheck implements BaseChecker {
+export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOptions> {
     readonly metaData: BaseMetaData = gMetaData;
-    public rule: Rule;
-    public issues: IssueReport[] = [];
+
+    protected readonly optionSchema = SWITCH_OPTIONS_SCHEMA;
+    protected readonly defaultOptions = DEFAULT_OPTIONS;
 
     private methodMatcher: MethodMatcher = {
         matcherType: MatcherTypes.METHOD
     };
-
-    private readonly MIN_CASES = 5; // Heuristic threshold for a "large" switch.
 
     /**
      * Register the method-level matcher for this checker.
@@ -265,8 +274,7 @@ export class SwitchStatementCheck implements BaseChecker {
      * Resolve the case-count threshold from rule options or defaults.
      */
     private getCaseThreshold(): number {
-        const option = getRuleOption(this.rule, { minCases: this.MIN_CASES });
-        return option.minCases;
+        return this.getOptions().minCases;
     }
 
     /**
@@ -281,23 +289,19 @@ export class SwitchStatementCheck implements BaseChecker {
         endCol: number,
         filePath: string
     ) {
-        const severity = this.rule?.alert ?? this.metaData.severity;
         const caseLineSummary = caseLineCounts.length > 0
             ? caseLineCounts.map(({ label, lines }) => `${label} (${lines} line${lines === 1 ? "" : "s"})`).join("; ")
             : "unavailable";
 
         const description = `Switch statement with ${caseCount} cases detected in method '${method.getName()}'. Consider using polymorphism or strategy. Case line counts: ${caseLineSummary}.`;
 
-        this.issues.push(createDefects({
+        this.reportIssue({
             line,
             startCol,
             endCol,
             description,
-            severity,
-            ruleId: this.rule.ruleId,
             filePath,
-            ruleDocPath: this.metaData.ruleDocPath,
-            methodName: method.getName()
-        }));
+            methodName: method.getName(),
+        });
     }
 }

@@ -15,8 +15,10 @@
 
 import { ArkMethod } from "arkanalyzer";
 import { ClassCategory } from "arkanalyzer/lib/core/model/ArkClass";
-import { BaseMetaData, BaseChecker, Rule, MethodMatcher, MatcherTypes, MatcherCallback, IssueReport } from "homecheck";
-import { createDefects, getRuleOption } from "./utils";
+import { BaseMetaData, MethodMatcher, MatcherTypes, MatcherCallback } from "homecheck";
+import { RuleOptionSchema } from "./config/parseRuleOptions";
+import { LongMethodRuleOptions } from "./config/types";
+import { BaseRuleChecker } from "./BaseRuleChecker";
 
 const gMetaData: BaseMetaData = {
     severity: 2,
@@ -31,6 +33,20 @@ const UI_LIFECYCLE_METHODS = new Set([
     'onPageHide',
     'onBackPress'
 ]);
+
+const LONG_METHOD_OPTIONS_SCHEMA: RuleOptionSchema<LongMethodRuleOptions> = {
+    maxStmts: { type: "number", min: 0 },
+    maxLines: { type: "number", min: 0, allowNaN: true },
+    maxUIStmtsSoft: { type: "number", min: 0 },
+    maxUIStmtsHard: { type: "number", min: 0 }
+};
+
+const DEFAULT_OPTIONS: LongMethodRuleOptions = {
+    maxStmts: Number.NaN,
+    maxLines: Number.NaN,
+    maxUIStmtsSoft: Number.NaN,
+    maxUIStmtsHard: Number.NaN
+};
 
 /**
  * Long Method 检测规则
@@ -48,10 +64,11 @@ const UI_LIFECYCLE_METHODS = new Set([
  *
  * 可通过 ruleConfig.json 配置各阈值参数
  */
-export class LongMethodCheck implements BaseChecker {
+export class LongMethodCheck extends BaseRuleChecker<LongMethodRuleOptions> {
     readonly metaData: BaseMetaData = gMetaData;
-    public rule: Rule;
-    public issues: IssueReport[] = [];
+
+    protected readonly optionSchema = LONG_METHOD_OPTIONS_SCHEMA;
+    protected readonly defaultOptions = DEFAULT_OPTIONS;
 
     private readonly DEFAULT_MAX_STMTS = 50;
     private readonly DEFAULT_MAX_UI_STMTS_SOFT = 80;
@@ -135,10 +152,7 @@ export class LongMethodCheck implements BaseChecker {
      * 从配置中获取普通方法的最大语句数阈值
      */
     private getMaxStmtsFromConfig(): number {
-        const option = getRuleOption(this.rule, {
-            maxStmts: Number.NaN,
-            maxLines: Number.NaN
-        });
+        const option = this.getOptions();
 
         if (Number.isFinite(option.maxStmts)) {
             return option.maxStmts;
@@ -151,10 +165,7 @@ export class LongMethodCheck implements BaseChecker {
     }
 
     private getUIThresholdsFromConfig(): { softLimit: number; hardLimit: number } {
-        const option = getRuleOption(this.rule, {
-            maxUIStmtsSoft: Number.NaN,
-            maxUIStmtsHard: Number.NaN
-        });
+        const option = this.getOptions();
 
         const softLimit = Number.isFinite(option.maxUIStmtsSoft)
             ? option.maxUIStmtsSoft
@@ -183,33 +194,21 @@ export class LongMethodCheck implements BaseChecker {
     }
 
     private addIssueReport(method: ArkMethod, actualStmts: number, maxStmts: number, severityOverride?: number) {
-        const severity = severityOverride ?? this.rule?.alert ?? this.metaData.severity;
-
-        // 获取方法的位置信息
-        const methodLine = method.getLine();
-        const methodCol = method.getColumn();
-
-        const line = methodLine ?? 0;
-        const startCol = methodCol ?? 0;
+        const line = method.getLine() ?? 0;
+        const startCol = method.getColumn() ?? 0;
         const endCol = startCol + method.getName().length;
-
-        const arkFile = method.getDeclaringArkFile();
-        const filePath = arkFile?.getFilePath() ?? '';
-
-        // 构建描述信息，包含实际语句数、阈值和方法名
+        const filePath = method.getDeclaringArkFile()?.getFilePath() ?? '';
         const methodName = method.getName() ?? '';
         const description = `Method '${methodName}' is too long. Consider refactoring. (Current: ${actualStmts} statements, Max: ${maxStmts})`;
 
-        this.issues.push(createDefects({
+        this.reportIssue({
             line,
             startCol,
             endCol,
             description,
-            severity,
-            ruleId: this.rule.ruleId,
             filePath,
-            ruleDocPath: this.metaData.ruleDocPath,
-            methodName
-        }));
+            methodName,
+            severity: severityOverride !== undefined ? severityOverride : undefined,
+        });
     }
 }

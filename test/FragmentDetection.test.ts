@@ -20,10 +20,23 @@ import {
     getWindowCount,
     HashIndex,
     djb2Hash,
-    computeWindowHash,
+    computeFingerprint,
     computeTokensHash,
-    CloneMatcher
+    CloneMatcher,
+    classifyClones,
+    CloneClass,
+    UnionFind,
+    MergedClone,
+    lcsLength,
+    lcsSimilarity,
+    buildQGramProfile,
+    qgramJaccard,
+    NearMissDetector,
+    linesOverlap,
+    filterSelfOverlappingClones,
+    deduplicateMergedClones
 } from '../src/Checkers/FragmentDetection';
+import { isLogStatement } from '../src/Checkers/shared';
 
 // ============================================================
 // 辅助函数：创建 mock Token
@@ -167,14 +180,14 @@ describe('哈希计算', () => {
         expect(computeTokensHash(tokens1)).not.toBe(computeTokensHash(tokens3));
     });
     
-    test('computeWindowHash 应基于 Token value 计算', () => {
+    test('computeFingerprint 应基于 Token value 计算', () => {
         const tokens = mockTokens(['a', 'b', 'c']);
         const windows = createSlidingWindows(tokens, 3);
         
-        const hash = computeWindowHash(windows[0]);
+        const result = computeFingerprint(windows[0].tokens, 0, windows[0].tokens.length);
         const expectedHash = djb2Hash('a|b|c');
-        
-        expect(hash).toBe(expectedHash);
+        expect(djb2Hash(result)).toBe(expectedHash);
+        expect(result).toBe('a|b|c');
     });
 });
 
@@ -185,7 +198,7 @@ describe('哈希计算', () => {
 describe('哈希索引', () => {
     test('add 和 get 应正确存取', () => {
         const index = new HashIndex();
-        const location = { file: 'test.ets', startIndex: 0, startLine: 1, endLine: 5 };
+        const location = { file: 'test.ets', startIndex: 0, startLine: 1, endLine: 5, tokenFingerprint: '' };
         
         index.add('hash1', location);
         
@@ -195,8 +208,8 @@ describe('哈希索引', () => {
     
     test('相同哈希应累积位置', () => {
         const index = new HashIndex();
-        const loc1 = { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5 };
-        const loc2 = { file: 'b.ets', startIndex: 100, startLine: 10, endLine: 15 };
+        const loc1 = { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5, tokenFingerprint: '' };
+        const loc2 = { file: 'b.ets', startIndex: 100, startLine: 10, endLine: 15, tokenFingerprint: '' };
         
         index.add('hash1', loc1);
         index.add('hash1', loc2);
@@ -208,11 +221,11 @@ describe('哈希索引', () => {
         const index = new HashIndex();
         
         // 添加一个只出现一次的哈希
-        index.add('unique', { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5 });
+        index.add('unique', { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5, tokenFingerprint: '' });
         
         // 添加一个出现两次的哈希
-        index.add('duplicate', { file: 'a.ets', startIndex: 10, startLine: 10, endLine: 15 });
-        index.add('duplicate', { file: 'b.ets', startIndex: 20, startLine: 20, endLine: 25 });
+        index.add('duplicate', { file: 'a.ets', startIndex: 10, startLine: 10, endLine: 15, tokenFingerprint: '' });
+        index.add('duplicate', { file: 'b.ets', startIndex: 20, startLine: 20, endLine: 25, tokenFingerprint: '' });
         
         const duplicates = index.getDuplicates();
         
@@ -224,9 +237,9 @@ describe('哈希索引', () => {
     test('size 应返回不同哈希的数量', () => {
         const index = new HashIndex();
         
-        index.add('hash1', { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5 });
-        index.add('hash2', { file: 'a.ets', startIndex: 10, startLine: 10, endLine: 15 });
-        index.add('hash1', { file: 'b.ets', startIndex: 20, startLine: 20, endLine: 25 });
+        index.add('hash1', { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5, tokenFingerprint: '' });
+        index.add('hash2', { file: 'a.ets', startIndex: 10, startLine: 10, endLine: 15, tokenFingerprint: '' });
+        index.add('hash1', { file: 'b.ets', startIndex: 20, startLine: 20, endLine: 25, tokenFingerprint: '' });
         
         expect(index.size()).toBe(2);
     });
@@ -234,7 +247,7 @@ describe('哈希索引', () => {
     test('clear 应清空索引', () => {
         const index = new HashIndex();
         
-        index.add('hash1', { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5 });
+        index.add('hash1', { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5, tokenFingerprint: '' });
         index.clear();
         
         expect(index.size()).toBe(0);
@@ -346,12 +359,49 @@ describe('克隆匹配器', () => {
     });
 });
 
+describe('同文件重叠窗口过滤', () => {
+    test('同文件重叠窗口不应生成克隆对', () => {
+        const matcher = new CloneMatcher(3);
+        // ['a', 'a', 'a', 'a', 'a'] — 所有窗口哈希相同，但都在同文件且重叠
+        const tokens = mockTokens(['a', 'a', 'a', 'a', 'a']);
+        matcher.processFile(tokens, 'test.ets');
+
+        const pairs = matcher.getClonePairs();
+        // 窗口 0-2, 1-3, 2-4 哈希都相同，但彼此重叠（间距 < windowSize=3），应全部过滤
+        expect(pairs.length).toBe(0);
+    });
+
+    test('同文件不重叠窗口应正常生成克隆对', () => {
+        const matcher = new CloneMatcher(3);
+        // 位置 0-2 和 位置 4-6 都是 ['a','b','c']，间距=4 >= windowSize=3
+        const tokens = mockTokens(['a', 'b', 'c', 'x', 'a', 'b', 'c']);
+        matcher.processFile(tokens, 'test.ets');
+
+        const pairs = matcher.getClonePairs();
+        expect(pairs.length).toBe(1);
+        expect(pairs[0].location1.startIndex).toBe(0);
+        expect(pairs[0].location2.startIndex).toBe(4);
+    });
+
+    test('跨文件相同窗口不应被过滤', () => {
+        const matcher = new CloneMatcher(3);
+        const tokensA = mockTokens(['a', 'b', 'c']);
+        const tokensB = mockTokens(['a', 'b', 'c']);
+        matcher.processFile(tokensA, 'a.ets');
+        matcher.processFile(tokensB, 'b.ets');
+
+        const pairs = matcher.getClonePairs();
+        expect(pairs.length).toBe(1);
+        expect(pairs[0].location1.file).toBe('a.ets');
+        expect(pairs[0].location2.file).toBe('b.ets');
+    });
+});
+
 // ============================================================
 // 导入克隆合并器
 // ============================================================
 
 import {
-    MergedClone,
     isConsecutive,
     createMergedClone,
     extendMergedClone,
@@ -372,8 +422,8 @@ describe('连续匹配检测', () => {
         file2: string, startIndex2: number, startLine2: number
     ): ClonePair {
         return {
-            location1: { file: file1, startIndex: startIndex1, startLine: startLine1, endLine: startLine1 + 2 },
-            location2: { file: file2, startIndex: startIndex2, startLine: startLine2, endLine: startLine2 + 2 },
+            location1: { file: file1, startIndex: startIndex1, startLine: startLine1, endLine: startLine1 + 2, tokenFingerprint: '' },
+            location2: { file: file2, startIndex: startIndex2, startLine: startLine2, endLine: startLine2 + 2, tokenFingerprint: '' },
             tokenCount: 3
         };
     }
@@ -413,8 +463,8 @@ describe('片段合并算法', () => {
         file2: string, startIndex2: number, startLine2: number
     ): ClonePair {
         return {
-            location1: { file: file1, startIndex: startIndex1, startLine: startLine1, endLine: startLine1 + 2 },
-            location2: { file: file2, startIndex: startIndex2, startLine: startLine2, endLine: startLine2 + 2 },
+            location1: { file: file1, startIndex: startIndex1, startLine: startLine1, endLine: startLine1 + 2, tokenFingerprint: '' },
+            location2: { file: file2, startIndex: startIndex2, startLine: startLine2, endLine: startLine2 + 2, tokenFingerprint: '' },
             tokenCount: 3
         };
     }
@@ -492,13 +542,13 @@ describe('CloneMerger 类', () => {
         
         const pairs: ClonePair[] = [
             {
-                location1: { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 3 },
-                location2: { file: 'b.ets', startIndex: 10, startLine: 5, endLine: 7 },
+                location1: { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 3, tokenFingerprint: '' },
+                location2: { file: 'b.ets', startIndex: 10, startLine: 5, endLine: 7, tokenFingerprint: '' },
                 tokenCount: 3
             },
             {
-                location1: { file: 'a.ets', startIndex: 1, startLine: 1, endLine: 3 },
-                location2: { file: 'b.ets', startIndex: 11, startLine: 5, endLine: 7 },
+                location1: { file: 'a.ets', startIndex: 1, startLine: 1, endLine: 3, tokenFingerprint: '' },
+                location2: { file: 'b.ets', startIndex: 11, startLine: 5, endLine: 7, tokenFingerprint: '' },
                 tokenCount: 3
             }
         ];
@@ -914,7 +964,20 @@ describe('Tokenizer - 边界情况', () => {
 
 // ==================== CodeCloneFragmentCheck 测试 ====================
 
-import { CodeCloneFragmentCheck, CloneScope, CodeLocation, FragmentCloneReport } from '../src/Checkers/CodeCloneFragmentCheck';
+import { CodeCloneFragmentCheck } from '../src/Checkers/CodeCloneFragmentCheck';
+import {
+    CloneScope,
+    CodeLocation,
+    FragmentCloneReport,
+    collectLogLines,
+    detectCloneType,
+    determineScope,
+    formatDescription,
+    formatLocation,
+    getScopeDescription,
+    parseFragmentCloneOptions,
+    removeLogLines
+} from '../src/Checkers/fragment-clone';
 
 describe('CodeCloneFragmentCheck - CloneScope 枚举', () => {
     test('CloneScope 枚举值正确', () => {
@@ -953,15 +1016,7 @@ describe('CodeCloneFragmentCheck - 规则类创建', () => {
 });
 
 describe('CodeCloneFragmentCheck - 范围判定逻辑', () => {
-    // 创建一个测试用的私有方法访问器
-    const createTestCheck = () => {
-        const check = new CodeCloneFragmentCheck();
-        return check as any; // 允许访问私有方法
-    };
-    
     test('同一方法内 - SAME_METHOD', () => {
-        const check = createTestCheck();
-        
         const loc1: CodeLocation = {
             file: '/test/file.ts',
             startLine: 10,
@@ -976,14 +1031,12 @@ describe('CodeCloneFragmentCheck - 范围判定逻辑', () => {
             className: 'MyClass',
             methodName: 'myMethod'
         };
-        
-        const scope = check.determineScope(loc1, loc2);
+
+        const scope = determineScope(loc1, loc2);
         expect(scope).toBe(CloneScope.SAME_METHOD);
     });
     
     test('同一类不同方法 - SAME_CLASS', () => {
-        const check = createTestCheck();
-        
         const loc1: CodeLocation = {
             file: '/test/file.ts',
             startLine: 10,
@@ -998,14 +1051,12 @@ describe('CodeCloneFragmentCheck - 范围判定逻辑', () => {
             className: 'MyClass',
             methodName: 'method2'
         };
-        
-        const scope = check.determineScope(loc1, loc2);
+
+        const scope = determineScope(loc1, loc2);
         expect(scope).toBe(CloneScope.SAME_CLASS);
     });
     
     test('不同类 - DIFFERENT_CLASS', () => {
-        const check = createTestCheck();
-        
         const loc1: CodeLocation = {
             file: '/test/file1.ts',
             startLine: 10,
@@ -1020,14 +1071,12 @@ describe('CodeCloneFragmentCheck - 范围判定逻辑', () => {
             className: 'ClassB',
             methodName: 'method1'
         };
-        
-        const scope = check.determineScope(loc1, loc2);
+
+        const scope = determineScope(loc1, loc2);
         expect(scope).toBe(CloneScope.DIFFERENT_CLASS);
     });
     
     test('没有方法名 - DIFFERENT_CLASS', () => {
-        const check = createTestCheck();
-        
         const loc1: CodeLocation = {
             file: '/test/file.ts',
             startLine: 10,
@@ -1039,136 +1088,92 @@ describe('CodeCloneFragmentCheck - 范围判定逻辑', () => {
             startLine: 30,
             endLine: 35
         };
-        
-        const scope = check.determineScope(loc1, loc2);
+
+        const scope = determineScope(loc1, loc2);
         expect(scope).toBe(CloneScope.DIFFERENT_CLASS);
     });
 });
 
 describe('CodeCloneFragmentCheck - 克隆类型判定', () => {
     test('未规范化 - Type-1', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
-            option: [{ normalizeIdentifiers: false, normalizeLiterals: false }]
-        };
-        check.beforeCheck();
-        
-        const type = check.determineCloneType();
+        const type = detectCloneType({ normalizeIdentifiers: false, normalizeLiterals: false });
         expect(type).toBe('Type-1');
     });
     
     test('规范化标识符 - Type-2', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
-            option: [{ normalizeIdentifiers: true, normalizeLiterals: false }]
-        };
-        check.beforeCheck();
-        
-        const type = check.determineCloneType();
+        const type = detectCloneType({ normalizeIdentifiers: true, normalizeLiterals: false });
         expect(type).toBe('Type-2');
     });
     
     test('规范化字面量 - Type-2', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
-            option: [{ normalizeIdentifiers: false, normalizeLiterals: true }]
-        };
-        check.beforeCheck();
-        
-        const type = check.determineCloneType();
+        const type = detectCloneType({ normalizeIdentifiers: false, normalizeLiterals: true });
         expect(type).toBe('Type-2');
     });
     
     test('两者都规范化 - Type-2', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
-            option: [{ normalizeIdentifiers: true, normalizeLiterals: true }]
-        };
-        check.beforeCheck();
-        
-        const type = check.determineCloneType();
+        const type = detectCloneType({ normalizeIdentifiers: true, normalizeLiterals: true });
         expect(type).toBe('Type-2');
     });
 });
 
 describe('CodeCloneFragmentCheck - 配置读取', () => {
     test('默认 minimumTokens', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
-        const value = check.getMinimumTokens();
+        const value = parseFragmentCloneOptions(undefined as any).minimumTokens;
         expect(value).toBe(100);
     });
     
     test('自定义 minimumTokens', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
+        const rule: any = {
             option: [{ minimumTokens: 50 }]
         };
-        
-        const value = check.getMinimumTokens();
+        const value = parseFragmentCloneOptions(rule).minimumTokens;
         expect(value).toBe(50);
     });
     
     test('默认 normalizeIdentifiers', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
-        const value = check.getNormalizeIdentifiers();
+        const value = parseFragmentCloneOptions(undefined as any).normalizeIdentifiers;
         expect(value).toBe(true);
     });
     
     test('自定义 normalizeIdentifiers', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
+        const rule: any = {
             option: [{ normalizeIdentifiers: false }]
         };
-        
-        const value = check.getNormalizeIdentifiers();
+        const value = parseFragmentCloneOptions(rule).normalizeIdentifiers;
         expect(value).toBe(false);
     });
     
     test('默认 normalizeLiterals', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
-        const value = check.getNormalizeLiterals();
+        const value = parseFragmentCloneOptions(undefined as any).normalizeLiterals;
         expect(value).toBe(false);
     });
     
     test('自定义 normalizeLiterals', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        check.rule = {
+        const rule: any = {
             option: [{ normalizeLiterals: true }]
         };
-        
-        const value = check.getNormalizeLiterals();
+        const value = parseFragmentCloneOptions(rule).normalizeLiterals;
         expect(value).toBe(true);
     });
 });
 
 describe('CodeCloneFragmentCheck - 描述格式化', () => {
     test('格式化范围描述 - SAME_METHOD', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
-        const desc = check.getScopeDescription(CloneScope.SAME_METHOD);
+        const desc = getScopeDescription(CloneScope.SAME_METHOD);
         expect(desc).toBe('same method');
     });
     
     test('格式化范围描述 - SAME_CLASS', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
-        const desc = check.getScopeDescription(CloneScope.SAME_CLASS);
+        const desc = getScopeDescription(CloneScope.SAME_CLASS);
         expect(desc).toBe('same class');
     });
     
     test('格式化范围描述 - DIFFERENT_CLASS', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
-        const desc = check.getScopeDescription(CloneScope.DIFFERENT_CLASS);
+        const desc = getScopeDescription(CloneScope.DIFFERENT_CLASS);
         expect(desc).toBe('different classes');
     });
     
-    test('格式化位置 - 带类和方法', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
+    test('格式化位置 - 带类和方法（使用文件名）', () => {
         const loc: CodeLocation = {
             file: '/path/to/file.ts',
             startLine: 10,
@@ -1176,41 +1181,63 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
             className: 'MyClass',
             methodName: 'myMethod'
         };
-        
-        const formatted = check.formatLocation(loc);
+
+        const formatted = formatLocation(loc);
         expect(formatted).toBe('file.ts > MyClass.myMethod():10-20');
     });
     
-    test('格式化位置 - 只有类', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
+    test('格式化位置 - 只有类（使用文件名）', () => {
         const loc: CodeLocation = {
             file: '/path/to/file.ts',
             startLine: 10,
             endLine: 20,
             className: 'MyClass'
         };
-        
-        const formatted = check.formatLocation(loc);
+
+        const formatted = formatLocation(loc);
         expect(formatted).toBe('file.ts > MyClass:10-20');
     });
     
-    test('格式化位置 - 无类无方法', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
+    test('格式化位置 - 无类无方法（使用文件名）', () => {
         const loc: CodeLocation = {
             file: '/path/to/file.ts',
             startLine: 10,
             endLine: 20
         };
-        
-        const formatted = check.formatLocation(loc);
+
+        const formatted = formatLocation(loc);
         expect(formatted).toBe('file.ts:10-20');
     });
     
+    test('格式化位置 - 长路径只保留文件名', () => {
+        const loc: CodeLocation = {
+            file: '/very/long/path/to/src/utils/Logger.ets',
+            startLine: 1,
+            endLine: 20
+        };
+
+        const formatted = formatLocation(loc);
+        expect(formatted).toBe('Logger.ets:1-20');
+    });
+    
+    test('不同路径同名文件会产生相同的格式化结果（仅文件名）', () => {
+        const loc1: CodeLocation = {
+            file: '/project/moduleA/src/utils/Logger.ets',
+            startLine: 5,
+            endLine: 23
+        };
+        const loc2: CodeLocation = {
+            file: '/project/moduleB/src/utils/Logger.ets',
+            startLine: 5,
+            endLine: 23
+        };
+
+        const formatted1 = formatLocation(loc1);
+        const formatted2 = formatLocation(loc2);
+        expect(formatted1).toBe(formatted2);
+    });
+    
     test('格式化完整描述', () => {
-        const check = new CodeCloneFragmentCheck() as any;
-        
         const report: FragmentCloneReport = {
             cloneType: 'Type-2',
             scope: CloneScope.SAME_CLASS,
@@ -1231,11 +1258,1075 @@ describe('CodeCloneFragmentCheck - 描述格式化', () => {
             tokenCount: 150,
             lineCount: 11
         };
-        
-        const desc = check.formatDescription(report);
+
+        const desc = formatDescription(report);
         expect(desc).toContain('Code Clone Type-2');
         expect(desc).toContain('same class');
         expect(desc).toContain('150 tokens');
         expect(desc).toContain('11 lines');
+        expect(desc).toContain('file.ts > MyClass.method1():10-20');
+        expect(desc).toContain('/path/to/file.ts > MyClass.method2():30-40');
+    });
+});
+
+// ============================================================
+// 日志过滤测试
+// ============================================================
+
+describe('CodeCloneFragmentCheck - 日志过滤', () => {
+
+    test('isLogStatement 识别 console.log', () => {
+        const mockStmt = { toString: () => 'console.log("hello")' };
+        expect(isLogStatement(mockStmt as any)).toBe(true);
+    });
+
+    test('isLogStatement 识别 console.error', () => {
+        const mockStmt = { toString: () => 'console.error("error msg")' };
+        expect(isLogStatement(mockStmt as any)).toBe(true);
+    });
+
+    test('isLogStatement 识别 hilog.info', () => {
+        const mockStmt = { toString: () => 'hilog.info(0x0000, "TAG", "msg")' };
+        expect(isLogStatement(mockStmt as any)).toBe(true);
+    });
+
+    test('isLogStatement 识别 Logger.debug', () => {
+        const mockStmt = { toString: () => 'Logger.debug("debug info")' };
+        expect(isLogStatement(mockStmt as any)).toBe(true);
+    });
+
+    test('isLogStatement 不匹配业务代码', () => {
+        expect(isLogStatement({ toString: () => 'let x = 1' } as any)).toBe(false);
+        expect(isLogStatement({ toString: () => 'return result' } as any)).toBe(false);
+        expect(isLogStatement({ toString: () => 'this.data.push(item)' } as any)).toBe(false);
+    });
+
+    test('isLogStatement 不匹配嵌入式日志', () => {
+        expect(isLogStatement({ toString: () => 'doSomething() && console.log("done")' } as any)).toBe(false);
+    });
+
+    test('collectLogLines 收集单行日志的行号', () => {
+        // 构造 mock ArkFile
+        const mockStmts = [
+            { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 5 }) },
+            { toString: () => 'console.log("test")', getOriginPositionInfo: () => ({ getLineNo: () => 6 }) },
+            { toString: () => 'let y = 2', getOriginPositionInfo: () => ({ getLineNo: () => 7 }) }
+        ];
+        
+        const mockMethod = {
+            getName: () => 'testMethod',
+            getLine: () => 4,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => 'TestClass',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+
+        const logLines = collectLogLines(mockArkFile as any);
+        expect(logLines.has(6)).toBe(true);
+        expect(logLines.has(5)).toBe(false);
+        expect(logLines.has(7)).toBe(false);
+        expect(logLines.size).toBe(1);
+    });
+
+    test('collectLogLines 收集多行日志的行号范围', () => {
+        // 日志语句在第 10 行，下一条语句在第 13 行
+        // → 日志占据 10, 11, 12 三行
+        const mockStmts = [
+            { toString: () => 'hilog.info(0x0000, "TAG", "msg")', getOriginPositionInfo: () => ({ getLineNo: () => 10 }) },
+            { toString: () => 'let result = compute()', getOriginPositionInfo: () => ({ getLineNo: () => 13 }) }
+        ];
+        
+        const mockMethod = {
+            getName: () => 'testMethod',
+            getLine: () => 9,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => 'TestClass',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+
+        const logLines = collectLogLines(mockArkFile as any);
+        expect(logLines.has(10)).toBe(true);
+        expect(logLines.has(11)).toBe(true);
+        expect(logLines.has(12)).toBe(true);
+        expect(logLines.has(13)).toBe(false);  // 下一条语句的行不应被包含
+        expect(logLines.size).toBe(3);
+    });
+
+    test('collectLogLines 处理末尾日志（用方法结束行作为边界）', () => {
+        // 日志是方法的最后一条语句
+        const mockStmts = [
+            { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 5 }) },
+            { toString: () => 'console.log("done")', getOriginPositionInfo: () => ({ getLineNo: () => 6 }) }
+        ];
+        
+        // getMethodEndLine 需要 ArkMethod 接口，这里 mock 一下
+        // 方法结束行是第 7 行
+        const mockMethod = {
+            getName: () => 'testMethod',
+            getLine: () => 4,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => 'TestClass',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+
+        const logLines = collectLogLines(mockArkFile as any);
+        // 最后一条语句是日志，endLine = getMethodEndLine(method)
+        // getMethodEndLine 遍历 stmts 找最大行号 = max(5, 6) = 6
+        // 所以只有第 6 行
+        expect(logLines.has(6)).toBe(true);
+        expect(logLines.size).toBe(1);
+    });
+
+    test('removeLogLines 将日志行替换为空行', () => {
+        const sourceCode = [
+            'import { something } from "module"',   // line 1
+            '',                                       // line 2
+            'class MyClass {',                        // line 3
+            '    method() {',                         // line 4
+            '        let x = 1;',                     // line 5
+            '        console.log("debug");',          // line 6
+            '        let y = 2;',                     // line 7
+            '    }',                                  // line 8
+            '}'                                       // line 9
+        ].join('\n');
+        
+        // mock ArkFile，日志在第 6 行
+        const mockStmts = [
+            { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 5 }) },
+            { toString: () => 'console.log("debug")', getOriginPositionInfo: () => ({ getLineNo: () => 6 }) },
+            { toString: () => 'let y = 2', getOriginPositionInfo: () => ({ getLineNo: () => 7 }) }
+        ];
+        
+        const mockMethod = {
+            getName: () => 'method',
+            getLine: () => 4,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => 'MyClass',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+
+        const result = removeLogLines(sourceCode, mockArkFile as any);
+        const lines = result.split('\n');
+        
+        // 总行数不变
+        expect(lines.length).toBe(9);
+        // 第 6 行被替换为空行
+        expect(lines[5]).toBe('');
+        // 其他行不受影响
+        expect(lines[4]).toBe('        let x = 1;');
+        expect(lines[6]).toBe('        let y = 2;');
+    });
+
+    test('removeLogLines 保持行号不变（多行日志）', () => {
+        const sourceCode = [
+            'function test() {',                       // line 1
+            '    let a = 1;',                          // line 2
+            '    hilog.info(0x0000,',                  // line 3
+            '        "TAG",',                          // line 4
+            '        "message");',                     // line 5
+            '    let b = 2;',                          // line 6
+            '}'                                        // line 7
+        ].join('\n');
+        
+        // 日志从第 3 行开始，下一条语句在第 6 行
+        const mockStmts = [
+            { toString: () => 'let a = 1', getOriginPositionInfo: () => ({ getLineNo: () => 2 }) },
+            { toString: () => 'hilog.info(0x0000, "TAG", "message")', getOriginPositionInfo: () => ({ getLineNo: () => 3 }) },
+            { toString: () => 'let b = 2', getOriginPositionInfo: () => ({ getLineNo: () => 6 }) }
+        ];
+        
+        const mockMethod = {
+            getName: () => 'test',
+            getLine: () => 1,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => '%default',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+
+        const result = removeLogLines(sourceCode, mockArkFile as any);
+        const lines = result.split('\n');
+        
+        // 总行数不变
+        expect(lines.length).toBe(7);
+        // 第 3-5 行被替换为空行
+        expect(lines[2]).toBe('');
+        expect(lines[3]).toBe('');
+        expect(lines[4]).toBe('');
+        // 第 2 行和第 6 行不受影响
+        expect(lines[1]).toBe('    let a = 1;');
+        expect(lines[5]).toBe('    let b = 2;');
+    });
+
+    test('collectLogLines 末尾多行日志仅清除到 methodEndLine（边界：endLine=startLine）', () => {
+        // 方法最后一条语句是一个跨 3 行的 hilog.info，起始行 10
+        // getMethodEndLine 遍历 stmts 取 max lineNo = 10（日志自身起始行）
+        // 因此 endLine = methodEndLine = 10，只有第 10 行被标记，11/12 行漏掉
+        // 这是当前实现的已知局限，此测试记录该行为
+        const mockStmts = [
+            { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 8 }) },
+            { toString: () => 'hilog.info(0x0000, "TAG", "very long message")', getOriginPositionInfo: () => ({ getLineNo: () => 10 }) }
+        ];
+        
+        const mockMethod = {
+            getName: () => 'lastLogMethod',
+            getLine: () => 7,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => 'TestClass',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+
+        const logLines = collectLogLines(mockArkFile as any);
+        // methodEndLine = max(8, 10) = 10，所以 endLine = 10
+        // 只有第 10 行被标记；如果实际源码中该日志跨 10-12 行，11/12 不会被清除
+        expect(logLines.has(10)).toBe(true);
+        expect(logLines.has(11)).toBe(false);
+        expect(logLines.has(12)).toBe(false);
+        expect(logLines.size).toBe(1);
+    });
+
+    test('removeLogLines 末尾多行日志：后续行未被清除（已知局限）', () => {
+        const sourceCode = [
+            'function test() {',                        // line 1
+            '    let x = 1;',                           // line 2
+            '    hilog.info(0x0000,',                   // line 3 ← 日志起始行（也是最后一条 stmt）
+            '        "TAG",',                           // line 4 ← 多行日志续行
+            '        "message");',                      // line 5 ← 多行日志续行
+            '}'                                         // line 6
+        ].join('\n');
+        
+        // 日志是最后一条 stmt，起始行 3；methodEndLine = max(2, 3) = 3
+        const mockStmts = [
+            { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 2 }) },
+            { toString: () => 'hilog.info(0x0000, "TAG", "message")', getOriginPositionInfo: () => ({ getLineNo: () => 3 }) }
+        ];
+        
+        const mockMethod = {
+            getName: () => 'test',
+            getLine: () => 1,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => '%default',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+
+        const result = removeLogLines(sourceCode, mockArkFile as any);
+        const resultLines = result.split('\n');
+        
+        expect(resultLines.length).toBe(6);
+        // 第 3 行被清除
+        expect(resultLines[2]).toBe('');
+        // 第 4、5 行未被清除（已知局限：methodEndLine 不感知多行日志的实际结束行）
+        expect(resultLines[3]).toBe('        "TAG",');
+        expect(resultLines[4]).toBe('        "message");');
+    });
+
+    test('removeLogLines 无日志时原样返回', () => {
+        const sourceCode = 'let x = 1;\nlet y = 2;';
+        
+        const mockStmts = [
+            { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 1 }) },
+            { toString: () => 'let y = 2', getOriginPositionInfo: () => ({ getLineNo: () => 2 }) }
+        ];
+        
+        const mockMethod = {
+            getName: () => 'test',
+            getLine: () => 1,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        
+        const mockClass = {
+            getName: () => 'TestClass',
+            getMethods: () => [mockMethod]
+        };
+        
+        const mockArkFile = {
+            getFilePath: () => '/test.ets',
+            getClasses: () => [mockClass]
+        };
+
+        const result = removeLogLines(sourceCode, mockArkFile as any);
+        expect(result).toBe(sourceCode);
+    });
+
+    test('ignoreLogs 默认返回 true', () => {
+        expect(parseFragmentCloneOptions(undefined as any).ignoreLogs).toBe(true);
+    });
+
+    test('ignoreLogs 从配置读取 false', () => {
+        const rule: any = {
+            option: [{ ignoreLogs: false }]
+        };
+        expect(parseFragmentCloneOptions(rule).ignoreLogs).toBe(false);
+    });
+
+    test('ignoreLogs 配置为 true', () => {
+        const rule: any = {
+            option: [{ ignoreLogs: true }]
+        };
+        expect(parseFragmentCloneOptions(rule).ignoreLogs).toBe(true);
+    });
+});
+
+
+// ============================================================
+// Phase 2: RollingHash 测试
+// ============================================================
+
+import { RollingHash } from '../src/Checkers/FragmentDetection/RollingHash';
+
+describe('RollingHash', () => {
+    test('init 对相同 Token ID 返回一致的哈希', () => {
+        const rh1 = new RollingHash(3);
+        const rh2 = new RollingHash(3);
+        const ids = [10, 20, 30];
+        expect(rh1.init(ids)).toBe(rh2.init(ids));
+    });
+
+    test('不同 Token ID 产生不同哈希', () => {
+        const rh1 = new RollingHash(3);
+        const rh2 = new RollingHash(3);
+        const hash1 = rh1.init([10, 20, 30]);
+        const hash2 = rh2.init([40, 50, 60]);
+        expect(hash1).not.toBe(hash2);
+    });
+
+    test('slide 正确更新哈希（与 init 从零计算一致）', () => {
+        // 序列 [1, 2, 3, 4]，窗口大小 3
+        // 第一个窗口: [1, 2, 3]
+        // slide: 移除 1，加入 4 → 窗口 [2, 3, 4]
+        const rh1 = new RollingHash(3);
+        rh1.init([1, 2, 3]);
+        const slideHash = rh1.slide(1, 4);
+
+        // 直接初始化 [2, 3, 4] 应得到相同哈希
+        const rh2 = new RollingHash(3);
+        const directHash = rh2.init([2, 3, 4]);
+
+        expect(slideHash).toBe(directHash);
+    });
+
+    test('多步 slide 与逐窗口 init 一致', () => {
+        const sequence = [5, 12, 7, 99, 3, 42];
+        const windowSize = 3;
+        const rhSlide = new RollingHash(windowSize);
+        rhSlide.init(sequence.slice(0, windowSize));
+
+        for (let i = 1; i <= sequence.length - windowSize; i++) {
+            const slideHash = rhSlide.slide(sequence[i - 1], sequence[i + windowSize - 1]);
+            const rhDirect = new RollingHash(windowSize);
+            const directHash = rhDirect.init(sequence.slice(i, i + windowSize));
+            expect(slideHash).toBe(directHash);
+        }
+    });
+
+    test('windowSize=1 边界情况', () => {
+        const rh = new RollingHash(1);
+        const h1 = rh.init([42]);
+        expect(h1).toBeTruthy();
+
+        const h2 = rh.slide(42, 99);
+        const rh2 = new RollingHash(1);
+        expect(h2).toBe(rh2.init([99]));
+    });
+
+    test('windowSize=0 抛出异常', () => {
+        expect(() => new RollingHash(0)).toThrow('windowSize must be greater than 0');
+    });
+
+    test('init 长度不匹配抛出异常', () => {
+        const rh = new RollingHash(3);
+        expect(() => rh.init([1, 2])).toThrow('tokenIds length must equal windowSize');
+    });
+
+    test('getHashKey 返回 h1_h2 格式', () => {
+        const rh = new RollingHash(2);
+        const key = rh.init([1, 2]);
+        expect(key).toMatch(/^\d+_\d+$/);
+    });
+
+    test('负数 Token ID 不会导致问题', () => {
+        const rh = new RollingHash(3);
+        const hash = rh.init([-1, -2, -3]);
+        expect(hash).toBeTruthy();
+        expect(hash).toMatch(/^\d+_\d+$/);
+    });
+});
+
+// ============================================================
+// Phase 2: UnionFind 测试
+// ============================================================
+
+
+describe('UnionFind', () => {
+    test('find 自动创建新节点', () => {
+        const uf = new UnionFind();
+        expect(uf.find('a')).toBe('a');
+        expect(uf.find('b')).toBe('b');
+    });
+
+    test('union 合并两个集合', () => {
+        const uf = new UnionFind();
+        uf.union('a', 'b');
+        expect(uf.find('a')).toBe(uf.find('b'));
+    });
+
+    test('union 相同集合无副作用', () => {
+        const uf = new UnionFind();
+        uf.union('a', 'b');
+        const root = uf.find('a');
+        uf.union('a', 'b');
+        expect(uf.find('a')).toBe(root);
+    });
+
+    test('传递性合并: A-B, B-C → A,B,C 同一集合', () => {
+        const uf = new UnionFind();
+        uf.union('a', 'b');
+        uf.union('b', 'c');
+        expect(uf.find('a')).toBe(uf.find('c'));
+    });
+
+    test('getGroups 返回正确分组', () => {
+        const uf = new UnionFind();
+        uf.union('a', 'b');
+        uf.union('c', 'd');
+        uf.find('e'); // 单独节点
+
+        const groups = uf.getGroups();
+        // 至少 3 个组: {a,b}, {c,d}, {e}
+        expect(groups.size).toBe(3);
+
+        // 验证 a 和 b 在同一组
+        const rootA = uf.find('a');
+        expect(groups.get(rootA)).toContain('a');
+        expect(groups.get(rootA)).toContain('b');
+    });
+
+    test('路径压缩验证', () => {
+        const uf = new UnionFind();
+        // 构建链: a -> b -> c -> d
+        uf.union('a', 'b');
+        uf.union('b', 'c');
+        uf.union('c', 'd');
+
+        // find('a') 应触发路径压缩
+        const rootA = uf.find('a');
+        const rootD = uf.find('d');
+        expect(rootA).toBe(rootD);
+    });
+
+    test('按秩合并：大集合吸收小集合', () => {
+        const uf = new UnionFind();
+        // 构建较大集合
+        uf.union('a', 'b');
+        uf.union('a', 'c');
+        uf.union('a', 'd');
+
+        // 单节点
+        uf.find('x');
+
+        // 合并后 x 应加入 a 的集合
+        uf.union('x', 'a');
+        expect(uf.find('x')).toBe(uf.find('a'));
+    });
+});
+
+// ============================================================
+// Phase 2: CloneClassifier 测试
+// ============================================================
+
+
+describe('CloneClassifier', () => {
+    function makeMergedClone(
+        file1: string, sl1: number, el1: number, si1: number, ei1: number,
+        file2: string, sl2: number, el2: number, si2: number, ei2: number,
+        tokenCount: number = 100
+    ): MergedClone {
+        return {
+            location1: { file: file1, startLine: sl1, endLine: el1, startIndex: si1, endIndex: ei1 },
+            location2: { file: file2, startLine: sl2, endLine: el2, startIndex: si2, endIndex: ei2 },
+            tokenCount
+        };
+    }
+
+    test('空输入返回空', () => {
+        expect(classifyClones([])).toEqual([]);
+    });
+
+    test('单对克隆生成一个包含 2 成员的类', () => {
+        const clones = [makeMergedClone('a.ts', 1, 10, 0, 99, 'b.ts', 5, 14, 0, 99)];
+        const classes = classifyClones(clones);
+        expect(classes).toHaveLength(1);
+        expect(classes[0].members).toHaveLength(2);
+        expect(classes[0].classId).toBe(1);
+    });
+
+    test('传递性对 (A-B, B-C) 生成一个包含 3 成员的类', () => {
+        const clones = [
+            makeMergedClone('a.ts', 1, 10, 0, 99, 'b.ts', 1, 10, 0, 99),
+            makeMergedClone('b.ts', 1, 10, 0, 99, 'c.ts', 1, 10, 0, 99),
+        ];
+        const classes = classifyClones(clones);
+        expect(classes).toHaveLength(1);
+        expect(classes[0].members).toHaveLength(3);
+    });
+
+    test('不相交对生成多个独立类', () => {
+        const clones = [
+            makeMergedClone('a.ts', 1, 10, 0, 99, 'b.ts', 1, 10, 0, 99),
+            makeMergedClone('c.ts', 20, 30, 100, 199, 'd.ts', 20, 30, 100, 199),
+        ];
+        const classes = classifyClones(clones);
+        expect(classes).toHaveLength(2);
+        expect(classes[0].members).toHaveLength(2);
+        expect(classes[1].members).toHaveLength(2);
+    });
+
+    test('成员按 file → startLine → startIndex 排序', () => {
+        const clones = [
+            makeMergedClone('z.ts', 50, 60, 0, 99, 'a.ts', 1, 10, 0, 99),
+        ];
+        const classes = classifyClones(clones);
+        expect(classes[0].members[0].file).toBe('a.ts');
+        expect(classes[0].members[1].file).toBe('z.ts');
+    });
+
+    test('classId 从 1 递增', () => {
+        const clones = [
+            makeMergedClone('a.ts', 1, 10, 0, 99, 'b.ts', 1, 10, 0, 99),
+            makeMergedClone('c.ts', 1, 10, 0, 99, 'd.ts', 1, 10, 0, 99),
+        ];
+        const classes = classifyClones(clones);
+        expect(classes[0].classId).toBe(1);
+        expect(classes[1].classId).toBe(2);
+    });
+});
+
+// ============================================================
+// Phase 2: Jaccard 相似度测试
+// ============================================================
+
+import { CodeCloneBaseCheck } from '../src/Checkers/CodeCloneBaseCheck';
+
+describe('Jaccard 相似度 (computeJaccardSimilarity)', () => {
+    // 创建一个具体子类来测试 protected 方法
+    class TestableCheck extends CodeCloneBaseCheck {
+        readonly metaData = { severity: 2, ruleDocPath: '', description: '' };
+        protected getCloneType() { return 'Test'; }
+        protected computeHash(): { hash: string; normalizedContent: string } {
+            return { hash: '', normalizedContent: '' };
+        }
+        private createMethod(content: string): any {
+            return {
+                method: {} as any,
+                filePath: '',
+                className: 'TestClass',
+                methodName: 'testMethod',
+                startLine: 1,
+                endLine: 1,
+                hash: '',
+                normalizedContent: content,
+                normalizedTokens: content.length > 0 ? content.split('|').filter(Boolean) : [],
+                stmtCount: 1
+            };
+        }
+        // 暴露 protected 方法
+        public testJaccard(c1: string, c2: string): number {
+            return this.computeJaccardSimilarity(this.createMethod(c1), this.createMethod(c2));
+        }
+    }
+
+    const check = new TestableCheck();
+
+    test('相同内容 → 1.0', () => {
+        expect(check.testJaccard('a|b|c', 'a|b|c')).toBe(1.0);
+    });
+
+    test('完全不同 → 0.0', () => {
+        expect(check.testJaccard('a|b|c', 'x|y|z')).toBe(0);
+    });
+
+    test('部分重叠 → 正确比率', () => {
+        // {a:1, b:1, c:1} vs {a:1, b:1, d:1}
+        // min: a=1, b=1, c=0, d=0 → 2
+        // max: a=1, b=1, c=1, d=1 → 4
+        // Jaccard = 2/4 = 0.5
+        expect(check.testJaccard('a|b|c', 'a|b|d')).toBe(0.5);
+    });
+
+    test('空内容 → 0', () => {
+        expect(check.testJaccard('', '')).toBe(0);
+    });
+
+    test('一边为空 → 0', () => {
+        expect(check.testJaccard('a|b', '')).toBe(0);
+    });
+
+    test('多重集合：重复 token 正确计数', () => {
+        // {a:2, b:1} vs {a:1, b:2}
+        // min: a=1, b=1 → 2
+        // max: a=2, b=2 → 4
+        // Jaccard = 2/4 = 0.5
+        expect(check.testJaccard('a|a|b', 'a|b|b')).toBe(0.5);
+    });
+
+    test('高相似度', () => {
+        // {a:5, b:5} vs {a:5, b:4, c:1}
+        // min: a=5, b=4, c=0 → 9
+        // max: a=5, b=5, c=1 → 11
+        // Jaccard = 9/11 ≈ 0.818
+        const result = check.testJaccard('a|a|a|a|a|b|b|b|b|b', 'a|a|a|a|a|b|b|b|b|c');
+        expect(result).toBeCloseTo(9 / 11, 5);
+    });
+});
+
+describe('CodeCloneBaseCheck 采集阶段去重', () => {
+    class DedupCheck extends CodeCloneBaseCheck {
+        readonly metaData = { severity: 2, ruleDocPath: '', description: '' };
+        protected getCloneType() { return 'Dedup'; }
+        protected computeHash(): { hash: string; normalizedContent: string } {
+            return { hash: 'H', normalizedContent: 'A|B' };
+        }
+
+        protected extractMethodInfo(method: any, filePath: string, className: string): any {
+            const startLine = method.getLine?.() ?? 1;
+            return {
+                method,
+                filePath,
+                className,
+                methodName: method.getName?.() ?? 'build',
+                startLine,
+                endLine: startLine + 1,
+                hash: 'same_hash',
+                normalizedContent: 'A|B',
+                normalizedTokens: ['A', 'B'],
+                stmtCount: 10
+            };
+        }
+
+        public getCollectedMethodCount(): number {
+            let count = 0;
+            for (const methods of this.methodsByHash.values()) {
+                count += methods.length;
+            }
+            return count;
+        }
+    }
+
+    test('同一方法被重复采集时，只应保留一份记录', () => {
+        const checker = new DedupCheck() as any;
+        checker.rule = {
+            ruleId: '@extrulesproject/code-clone-type1-check',
+            alert: 1,
+            option: [{ minStmts: 5 }]
+        };
+        checker.beforeCheck();
+
+        const method = {
+            getName: () => 'build',
+            getLine: () => 29
+        };
+        const arkClass = {
+            getName: () => 'BackgroundTest',
+            getMethods: () => [method]
+        };
+        const arkFile = {
+            getFilePath: () => '/tmp/BackgroundTest.ets',
+            getClasses: () => [arkClass]
+        };
+
+        checker.collectMethods(arkFile);
+        checker.collectMethods(arkFile);
+        checker.afterCheck();
+
+        expect(checker.getCollectedMethodCount()).toBe(1);
+        expect(checker.issues.length).toBe(0);
+    });
+});
+
+// ============================================================
+// SimilarityScorer 测试
+// ============================================================
+
+describe('LCS 长度计算', () => {
+    test('相同序列 → 长度等于序列长度', () => {
+        expect(lcsLength(['a', 'b', 'c'], ['a', 'b', 'c'])).toBe(3);
+    });
+
+    test('完全不同 → 0', () => {
+        expect(lcsLength(['a', 'b', 'c'], ['x', 'y', 'z'])).toBe(0);
+    });
+
+    test('部分重叠 → 正确 LCS', () => {
+        // LCS of [a,b,c,d] and [a,c,d,e] is [a,c,d] = 3
+        expect(lcsLength(['a', 'b', 'c', 'd'], ['a', 'c', 'd', 'e'])).toBe(3);
+    });
+
+    test('空序列 → 0', () => {
+        expect(lcsLength([], ['a', 'b'])).toBe(0);
+        expect(lcsLength(['a'], [])).toBe(0);
+        expect(lcsLength([], [])).toBe(0);
+    });
+
+    test('单元素相同 → 1', () => {
+        expect(lcsLength(['a'], ['a'])).toBe(1);
+    });
+
+    test('单元素不同 → 0', () => {
+        expect(lcsLength(['a'], ['b'])).toBe(0);
+    });
+
+    test('经典 LCS 测试', () => {
+        // LCS of ABCBDAB and BDCAB is BCAB = 4
+        expect(lcsLength(
+            ['A', 'B', 'C', 'B', 'D', 'A', 'B'],
+            ['B', 'D', 'C', 'A', 'B']
+        )).toBe(4);
+    });
+});
+
+describe('LCS 相似度', () => {
+    test('相同序列 → 1.0', () => {
+        expect(lcsSimilarity(['a', 'b', 'c'], ['a', 'b', 'c'])).toBe(1.0);
+    });
+
+    test('完全不同 → 0.0', () => {
+        expect(lcsSimilarity(['a', 'b', 'c'], ['x', 'y', 'z'])).toBe(0.0);
+    });
+
+    test('空序列 → 特殊值', () => {
+        expect(lcsSimilarity([], [])).toBe(1.0);
+        expect(lcsSimilarity(['a'], [])).toBe(0.0);
+    });
+
+    test('部分重叠 → 正确比率', () => {
+        // LCS([a,b,c,d], [a,c,d,e]) = 3
+        // similarity = 2 * 3 / (4 + 4) = 0.75
+        expect(lcsSimilarity(['a', 'b', 'c', 'd'], ['a', 'c', 'd', 'e'])).toBe(0.75);
+    });
+
+    test('对称性：lcsSimilarity(a,b) === lcsSimilarity(b,a)', () => {
+        const seq1 = ['a', 'b', 'c', 'x'];
+        const seq2 = ['a', 'c', 'y', 'z'];
+        expect(lcsSimilarity(seq1, seq2)).toBe(lcsSimilarity(seq2, seq1));
+    });
+});
+
+describe('Q-gram 轮廓', () => {
+    test('构建 2-gram 轮廓', () => {
+        const profile = buildQGramProfile(['a', 'b', 'c', 'a', 'b'], 2);
+        // 2-grams: a\0b, b\0c, c\0a, a\0b
+        expect(profile.get('a\0b')).toBe(2);
+        expect(profile.get('b\0c')).toBe(1);
+        expect(profile.get('c\0a')).toBe(1);
+    });
+
+    test('序列短于 q → 空轮廓', () => {
+        const profile = buildQGramProfile(['a'], 3);
+        expect(profile.size).toBe(0);
+    });
+
+    test('q = 1 → 每个 token 一个 gram', () => {
+        const profile = buildQGramProfile(['a', 'b', 'a'], 1);
+        expect(profile.get('a')).toBe(2);
+        expect(profile.get('b')).toBe(1);
+    });
+});
+
+describe('Q-gram Jaccard', () => {
+    test('相同轮廓 → 1.0', () => {
+        const p = buildQGramProfile(['a', 'b', 'c'], 2);
+        expect(qgramJaccard(p, p)).toBe(1.0);
+    });
+
+    test('不同轮廓 → 0.0', () => {
+        const p1 = buildQGramProfile(['a', 'b'], 2);
+        const p2 = buildQGramProfile(['x', 'y'], 2);
+        expect(qgramJaccard(p1, p2)).toBe(0.0);
+    });
+
+    test('空轮廓 → 0', () => {
+        expect(qgramJaccard(new Map(), new Map())).toBe(0);
+    });
+
+    test('部分重叠 → 正确比率', () => {
+        const p1 = buildQGramProfile(['a', 'b', 'c'], 2); // a\0b:1, b\0c:1
+        const p2 = buildQGramProfile(['a', 'b', 'd'], 2); // a\0b:1, b\0d:1
+        // min: a\0b=1; max: a\0b=1, b\0c=1, b\0d=1 → 1/3
+        expect(qgramJaccard(p1, p2)).toBeCloseTo(1/3, 5);
+    });
+});
+
+// ============================================================
+// NearMissDetector 测试
+// ============================================================
+
+describe('NearMissDetector', () => {
+    function createTokenSeq(values: string[], file: string, startLine: number = 1): Token[] {
+        return values.map((v, i) => createToken(v, TokenType.IDENTIFIER, startLine + Math.floor(i / 5), i));
+    }
+
+    test('两个相同文件 → 不报告（由精确匹配器处理）', () => {
+        const detector = new NearMissDetector(5, 0.7);
+        const tokens = createTokenSeq(['a', 'b', 'c', 'd', 'e'], 'file1.ts');
+        detector.addFile(tokens, 'file1.ts');
+        // 复制相同序列到另一个文件
+        const tokens2 = createTokenSeq(['a', 'b', 'c', 'd', 'e'], 'file2.ts');
+        detector.addFile(tokens2, 'file2.ts');
+        const results = detector.detect();
+        // 完全相同的不报告（similarity = 1.0）
+        expect(results.every(r => r.similarity < 1.0)).toBe(true);
+    });
+
+    test('两个近似序列 → 报告 Type-3', () => {
+        const detector = new NearMissDetector(5, 0.6, 2);
+        // 80% 相似：5个中4个相同，qgramSize=2 使预筛选可区分
+        const tokens1 = createTokenSeq(['a', 'b', 'c', 'd', 'e'], 'file1.ts');
+        const tokens2 = createTokenSeq(['a', 'b', 'c', 'd', 'x'], 'file2.ts');
+        detector.addFile(tokens1, 'file1.ts');
+        detector.addFile(tokens2, 'file2.ts');
+        const results = detector.detect();
+        expect(results.length).toBeGreaterThanOrEqual(1);
+        expect(results[0].similarity).toBeGreaterThanOrEqual(0.6);
+        expect(results[0].similarity).toBeLessThan(1.0);
+    });
+
+    test('完全不同序列 → 不报告', () => {
+        const detector = new NearMissDetector(5, 0.7);
+        const tokens1 = createTokenSeq(['a', 'b', 'c', 'd', 'e'], 'file1.ts');
+        const tokens2 = createTokenSeq(['v', 'w', 'x', 'y', 'z'], 'file2.ts');
+        detector.addFile(tokens1, 'file1.ts');
+        detector.addFile(tokens2, 'file2.ts');
+        const results = detector.detect();
+        expect(results.length).toBe(0);
+    });
+
+    test('同文件重叠块 → 不报告', () => {
+        const detector = new NearMissDetector(5, 0.5);
+        // 10 个 token，会产生多个重叠块，但同文件重叠应被跳过
+        const tokens = createTokenSeq(['a', 'b', 'c', 'd', 'e', 'a', 'b', 'c', 'd', 'f'], 'file1.ts');
+        detector.addFile(tokens, 'file1.ts');
+        const results = detector.detect();
+        // 如果有结果，它们不应是同文件重叠的
+        for (const r of results) {
+            if (r.location1.file === r.location2.file) {
+                expect(Math.abs(r.location1.startIndex - r.location2.startIndex)).toBeGreaterThanOrEqual(5);
+            }
+        }
+    });
+
+    test('clear 应重置状态', () => {
+        const detector = new NearMissDetector(5, 0.6);
+        const tokens = createTokenSeq(['a', 'b', 'c', 'd', 'e'], 'file1.ts');
+        detector.addFile(tokens, 'file1.ts');
+        detector.clear();
+        const results = detector.detect();
+        expect(results.length).toBe(0);
+    });
+
+    test('NearMissClone 包含 similarity 字段', () => {
+        const detector = new NearMissDetector(5, 0.5, 2);
+        const tokens1 = createTokenSeq(['a', 'b', 'c', 'd', 'e'], 'file1.ts');
+        const tokens2 = createTokenSeq(['a', 'b', 'c', 'x', 'y'], 'file2.ts');
+        detector.addFile(tokens1, 'file1.ts');
+        detector.addFile(tokens2, 'file2.ts');
+        const results = detector.detect();
+        for (const r of results) {
+            expect(typeof r.similarity).toBe('number');
+            expect(r.similarity).toBeGreaterThanOrEqual(0);
+            expect(r.similarity).toBeLessThanOrEqual(1);
+        }
+    });
+});
+
+// ============================================================
+// ClonePipelineUtils 测试
+// ============================================================
+
+describe('linesOverlap', () => {
+    test('不重叠 → false', () => {
+        expect(linesOverlap(1, 5, 6, 10)).toBe(false);
+        expect(linesOverlap(10, 20, 1, 5)).toBe(false);
+    });
+
+    test('完全重叠 → true', () => {
+        expect(linesOverlap(1, 10, 1, 10)).toBe(true);
+    });
+
+    test('部分重叠 → true', () => {
+        expect(linesOverlap(1, 5, 3, 8)).toBe(true);
+    });
+
+    test('边界重叠 → true', () => {
+        expect(linesOverlap(1, 5, 5, 10)).toBe(true);
+    });
+
+    test('包含关系 → true', () => {
+        expect(linesOverlap(1, 10, 3, 5)).toBe(true);
+    });
+});
+
+describe('filterSelfOverlappingClones', () => {
+    function makeMerged(f1: string, s1: number, e1: number, f2: string, s2: number, e2: number): MergedClone {
+        return {
+            location1: { file: f1, startLine: s1, endLine: e1, startIndex: 0, endIndex: 0 },
+            location2: { file: f2, startLine: s2, endLine: e2, startIndex: 0, endIndex: 0 },
+            tokenCount: 100
+        };
+    }
+
+    test('不同文件 → 保留', () => {
+        const clones = [makeMerged('a.ts', 1, 10, 'b.ts', 1, 10)];
+        expect(filterSelfOverlappingClones(clones)).toHaveLength(1);
+    });
+
+    test('同文件非重叠 → 保留', () => {
+        const clones = [makeMerged('a.ts', 1, 5, 'a.ts', 10, 15)];
+        expect(filterSelfOverlappingClones(clones)).toHaveLength(1);
+    });
+
+    test('同文件重叠 → 过滤', () => {
+        const clones = [makeMerged('a.ts', 1, 10, 'a.ts', 5, 15)];
+        expect(filterSelfOverlappingClones(clones)).toHaveLength(0);
+    });
+
+    test('混合情况', () => {
+        const clones = [
+            makeMerged('a.ts', 1, 10, 'b.ts', 1, 10),  // 不同文件，保留
+            makeMerged('a.ts', 1, 10, 'a.ts', 5, 15),  // 同文件重叠，过滤
+            makeMerged('a.ts', 1, 5, 'a.ts', 20, 25),   // 同文件非重叠，保留
+        ];
+        expect(filterSelfOverlappingClones(clones)).toHaveLength(2);
+    });
+});
+
+describe('deduplicateMergedClones', () => {
+    function makeMerged(f1: string, s1: number, e1: number, f2: string, s2: number, e2: number, tc: number = 100): MergedClone {
+        return {
+            location1: { file: f1, startLine: s1, endLine: e1, startIndex: 0, endIndex: 0 },
+            location2: { file: f2, startLine: s2, endLine: e2, startIndex: 0, endIndex: 0 },
+            tokenCount: tc
+        };
+    }
+
+    test('无重复 → 全部保留', () => {
+        const clones = [
+            makeMerged('a.ts', 1, 5, 'b.ts', 1, 5),
+            makeMerged('a.ts', 10, 15, 'b.ts', 10, 15),
+        ];
+        expect(deduplicateMergedClones(clones)).toHaveLength(2);
+    });
+
+    test('重叠行范围 → 保留最大 tokenCount', () => {
+        const clones = [
+            makeMerged('a.ts', 1, 10, 'b.ts', 1, 10, 100),
+            makeMerged('a.ts', 2, 8, 'b.ts', 2, 8, 50),
+        ];
+        const result = deduplicateMergedClones(clones);
+        expect(result).toHaveLength(1);
+        expect(result[0].tokenCount).toBe(100);
+    });
+
+    test('空列表 → 空结果', () => {
+        expect(deduplicateMergedClones([])).toHaveLength(0);
+    });
+
+    test('单个元素 → 直接返回', () => {
+        const clones = [makeMerged('a.ts', 1, 5, 'b.ts', 1, 5)];
+        expect(deduplicateMergedClones(clones)).toHaveLength(1);
+    });
+
+    test('不同文件对 → 不去重', () => {
+        const clones = [
+            makeMerged('a.ts', 1, 10, 'b.ts', 1, 10, 100),
+            makeMerged('a.ts', 1, 10, 'c.ts', 1, 10, 50),
+        ];
+        expect(deduplicateMergedClones(clones)).toHaveLength(2);
     });
 });

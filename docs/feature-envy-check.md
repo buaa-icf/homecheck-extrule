@@ -14,17 +14,27 @@
 
 ## 配置方式
 
-当前仅支持在 `ruleConfig.json` 中调整严重级别（`level`）。阈值（最少调用数、比例等）在规则内置，不支持自定义：
+支持在 `ruleConfig.json` 中同时调整严重级别与阈值参数：
 
 ```json
 {
   "rules": {
     "@extrulesproject/feature-envy-check": {
-      "level": 2
+      "level": 2,
+      "options": {
+        "minTotalCalls": 3,
+        "minForeignCalls": 3,
+        "ratioThreshold": 0.6
+      }
     }
   }
 }
 ```
+
+**配置参数说明**：
+- `minTotalCalls`：最少统计调用数（默认 3）
+- `minForeignCalls`：最少外部类调用数（默认 3）
+- `ratioThreshold`：外部类调用占比阈值（0~1，默认 0.6）
 
 ## 反例代码
 

@@ -15,8 +15,9 @@
 
 import { Stmt } from "arkanalyzer";
 import { BaseMetaData } from "homecheck";
-import { CodeCloneBaseCheck, MethodInfo } from "./CodeCloneBaseCheck";
-import { normalizeIdentifiers, normalizeLiterals } from "./utils";
+import { CodeCloneBaseCheck } from "./CodeCloneBaseCheck";
+import { ClonePair, MethodInfo } from "./method-clone";
+import { normalizeIdentifiers, normalizeLiterals, stripDecorators, stripTypeAnnotations } from "./shared";
 
 const gMetaData: BaseMetaData = {
     severity: 2,
@@ -48,16 +49,23 @@ export class CodeCloneType2Check extends CodeCloneBaseCheck {
      * Type-2 需要将标识符替换为占位符
      * 如果配置了 ignoreLiterals: true，还会将字面量替换为占位符
      */
-    protected computeHash(stmts: Stmt[]): string {
+    protected computeHash(stmts: Stmt[]): { hash: string; normalizedContent: string } {
         // 用于追踪已见过的标识符
         const identifierMap = new Map<string, string>();
         // 读取配置：是否忽略字面量差异
-        const ignoreLiterals = this.getIgnoreLiterals();
+        const ignoreLiterals = this.option("ignoreLiterals");
 
         const stmtStrings = stmts.map(stmt => {
             let text = stmt.toString();
             // 先做基础规范化（去除路径、类名）
             text = this.normalizeBasic(text);
+            // 可选：去除类型注解和装饰器
+            if (this.option("ignoreTypes")) {
+                text = stripTypeAnnotations(text);
+            }
+            if (this.option("ignoreDecorators")) {
+                text = stripDecorators(text);
+            }
             // 再做标识符规范化
             text = normalizeIdentifiers(text, identifierMap);
             // 如果配置了 ignoreLiterals，进行字面量规范化
@@ -68,7 +76,7 @@ export class CodeCloneType2Check extends CodeCloneBaseCheck {
         });
         
         const combined = stmtStrings.join('|');
-        return this.simpleHash(combined);
+        return { hash: this.simpleHash(combined), normalizedContent: combined };
     }
 
     /**
@@ -82,8 +90,15 @@ export class CodeCloneType2Check extends CodeCloneBaseCheck {
      * - 数字（整数、小数、十六进制、科学计数法）→ NUM
      * - 字符串（双引号、单引号）→ STR
      */
-    protected getDescription(method: MethodInfo, cloneWith: MethodInfo): string {
-        const cloneFileName = cloneWith.filePath.split('/').pop() ?? cloneWith.filePath;
+    protected getDescription(method: MethodInfo, cloneWith: MethodInfo, pair?: ClonePair): string {
+        const cloneFileName = cloneWith.filePath;
+        // 近似克隆时显示相似度百分比
+        if (pair?.similarity !== undefined && pair.similarity < 1.0) {
+            const pct = Math.round(pair.similarity * 100);
+            return `Code Clone Type-2: Method '${method.methodName}' (lines ${method.startLine}-${method.endLine}) ` +
+                `is similar to '${cloneWith.className}.${cloneWith.methodName}' in ${cloneFileName}:${cloneWith.startLine}-${cloneWith.endLine}. ` +
+                `(${method.stmtCount} statements, ${pct}% similar)`;
+        }
         return `Code Clone Type-2: Method '${method.methodName}' (lines ${method.startLine}-${method.endLine}) ` +
             `is structurally identical to '${cloneWith.className}.${cloneWith.methodName}' in ${cloneFileName}:${cloneWith.startLine}-${cloneWith.endLine}. ` +
             `(${method.stmtCount} statements, renamed identifiers)`;
