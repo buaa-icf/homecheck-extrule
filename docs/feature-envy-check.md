@@ -6,9 +6,9 @@
 
 ## 默认阈值
 
-- 最少统计的调用数：**3**（低于此值不报告）
-- 最少外部调用数：**3**（外部调用少于 3 不报告）
-- 外部调用比例：**60%** 及以上，且外部调用次数大于自身类的调用次数
+- 最少统计的调用数：**5**（低于此值不报告）
+- 最少外部调用数：**4**（外部调用少于 4 不报告）
+- 外部调用比例：**70%** 及以上，且外部调用次数大于自身类的调用次数
 
 > 调用计数基于方法体内的语句，识别每个调用的目标类，再按类进行统计。
 
@@ -22,9 +22,9 @@
     "@extrulesproject/feature-envy-check": {
       "level": 2,
       "options": {
-        "minTotalCalls": 3,
-        "minForeignCalls": 3,
-        "ratioThreshold": 0.6
+        "minTotalCalls": 5,
+        "minForeignCalls": 4,
+        "ratioThreshold": 0.7
       }
     }
   }
@@ -32,9 +32,9 @@
 ```
 
 **配置参数说明**：
-- `minTotalCalls`：最少统计调用数（默认 3）
-- `minForeignCalls`：最少外部类调用数（默认 3）
-- `ratioThreshold`：外部类调用占比阈值（0~1，默认 0.6）
+- `minTotalCalls`：最少统计调用数（默认 5）
+- `minForeignCalls`：最少外部类调用数（默认 4）
+- `ratioThreshold`：外部类调用占比阈值（0~1，默认 0.7）
 
 ## 反例代码
 

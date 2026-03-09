@@ -6,7 +6,7 @@
 
 ## 默认阈值
 
-- 最小 case 数：**5**（`switch` 中 `case` 数达到或超过此值即报告）
+- 最小 case 数：**6**（`switch` 中 `case` 数达到或超过此值即报告）
 
 > 依据每个语句的原始文本统计 `case` 关键字次数。
 
@@ -22,7 +22,7 @@
     "@extrulesproject/switch-statement-check": {
       "level": 2,
       "options": {
-        "minCases": 6
+        "minCases": 7
       }
     }
   }
@@ -30,7 +30,7 @@
 ```
 
 **配置参数说明**：
-- `minCases`：触发报告的最小 `case` 数（默认 5）
+- `minCases`：触发报告的最小 `case` 数（默认 6）
 
 ## 反例代码
 

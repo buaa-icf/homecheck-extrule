@@ -19,9 +19,9 @@ const FEATURE_ENVY_OPTIONS_SCHEMA: RuleOptionSchema<FeatureEnvyRuleOptions> = {
 };
 
 const DEFAULT_OPTIONS: FeatureEnvyRuleOptions = {
-    minTotalCalls: 3,
-    minForeignCalls: 3,
-    ratioThreshold: 0.6
+    minTotalCalls: 5,
+    minForeignCalls: 4,
+    ratioThreshold: 0.7
 };
 
 /**

@@ -18,7 +18,7 @@
     "@extrulesproject/code-clone-type2-check": {
       "level": 2,
       "options": {
-        "minStmts": 5,
+        "minStmts": 6,
         "ignoreLiterals": true,
         "ignoreLogs": true
       }

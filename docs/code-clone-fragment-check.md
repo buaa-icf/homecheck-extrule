@@ -12,7 +12,7 @@
 - `ignoreLogs`: `true`
 - `ignoreTypes`: `false`
 - `ignoreDecorators`: `false`
-- `minDistinctTokenTypes`: `0`
+- `minDistinctTokenTypes`: `3`
 - `enableCloneClasses`: `false`
 - `similarityThreshold`: `1.0`
 

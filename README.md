@@ -30,7 +30,7 @@ ArkTS 代码检查自定义规则项目，基于 [homecheck](https://gitcode.com
 
 | 参数 | 类型 | 默认值 | 说明 |
 | ------ | ------ | -------- | ------ |
-| `minStmts` | number | `5` | 方法最少语句数阈值，低于此值的方法不参与检测 |
+| `minStmts` | number | `6` | 方法最少语句数阈值，低于此值的方法不参与检测 |
 | `ignoreLogs` | boolean | `true` | 是否在哈希计算前过滤日志语句（如 `console.log`、`hilog`） |
 | `ignoreTypes` | boolean | `false` | 是否忽略类型注解，忽略后类型差异不影响哈希 |
 | `ignoreDecorators` | boolean | `false` | 是否忽略装饰器语句 |
@@ -42,7 +42,7 @@ ArkTS 代码检查自定义规则项目，基于 [homecheck](https://gitcode.com
 
 ```json
 "@extrulesproject/code-clone-type1-check": ["error", {
-  "minStmts": 5,
+  "minStmts": 6,
   "ignoreLogs": true
 }]
 ```
@@ -61,7 +61,7 @@ ArkTS 代码检查自定义规则项目，基于 [homecheck](https://gitcode.com
 
 ```json
 "@extrulesproject/code-clone-type2-check": ["error", {
-  "minStmts": 5,
+  "minStmts": 6,
   "ignoreLiterals": true,
   "ignoreLogs": true
 }]
@@ -79,7 +79,7 @@ ArkTS 代码检查自定义规则项目，基于 [homecheck](https://gitcode.com
 | `ignoreLogs` | boolean | `true` | 是否过滤日志语句的 Token |
 | `ignoreTypes` | boolean | `false` | 是否忽略类型注解的 Token |
 | `ignoreDecorators` | boolean | `false` | 是否忽略装饰器的 Token |
-| `minDistinctTokenTypes` | number | `0` | 最小不同 Token 类型数，低于此值的片段不报告（过滤重复度过高的简单代码） |
+| `minDistinctTokenTypes` | number | `3` | 最小不同 Token 类型数，低于此值的片段不报告（过滤重复度过高的简单代码） |
 | `enableCloneClasses` | boolean | `false` | 是否启用克隆类分组报告 |
 | `similarityThreshold` | number | `1.0` | LCS 相似度阈值（范围 0~1），设为 `1.0` 仅报告精确匹配（Type-1/Type-2），低于 `1.0` 启用 Type-3 近似克隆检测 |
 

@@ -2,7 +2,7 @@
 
 ## 目录结构
 
-```
+```text
 CodeClone/
 ├── positive/                    # 正向测试：应该被检测到的克隆
 │   ├── type1/                   # Type-1: 完全相同的代码
@@ -34,7 +34,7 @@ CodeClone/
 
 每个测试文件头部包含标注信息：
 
-```
+```typescript
 // @file: 文件名
 // @category: 分类路径 (如 positive/type1)
 // @expect: 期望结果 (clone-with XXX 或 no-clone)
@@ -91,11 +91,13 @@ CodeClone/
 在标识符规范化过程中，**单字母变量（如 `i`、`j`、`x`、`a`、`b`）不会被替换**。
 
 **设计原因**：
+
 - 单字母变量通常是循环变量或临时变量
 - 在不同代码中经常重复出现（如 `for (let i = 0; ...)`)
 - 如果把它们也规范化，可能导致**过度匹配**
 
 **代码实现**（在 `normalizeIdentifiers()` 中）：
+
 ```typescript
 if (match.length <= 1) {
     return match;  // 保持原样，不替换
@@ -115,6 +117,7 @@ increment(step: number, max: number)  // step, max 会被规范化为 ID_1, ID_2
 ```
 
 规范化后：
+
 - Calculator: `add(a, b)` → 保持 `a`, `b`
 - Counter: `increment(step, max)` → 变成 `ID_1`, `ID_2`
 
@@ -130,10 +133,10 @@ increment(step: number, max: number)  // step, max 会被规范化为 ID_1, ID_2
 
 `ignoreLogs` 是克隆检测的一个**配置项**，用于控制是否在哈希计算时忽略日志语句。
 
-| 配置值 | 行为 | 默认 |
-|--------|------|------|
-| `true` | 过滤日志语句，不参与克隆检测 | ✅ 默认 |
-| `false` | 日志语句参与克隆检测 | - |
+|配置值|行为|默认|
+|---|---|---|
+|`true`|过滤日志语句，不参与克隆检测|✅ 默认|
+|`false`|日志语句参与克隆检测|-|
 
 ### 为什么默认开启？
 
@@ -172,6 +175,7 @@ processData(data: number[]): number {
 只有**纯日志语句**会被过滤。纯日志语句定义为：整行代码只有日志调用，没有其他业务逻辑。
 
 **会被过滤的语句**：
+
 ```typescript
 console.log("hello")           // ✅ 纯日志
 hilog.info("processing...")    // ✅ 纯日志
@@ -179,6 +183,7 @@ Logger.debug("value: " + x)    // ✅ 纯日志
 ```
 
 **不会被过滤的语句**：
+
 ```typescript
 let result = validate() && console.log("ok")  // ❌ 嵌在表达式中
 if (debug) console.log("debug mode")          // ❌ 条件语句
@@ -186,11 +191,11 @@ if (debug) console.log("debug mode")          // ❌ 条件语句
 
 ### 支持的日志模式
 
-| 模式 | 示例 | 说明 |
-|------|------|------|
-| `console.*` | `console.log()`, `console.info()`, `console.warn()`, `console.error()`, `console.debug()` | JavaScript/TypeScript 标准 |
-| `hilog.*` | `hilog.info()`, `hilog.debug()`, `hilog.warn()`, `hilog.error()` | HarmonyOS 系统日志 |
-| `Logger.*` | `Logger.info()`, `Logger.debug()`, `Logger.warn()`, `Logger.error()` | 项目自定义封装 |
+|模式|示例|说明|
+|---|---|---|
+|`console.*`|`console.log()`, `console.info()`, `console.warn()`, `console.error()`, `console.debug()`|JavaScript/TypeScript 标准|
+|`hilog.*`|`hilog.info()`, `hilog.debug()`, `hilog.warn()`, `hilog.error()`|HarmonyOS 系统日志|
+|`Logger.*`|`Logger.info()`, `Logger.debug()`, `Logger.warn()`, `Logger.error()`|项目自定义封装|
 
 ### 如何关闭？
 
@@ -204,7 +209,7 @@ if (debug) console.log("debug mode")          // ❌ 条件语句
       "packagePath": "./homecheck-extrule",
       "extRules": {
         "@extrulesproject/code-clone-type1-check": ["error", {
-          "minStmts": 5,
+          "minStmts": 6,
           "ignoreLogs": false
         }]
       }
@@ -221,16 +226,17 @@ if (debug) console.log("debug mode")          // ❌ 条件语句
 
 `ignoreLiterals` 是 Type-2 克隆检测的一个**可选配置项**，用于控制是否忽略字面量（数字、字符串）的差异。
 
-| 配置值 | 行为 | 默认 |
-|--------|------|------|
-| `false` | 只检测标识符重命名的克隆 | ✅ 默认 |
-| `true` | 同时检测字面量替换的克隆 | - |
+|配置值|行为|默认|
+|---|---|---|
+|`false`|只检测标识符重命名的克隆|✅ 默认|
+|`true`|同时检测字面量替换的克隆|-|
 
 ### 为什么默认关闭？
 
 开启 `ignoreLiterals` 后，会增加**误报风险**。以 `similar_but_different/` 目录下的测试用例为例：
 
 **Calculator.ets - add() 方法：**
+
 ```typescript
 add(a: number, b: number): number {
     let result = a + b
@@ -240,6 +246,7 @@ add(a: number, b: number): number {
 ```
 
 **Counter.ets - increment() 方法：**
+
 ```typescript
 increment(step: number, max: number): number {
     let result = step + max
@@ -249,11 +256,12 @@ increment(step: number, max: number): number {
 ```
 
 这两个方法：
+
 - **语义完全不同**：一个是数学加法计算，一个是计数器增加
 - **结构相同**：都是两个参数相加，判断是否超过阈值
 
 | 配置 | 检测结果 | 是否正确 |
-|------|----------|----------|
+| ----------------------- | ------ | --------- |
 | `ignoreLiterals: false` | 不检测为克隆 | ✅ 正确 |
 | `ignoreLiterals: true` | 检测为克隆 | ⚠️ **误报** |
 
@@ -277,7 +285,7 @@ increment(step: number, max: number): number {
       "packagePath": "./homecheck-extrule",
       "extRules": {
         "@extrulesproject/code-clone-type2-check": ["error", {
-          "minStmts": 5,
+          "minStmts": 6,
           "ignoreLiterals": true
         }]
       }
