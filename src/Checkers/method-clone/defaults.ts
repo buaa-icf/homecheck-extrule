@@ -2,7 +2,7 @@ import { RuleOptionSchema } from "../config/parseRuleOptions";
 import { MethodCloneRuleOptions } from "../config/types";
 
 export const DEFAULT_METHOD_CLONE_OPTIONS: MethodCloneRuleOptions = {
-    minStmts: 5,
+    minStmts: 6,
     ignoreLiterals: false,
     ignoreLogs: true,
     ignoreTypes: false,

@@ -9,7 +9,7 @@ export const DEFAULT_FRAGMENT_CLONE_OPTIONS: FragmentCloneRuleOptions = {
     ignoreTypes: false,
     ignoreDecorators: false,
     ignoreLogs: true,
-    minDistinctTokenTypes: 0,
+    minDistinctTokenTypes: 3,
     enableCloneClasses: false,
     similarityThreshold: 1.0
 };

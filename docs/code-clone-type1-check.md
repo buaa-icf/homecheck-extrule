@@ -6,7 +6,7 @@
 
 ## 默认参数
 
-- `minStmts`: `5`
+- `minStmts`: `6`
 - `ignoreLogs`: `true`
 - `ignoreTypes`: `false`
 - `ignoreDecorators`: `false`
@@ -22,7 +22,7 @@
     "@extrulesproject/code-clone-type1-check": {
       "level": 2,
       "options": {
-        "minStmts": 5,
+        "minStmts": 6,
         "ignoreLogs": true
       }
     }

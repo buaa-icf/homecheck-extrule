@@ -16,7 +16,7 @@ const SWITCH_OPTIONS_SCHEMA: RuleOptionSchema<SwitchStatementRuleOptions> = {
 };
 
 const DEFAULT_OPTIONS: SwitchStatementRuleOptions = {
-    minCases: 5
+    minCases: 6
 };
 
 /**
