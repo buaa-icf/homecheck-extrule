@@ -21,6 +21,10 @@ class BillingService {
     if (limit < amount) {
       return false;
     }
+    const confirmedLimit = this.gateway.fetchLimit(userId);
+    if (confirmedLimit < amount) {
+      return false;
+    }
     const charged = this.gateway.charge(userId, amount);
     if (!charged) {
       return false;

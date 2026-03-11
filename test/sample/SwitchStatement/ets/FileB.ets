@@ -57,6 +57,59 @@ class StatusRendererLegacy {
   }
 }
 
+class StatusChainRendererLegacy {
+  render(status: string): string {
+    if (status === "init") {
+      return "Init";
+    } else if (status === "loading") {
+      return "Loading";
+    } else if (status === "success") {
+      return "Success";
+    } else if (status === "empty") {
+      return "Empty";
+    } else if (status === "error") {
+      return "Error";
+    } else if (status === "cancelled") {
+      return "Cancelled";
+    } else {
+      return "Unknown";
+    }
+  }
+
+  renderShortChain(kind: string): string {
+    if (kind === "x") {
+      return "X";
+    } else if (kind === "y") {
+      return "Y";
+    } else if (kind === "z") {
+      return "Z";
+    } else {
+      return "Other";
+    }
+  }
+
+  renderNestedElseIf(kind: string, fallback: boolean): string {
+    if (kind === "a") {
+      return "A";
+    } else {
+      if (fallback) {
+        return "Fallback";
+      } else if (kind === "b") {
+        return "B";
+      } else if (kind === "c") {
+        return "C";
+      } else if (kind === "d") {
+        return "D";
+      } else if (kind === "e") {
+        return "E";
+      } else if (kind === "f") {
+        return "F";
+      }
+    }
+    return "Other";
+  }
+}
+
 // Small switch variant stays below threshold and should not be flagged.
 class SmallSwitchRendererSafe {
   render(kind: string): string {
