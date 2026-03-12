@@ -90,4 +90,20 @@ describe("SwitchStatementCheck integration", () => {
         expect(descriptions.some(description => description.includes("Switch statement with 7 cases"))).toBe(true);
         expect(descriptions.some(description => description.includes("if-else chain"))).toBe(false);
     });
+
+    test("嵌套 if-else 链不应被误报为 switch 语句", () => {
+        const checker = createChecker();
+
+        for (const method of collectUserMethods(scene)) {
+            checker.check(method);
+        }
+
+        const hasNestedElseIfIssue = checker.issues.some(issue => {
+            const description = issue.defect.description ?? "";
+            const mergeKey = issue.defect.mergeKey ?? "";
+            return description.includes("if-else chain") && mergeKey.includes("FileC.ets");
+        });
+
+        expect(hasNestedElseIfIssue).toBe(false);
+    });
 });

@@ -18,6 +18,8 @@ import { BaseMetaData, MatcherCallback, MatcherTypes, MethodMatcher } from "home
 import { RuleOptionSchema } from "./config/parseRuleOptions";
 import { SwitchStatementRuleOptions } from "./config/types";
 import { BaseRuleChecker } from "./BaseRuleChecker";
+import { Tokenizer } from "./FragmentDetection/Tokenizer";
+import { TokenType } from "./FragmentDetection/Token";
 
 // Detect "Switch Statement" smell: large switch blocks or long if/else-if chains
 // that may signal missing polymorphism.
@@ -332,135 +334,45 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
     }
 
     private scanConditionalTokens(code: string): ConditionalToken[] {
-        const tokens: ConditionalToken[] = [];
+        const rawTokens = new Tokenizer({ skipComments: true }).tokenize(code);
+        const conditionalTokens: ConditionalToken[] = [];
         let depth = 0;
-        let line = 1;
-        let column = 0;
-        let inSingleQuote = false;
-        let inDoubleQuote = false;
-        let inTemplateLiteral = false;
-        let inBlockComment = false;
 
-        for (let i = 0; i < code.length; i++) {
-            const ch = code[i];
-            const next = code[i + 1] ?? "";
-            const prev = i > 0 ? code[i - 1] : "";
+        for (let i = 0; i < rawTokens.length; i++) {
+            const tok = rawTokens[i];
 
-            if (ch === "\n") {
-                line++;
-                column = 0;
-                continue;
-            }
-
-            if (inBlockComment) {
-                if (ch === "*" && next === "/") {
-                    inBlockComment = false;
-                    i++;
-                    column += 2;
-                    continue;
-                }
-                column++;
-                continue;
-            }
-
-            if (!inSingleQuote && !inDoubleQuote && !inTemplateLiteral) {
-                if (ch === "/" && next === "/") {
-                    while (i < code.length && code[i] !== "\n") {
-                        i++;
-                    }
-                    i--;
-                    continue;
-                }
-                if (ch === "/" && next === "*") {
-                    inBlockComment = true;
-                    i++;
-                    column += 2;
-                    continue;
-                }
-            }
-
-            if (!inDoubleQuote && !inTemplateLiteral && ch === "'" && prev !== "\\") {
-                inSingleQuote = !inSingleQuote;
-                column++;
-                continue;
-            }
-            if (!inSingleQuote && !inTemplateLiteral && ch === '"' && prev !== "\\") {
-                inDoubleQuote = !inDoubleQuote;
-                column++;
-                continue;
-            }
-            if (!inSingleQuote && !inDoubleQuote && ch === "`" && prev !== "\\") {
-                inTemplateLiteral = !inTemplateLiteral;
-                column++;
-                continue;
-            }
-
-            if (inSingleQuote || inDoubleQuote || inTemplateLiteral) {
-                column++;
-                continue;
-            }
-
-            if (ch === "}") {
-                depth = Math.max(0, depth - 1);
-                column++;
-                continue;
-            }
-
-            const token = this.matchConditionalToken(code, i);
-            if (token) {
-                tokens.push({
-                    kind: token.kind,
-                    depth,
-                    line,
-                    column,
-                });
-                i += token.length - 1;
-                column += token.length;
-                continue;
-            }
-
-            if (ch === "{") {
+            if (tok.type === TokenType.PUNCTUATION && tok.value === "{") {
                 depth++;
-                column++;
                 continue;
             }
 
-            column++;
-        }
-
-        return tokens;
-    }
-
-    private matchConditionalToken(code: string, start: number): { kind: ConditionalTokenKind; length: number } | null {
-        if (this.matchKeywordAt(code, start, "else")) {
-            let idx = start + 4;
-            while (idx < code.length && /\s/.test(code[idx])) {
-                idx++;
+            if (tok.type === TokenType.PUNCTUATION && tok.value === "}") {
+                depth = Math.max(0, depth - 1);
+                continue;
             }
-            if (this.matchKeywordAt(code, idx, "if")) {
-                return { kind: "elseIf", length: idx + 2 - start };
+
+            if (tok.type !== TokenType.KEYWORD) {
+                continue;
             }
-            return { kind: "else", length: 4 };
+
+            if (tok.value === "else") {
+                const next = rawTokens[i + 1];
+                if (next && next.type === TokenType.KEYWORD && next.value === "if") {
+                    conditionalTokens.push({ kind: "elseIf", depth, line: tok.line, column: tok.column });
+                    i++; // consume the 'if' token
+                } else {
+                    conditionalTokens.push({ kind: "else", depth, line: tok.line, column: tok.column });
+                }
+                continue;
+            }
+
+            if (tok.value === "if") {
+                conditionalTokens.push({ kind: "if", depth, line: tok.line, column: tok.column });
+                continue;
+            }
         }
 
-        if (this.matchKeywordAt(code, start, "if")) {
-            return { kind: "if", length: 2 };
-        }
-
-        return null;
-    }
-
-    private matchKeywordAt(code: string, start: number, keyword: string): boolean {
-        if (start < 0 || start + keyword.length > code.length) {
-            return false;
-        }
-        if (code.slice(start, start + keyword.length) !== keyword) {
-            return false;
-        }
-
-        const before = start > 0 ? code[start - 1] : "";
-        const after = start + keyword.length < code.length ? code[start + keyword.length] : "";
-        return !/[A-Za-z0-9_$]/.test(before) && !/[A-Za-z0-9_$]/.test(after);
+        return conditionalTokens;
     }
 
     private isNestedInsideElseBlock(tokens: ConditionalToken[], startIndex: number): boolean {
