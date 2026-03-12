@@ -32,3 +32,24 @@ class SmallSwitchRenderer {
     }
   }
 }
+
+// Long if/else-if chain should be reported by switch-statement-check.
+class StatusIfElseRenderer {
+  render(status: string): string {
+    if (status === "init") {
+      return "Init";
+    } else if (status === "loading") {
+      return "Loading";
+    } else if (status === "success") {
+      return "Success";
+    } else if (status === "empty") {
+      return "Empty";
+    } else if (status === "error") {
+      return "Error";
+    } else if (status === "cancelled") {
+      return "Cancelled";
+    } else {
+      return "Unknown";
+    }
+  }
+}
