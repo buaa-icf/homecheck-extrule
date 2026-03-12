@@ -35,13 +35,13 @@ const DEFAULT_OPTIONS: SwitchStatementRuleOptions = {
     minCases: 6
 };
 
-type ConditionalLineKind = "if" | "elseIf" | "else" | "other";
+type ConditionalTokenKind = "if" | "elseIf" | "else";
 
-interface ConditionalLineInfo {
-    kind: ConditionalLineKind;
-    effectiveDepth: number;
-    keywordColumn: number;
-    text: string;
+interface ConditionalToken {
+    kind: ConditionalTokenKind;
+    depth: number;
+    line: number;
+    column: number;
 }
 
 interface SwitchIssueParams {
@@ -296,20 +296,19 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             return;
         }
 
-        const lines = code.split(/\r?\n/);
-        const lineInfos = this.buildConditionalLineInfos(lines);
+        const conditionalTokens = this.scanConditionalTokens(code);
         const threshold = this.getCaseThreshold();
 
-        for (let i = 0; i < lineInfos.length; i++) {
-            const info = lineInfos[i];
-            if (info.kind !== "if") {
+        for (let i = 0; i < conditionalTokens.length; i++) {
+            const token = conditionalTokens[i];
+            if (token.kind !== "if") {
                 continue;
             }
-            if (this.isNestedInsideElseBlock(lineInfos, i)) {
+            if (this.isNestedInsideElseBlock(conditionalTokens, i)) {
                 continue;
             }
 
-            const branchCount = this.countElseIfChainBranches(lineInfos, i);
+            const branchCount = this.countElseIfChainBranches(conditionalTokens, i);
             if (branchCount < threshold) {
                 continue;
             }
@@ -317,9 +316,9 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             this.addIfElseChainIssueReport({
                 method,
                 branchCount,
-                line: i + 1,
-                startCol: info.keywordColumn,
-                endCol: info.keywordColumn + 2,
+                line: token.line,
+                startCol: token.column,
+                endCol: token.column + 2,
                 filePath: method.getDeclaringArkFile()?.getFilePath() ?? "",
             });
         }
@@ -332,84 +331,172 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
         return `${line}-${caseCount}`;
     }
 
-    private buildConditionalLineInfos(lines: string[]): ConditionalLineInfo[] {
-        const infos: ConditionalLineInfo[] = [];
+    private scanConditionalTokens(code: string): ConditionalToken[] {
+        const tokens: ConditionalToken[] = [];
         let depth = 0;
+        let line = 1;
+        let column = 0;
+        let inSingleQuote = false;
+        let inDoubleQuote = false;
+        let inTemplateLiteral = false;
+        let inBlockComment = false;
 
-        for (const line of lines) {
-            const text = this.stripLineComment(line);
-            const leadingMatch = text.match(/^(\s*)(\}*)\s*(.*)$/);
-            const leadingClosers = leadingMatch?.[2].length ?? 0;
-            const effectiveDepth = Math.max(0, depth - leadingClosers);
-            const remaining = leadingMatch?.[3] ?? "";
+        for (let i = 0; i < code.length; i++) {
+            const ch = code[i];
+            const next = code[i + 1] ?? "";
+            const prev = i > 0 ? code[i - 1] : "";
 
-            let kind: ConditionalLineKind = "other";
-            if (/^else\s+if\b/.test(remaining)) {
-                kind = "elseIf";
-            } else if (/^else\b/.test(remaining)) {
-                kind = "else";
-            } else if (/^if\b/.test(remaining)) {
-                kind = "if";
+            if (ch === "\n") {
+                line++;
+                column = 0;
+                continue;
             }
 
-            const keyword = kind === "if" ? "if" : kind === "other" ? "" : "else";
-            infos.push({
-                kind,
-                effectiveDepth,
-                keywordColumn: keyword ? text.indexOf(keyword) : 0,
-                text,
-            });
+            if (inBlockComment) {
+                if (ch === "*" && next === "/") {
+                    inBlockComment = false;
+                    i++;
+                    column += 2;
+                    continue;
+                }
+                column++;
+                continue;
+            }
 
-            depth += (text.match(/\{/g)?.length ?? 0);
-            depth -= (text.match(/\}/g)?.length ?? 0);
-            depth = Math.max(0, depth);
+            if (!inSingleQuote && !inDoubleQuote && !inTemplateLiteral) {
+                if (ch === "/" && next === "/") {
+                    while (i < code.length && code[i] !== "\n") {
+                        i++;
+                    }
+                    i--;
+                    continue;
+                }
+                if (ch === "/" && next === "*") {
+                    inBlockComment = true;
+                    i++;
+                    column += 2;
+                    continue;
+                }
+            }
+
+            if (!inDoubleQuote && !inTemplateLiteral && ch === "'" && prev !== "\\") {
+                inSingleQuote = !inSingleQuote;
+                column++;
+                continue;
+            }
+            if (!inSingleQuote && !inTemplateLiteral && ch === '"' && prev !== "\\") {
+                inDoubleQuote = !inDoubleQuote;
+                column++;
+                continue;
+            }
+            if (!inSingleQuote && !inDoubleQuote && ch === "`" && prev !== "\\") {
+                inTemplateLiteral = !inTemplateLiteral;
+                column++;
+                continue;
+            }
+
+            if (inSingleQuote || inDoubleQuote || inTemplateLiteral) {
+                column++;
+                continue;
+            }
+
+            if (ch === "}") {
+                depth = Math.max(0, depth - 1);
+                column++;
+                continue;
+            }
+
+            const token = this.matchConditionalToken(code, i);
+            if (token) {
+                tokens.push({
+                    kind: token.kind,
+                    depth,
+                    line,
+                    column,
+                });
+                i += token.length - 1;
+                column += token.length;
+                continue;
+            }
+
+            if (ch === "{") {
+                depth++;
+                column++;
+                continue;
+            }
+
+            column++;
         }
 
-        return infos;
+        return tokens;
     }
 
-    private stripLineComment(line: string): string {
-        const commentIndex = line.indexOf("//");
-        return commentIndex >= 0 ? line.slice(0, commentIndex) : line;
+    private matchConditionalToken(code: string, start: number): { kind: ConditionalTokenKind; length: number } | null {
+        if (this.matchKeywordAt(code, start, "else")) {
+            let idx = start + 4;
+            while (idx < code.length && /\s/.test(code[idx])) {
+                idx++;
+            }
+            if (this.matchKeywordAt(code, idx, "if")) {
+                return { kind: "elseIf", length: idx + 2 - start };
+            }
+            return { kind: "else", length: 4 };
+        }
+
+        if (this.matchKeywordAt(code, start, "if")) {
+            return { kind: "if", length: 2 };
+        }
+
+        return null;
     }
 
-    private isNestedInsideElseBlock(lineInfos: ConditionalLineInfo[], startLine: number): boolean {
-        const currentDepth = lineInfos[startLine].effectiveDepth;
-        if (currentDepth <= 0) {
+    private matchKeywordAt(code: string, start: number, keyword: string): boolean {
+        if (start < 0 || start + keyword.length > code.length) {
+            return false;
+        }
+        if (code.slice(start, start + keyword.length) !== keyword) {
             return false;
         }
 
-        for (let i = startLine - 1; i >= 0; i--) {
-            const candidate = lineInfos[i];
-            if (!candidate.text.trim()) {
-                continue;
-            }
-            if (candidate.effectiveDepth < currentDepth) {
-                return candidate.kind === "else" && candidate.effectiveDepth === currentDepth - 1;
+        const before = start > 0 ? code[start - 1] : "";
+        const after = start + keyword.length < code.length ? code[start + keyword.length] : "";
+        return !/[A-Za-z0-9_$]/.test(before) && !/[A-Za-z0-9_$]/.test(after);
+    }
+
+    private isNestedInsideElseBlock(tokens: ConditionalToken[], startIndex: number): boolean {
+        const current = tokens[startIndex];
+        if (current.depth <= 0) {
+            return false;
+        }
+
+        for (let i = startIndex - 1; i >= 0; i--) {
+            const candidate = tokens[i];
+            if (candidate.depth < current.depth) {
+                return candidate.kind === "else" && candidate.depth === current.depth - 1;
             }
         }
 
         return false;
     }
 
-    private countElseIfChainBranches(lineInfos: ConditionalLineInfo[], startLine: number): number {
-        const chainDepth = lineInfos[startLine].effectiveDepth;
+    private countElseIfChainBranches(tokens: ConditionalToken[], startIndex: number): number {
+        const chainDepth = tokens[startIndex].depth;
         let branches = 1;
 
-        for (let i = startLine + 1; i < lineInfos.length; i++) {
-            const candidate = lineInfos[i];
-            if (!candidate.text.trim()) {
-                continue;
-            }
-            if (candidate.effectiveDepth < chainDepth) {
+        for (let i = startIndex + 1; i < tokens.length; i++) {
+            const candidate = tokens[i];
+            if (candidate.depth < chainDepth) {
                 break;
             }
-            if (candidate.effectiveDepth > chainDepth) {
+            if (candidate.depth > chainDepth) {
                 continue;
             }
             if (candidate.kind === "elseIf") {
                 branches++;
                 continue;
+            }
+            if (candidate.kind === "else") {
+                break;
             }
             if (candidate.kind === "if") {
                 break;

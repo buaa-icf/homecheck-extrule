@@ -63,6 +63,22 @@ describe("SwitchStatementCheck integration", () => {
         expect(checker.issues.some(issue => issue.defect.methodName === "renderNestedElseIf")).toBe(false);
     });
 
+    test("应检测 FileA 样例中的长 if-else 链", () => {
+        const checker = createChecker();
+
+        for (const method of collectUserMethods(scene)) {
+            checker.check(method);
+        }
+
+        const hasFileALongChainIssue = checker.issues.some(issue => {
+            const description = issue.defect.description ?? "";
+            const mergeKey = issue.defect.mergeKey ?? "";
+            return description.includes("if-else chain with 6 branches") && mergeKey.includes("FileA.ets");
+        });
+
+        expect(hasFileALongChainIssue).toBe(true);
+    });
+
     test("自定义阈值应同步作用于 switch 和 if-else 链", () => {
         const checker = createChecker({ minCases: 7 });
 
