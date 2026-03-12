@@ -29,9 +29,9 @@ export interface LongMethodRuleOptions {
 }
 
 export interface FeatureEnvyRuleOptions {
-    minTotalCalls: number;
-    minForeignCalls: number;
-    ratioThreshold: number;
+    atfdThreshold: number;
+    ldaThreshold: number;
+    cpfdThreshold: number;
 }
 
 export interface SwitchStatementRuleOptions {
