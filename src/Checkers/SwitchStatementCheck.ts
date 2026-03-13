@@ -18,6 +18,8 @@ import { BaseMetaData, MatcherCallback, MatcherTypes, MethodMatcher } from "home
 import { RuleOptionSchema } from "./config/parseRuleOptions";
 import { SwitchStatementRuleOptions } from "./config/types";
 import { BaseRuleChecker } from "./BaseRuleChecker";
+import { Tokenizer } from "./FragmentDetection/Tokenizer";
+import { TokenType } from "./FragmentDetection/Token";
 
 // Detect "Switch Statement" smell: large switch blocks or long if/else-if chains
 // that may signal missing polymorphism.
@@ -35,13 +37,13 @@ const DEFAULT_OPTIONS: SwitchStatementRuleOptions = {
     minCases: 6
 };
 
-type ConditionalLineKind = "if" | "elseIf" | "else" | "other";
+type ConditionalTokenKind = "if" | "elseIf" | "else";
 
-interface ConditionalLineInfo {
-    kind: ConditionalLineKind;
-    effectiveDepth: number;
-    keywordColumn: number;
-    text: string;
+interface ConditionalToken {
+    kind: ConditionalTokenKind;
+    depth: number;
+    line: number;
+    column: number;
 }
 
 interface SwitchIssueParams {
@@ -296,20 +298,19 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             return;
         }
 
-        const lines = code.split(/\r?\n/);
-        const lineInfos = this.buildConditionalLineInfos(lines);
+        const conditionalTokens = this.scanConditionalTokens(code);
         const threshold = this.getCaseThreshold();
 
-        for (let i = 0; i < lineInfos.length; i++) {
-            const info = lineInfos[i];
-            if (info.kind !== "if") {
+        for (let i = 0; i < conditionalTokens.length; i++) {
+            const token = conditionalTokens[i];
+            if (token.kind !== "if") {
                 continue;
             }
-            if (this.isNestedInsideElseBlock(lineInfos, i)) {
+            if (this.isNestedInsideElseBlock(conditionalTokens, i)) {
                 continue;
             }
 
-            const branchCount = this.countElseIfChainBranches(lineInfos, i);
+            const branchCount = this.countElseIfChainBranches(conditionalTokens, i);
             if (branchCount < threshold) {
                 continue;
             }
@@ -317,9 +318,9 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             this.addIfElseChainIssueReport({
                 method,
                 branchCount,
-                line: i + 1,
-                startCol: info.keywordColumn,
-                endCol: info.keywordColumn + 2,
+                line: token.line,
+                startCol: token.column,
+                endCol: token.column + 2,
                 filePath: method.getDeclaringArkFile()?.getFilePath() ?? "",
             });
         }
@@ -332,84 +333,82 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
         return `${line}-${caseCount}`;
     }
 
-    private buildConditionalLineInfos(lines: string[]): ConditionalLineInfo[] {
-        const infos: ConditionalLineInfo[] = [];
+    private scanConditionalTokens(code: string): ConditionalToken[] {
+        const rawTokens = new Tokenizer({ skipComments: true }).tokenize(code);
+        const conditionalTokens: ConditionalToken[] = [];
         let depth = 0;
 
-        for (const line of lines) {
-            const text = this.stripLineComment(line);
-            const leadingMatch = text.match(/^(\s*)(\}*)\s*(.*)$/);
-            const leadingClosers = leadingMatch?.[2].length ?? 0;
-            const effectiveDepth = Math.max(0, depth - leadingClosers);
-            const remaining = leadingMatch?.[3] ?? "";
+        for (let i = 0; i < rawTokens.length; i++) {
+            const tok = rawTokens[i];
 
-            let kind: ConditionalLineKind = "other";
-            if (/^else\s+if\b/.test(remaining)) {
-                kind = "elseIf";
-            } else if (/^else\b/.test(remaining)) {
-                kind = "else";
-            } else if (/^if\b/.test(remaining)) {
-                kind = "if";
+            if (tok.type === TokenType.PUNCTUATION && tok.value === "{") {
+                depth++;
+                continue;
             }
 
-            const keyword = kind === "if" ? "if" : kind === "other" ? "" : "else";
-            infos.push({
-                kind,
-                effectiveDepth,
-                keywordColumn: keyword ? text.indexOf(keyword) : 0,
-                text,
-            });
+            if (tok.type === TokenType.PUNCTUATION && tok.value === "}") {
+                depth = Math.max(0, depth - 1);
+                continue;
+            }
 
-            depth += (text.match(/\{/g)?.length ?? 0);
-            depth -= (text.match(/\}/g)?.length ?? 0);
-            depth = Math.max(0, depth);
+            if (tok.type !== TokenType.KEYWORD) {
+                continue;
+            }
+
+            if (tok.value === "else") {
+                const next = rawTokens[i + 1];
+                if (next && next.type === TokenType.KEYWORD && next.value === "if") {
+                    conditionalTokens.push({ kind: "elseIf", depth, line: tok.line, column: tok.column });
+                    i++; // consume the 'if' token
+                } else {
+                    conditionalTokens.push({ kind: "else", depth, line: tok.line, column: tok.column });
+                }
+                continue;
+            }
+
+            if (tok.value === "if") {
+                conditionalTokens.push({ kind: "if", depth, line: tok.line, column: tok.column });
+                continue;
+            }
         }
 
-        return infos;
+        return conditionalTokens;
     }
 
-    private stripLineComment(line: string): string {
-        const commentIndex = line.indexOf("//");
-        return commentIndex >= 0 ? line.slice(0, commentIndex) : line;
-    }
-
-    private isNestedInsideElseBlock(lineInfos: ConditionalLineInfo[], startLine: number): boolean {
-        const currentDepth = lineInfos[startLine].effectiveDepth;
-        if (currentDepth <= 0) {
+    private isNestedInsideElseBlock(tokens: ConditionalToken[], startIndex: number): boolean {
+        const current = tokens[startIndex];
+        if (current.depth <= 0) {
             return false;
         }
 
-        for (let i = startLine - 1; i >= 0; i--) {
-            const candidate = lineInfos[i];
-            if (!candidate.text.trim()) {
-                continue;
-            }
-            if (candidate.effectiveDepth < currentDepth) {
-                return candidate.kind === "else" && candidate.effectiveDepth === currentDepth - 1;
+        for (let i = startIndex - 1; i >= 0; i--) {
+            const candidate = tokens[i];
+            if (candidate.depth < current.depth) {
+                return candidate.kind === "else" && candidate.depth === current.depth - 1;
             }
         }
 
         return false;
     }
 
-    private countElseIfChainBranches(lineInfos: ConditionalLineInfo[], startLine: number): number {
-        const chainDepth = lineInfos[startLine].effectiveDepth;
+    private countElseIfChainBranches(tokens: ConditionalToken[], startIndex: number): number {
+        const chainDepth = tokens[startIndex].depth;
         let branches = 1;
 
-        for (let i = startLine + 1; i < lineInfos.length; i++) {
-            const candidate = lineInfos[i];
-            if (!candidate.text.trim()) {
-                continue;
-            }
-            if (candidate.effectiveDepth < chainDepth) {
+        for (let i = startIndex + 1; i < tokens.length; i++) {
+            const candidate = tokens[i];
+            if (candidate.depth < chainDepth) {
                 break;
             }
-            if (candidate.effectiveDepth > chainDepth) {
+            if (candidate.depth > chainDepth) {
                 continue;
             }
             if (candidate.kind === "elseIf") {
                 branches++;
                 continue;
+            }
+            if (candidate.kind === "else") {
+                break;
             }
             if (candidate.kind === "if") {
                 break;
