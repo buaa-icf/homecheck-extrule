@@ -66,3 +66,126 @@ class OrderService {
     return subtotal + serviceFee;
   }
 }
+
+class ExternalUserInfo {
+  id: string = '';
+  nickName: string = '';
+  avatarUrl: string = '';
+  totalReading: number = 0;
+  bookCoins: number = 0;
+}
+
+class UserInfoModel {
+  id: string = '';
+  nickName: string = '';
+  avatarUrl: string = '';
+  totalReading: number = 0;
+  bookCoins: number = 0;
+
+  updateFromUserInfo(userInfo: ExternalUserInfo | undefined): void {
+    if (!userInfo) {
+      return;
+    }
+
+    this.id = userInfo.id;
+    this.nickName = userInfo.nickName;
+    this.avatarUrl = userInfo.avatarUrl;
+    this.totalReading = userInfo.totalReading;
+    this.bookCoins = userInfo.bookCoins;
+  }
+}
+
+class PrimitiveFormatter {
+  phone: string | boolean = '';
+  isLogin: boolean | string = false;
+
+  maskPhone(): void {
+    if (this.phone) {
+      this.phone =
+        `${this.phone.substring(0, this.phone.length - 8)}****${this.phone.substring(this.phone.length - 4)}`;
+    }
+
+    this.isLogin = !!this.phone;
+  }
+}
+
+class BuilderOption {
+  type: 'primary' | 'secondary' = 'primary';
+}
+
+@Builder
+function primaryCard(option: BuilderOption) {
+  let label = option.type;
+}
+
+@Builder
+function secondaryCard(option: BuilderOption) {
+  let label = option.type;
+}
+
+@Builder
+function cardSelector(option: BuilderOption) {
+  if (option.type === 'primary') {
+    primaryCard(option);
+  } else {
+    secondaryCard(option);
+  }
+}
+
+class DialogAction {
+  reason: number = 0;
+
+  dismiss(): void {}
+}
+
+class DialogHost {
+  openCustom(handler: (action: DialogAction) => void): void {}
+}
+
+class DialogController {
+  private host: DialogHost = new DialogHost();
+
+  registerDismissHandler(): void {
+    this.host.openCustom((dismissDialogAction: DialogAction) => {
+      if (dismissDialogAction.reason === 1) {
+        dismissDialogAction.dismiss();
+      }
+      if (dismissDialogAction.reason === 2) {
+        dismissDialogAction.dismiss();
+      }
+      if (dismissDialogAction.reason === 3) {
+        dismissDialogAction.dismiss();
+      }
+    });
+  }
+}
+
+class PaymentPayload {
+  partnerId: string = '';
+  appId: string = '';
+  packageValue: string = '';
+  prepayId: string = '';
+  nonceStr: string = '';
+}
+
+class PaymentRequest {
+  partnerId: string = '';
+  appId: string = '';
+  packageValue: string = '';
+  prepayId: string = '';
+  nonceStr: string = '';
+
+  send(context: string): void {}
+}
+
+class PaymentAdapter {
+  submitPayment(payload: PaymentPayload, context: string): void {
+    let req = new PaymentRequest();
+    req.partnerId = payload.partnerId;
+    req.appId = payload.appId;
+    req.packageValue = payload.packageValue;
+    req.prepayId = payload.prepayId;
+    req.nonceStr = payload.nonceStr;
+    req.send(context);
+  }
+}

@@ -8,6 +8,7 @@
 import { Token } from './Token';
 import { HashIndex, FragmentLocation, computeFingerprint } from './HashIndex';
 import { RollingHash } from './RollingHash';
+import { groupBy, pairwiseCombinations } from '../shared';
 
 /**
  * 克隆匹配结果
@@ -157,34 +158,25 @@ export class CloneMatcher {
         const pairs: ClonePair[] = [];
         for (const match of matches) {
             // 惰性计算指纹，按指纹分组验证碰撞
-            const fingerprintGroups = new Map<string, FragmentLocation[]>();
-            for (const loc of match.locations) {
-                const fingerprint = this.resolveFingerprint(loc);
-                const existing = fingerprintGroups.get(fingerprint);
-                if (existing) {
-                    existing.push(loc);
-                } else {
-                    fingerprintGroups.set(fingerprint, [loc]);
-                }
-            }
+            const fingerprintGroups = groupBy(match.locations, loc => this.resolveFingerprint(loc));
             // 只有指纹完全相同的位置才是真正的克隆
             for (const group of fingerprintGroups.values()) {
                 if (group.length < 2) {
                     continue;  // 哈希碰撞，跳过
                 }
-                for (let i = 0; i < group.length; i++) {
-                    for (let j = i + 1; j < group.length; j++) {
-                        // 跳过同文件重叠窗口（自身克隆误报）
-                        if (group[i].file === group[j].file &&
-                            Math.abs(group[i].startIndex - group[j].startIndex) < this.windowSize) {
-                            continue;
-                        }
-                        pairs.push({
-                            location1: group[i],
-                            location2: group[j],
-                            tokenCount: this.windowSize
-                        });
+
+                for (const [location1, location2] of pairwiseCombinations(group)) {
+                    // 跳过同文件重叠窗口（自身克隆误报）
+                    if (location1.file === location2.file &&
+                        Math.abs(location1.startIndex - location2.startIndex) < this.windowSize) {
+                        continue;
                     }
+
+                    pairs.push({
+                        location1,
+                        location2,
+                        tokenCount: this.windowSize
+                    });
                 }
             }
         }

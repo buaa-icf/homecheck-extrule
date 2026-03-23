@@ -110,3 +110,16 @@ index 861ed8b..f13a3f3 100644
              var _a;
              this.issues.push(...((_a = v.issues) === null || _a === void 0 ? void 0 : _a.reduce((acc, cur) => {
                  if (acc.some((item) => item.defect.mergeKey === cur.defect.mergeKey)) {
+diff --git a/node_modules/homecheck/lib/utils/common/ConfigUtils.js b/node_modules/homecheck/lib/utils/common/ConfigUtils.js
+index 89e8bec..7ed546c 100644
+--- a/node_modules/homecheck/lib/utils/common/ConfigUtils.js
++++ b/node_modules/homecheck/lib/utils/common/ConfigUtils.js
+@@ -165,7 +165,7 @@ class ConfigUtils {
+                 return;
+             }
+             try {
+-                const cmd = `${projectConfig.npmPath} install --no-save --prefix "${projectConfig.npmInstallDir}" "${ruleSet.packagePath}"`;
++                const cmd = `${projectConfig.npmPath} install --force --no-save --prefix "${projectConfig.npmInstallDir}" "${ruleSet.packagePath}"`;
+                 logger.info('Start to execute cmd: ' + cmd);
+                 const execLog = (0, child_process_1.execSync)(cmd);
+                 logger.info('Exec log: ' + execLog.toString());

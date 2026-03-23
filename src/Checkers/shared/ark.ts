@@ -1,4 +1,13 @@
 import { ArkMethod, Stmt } from "arkanalyzer";
+import { ClassCategory } from "arkanalyzer/lib/core/model/ArkClass";
+
+const UI_LIFECYCLE_METHODS = new Set([
+    "aboutToAppear",
+    "aboutToDisappear",
+    "onPageShow",
+    "onPageHide",
+    "onBackPress"
+]);
 
 export function getMethodEndLine(method: ArkMethod): number {
     const startLine = method.getLine() ?? 0;
@@ -28,6 +37,31 @@ export function shouldSkipClass(className: string): boolean {
 
 export function shouldSkipMethod(methodName: string): boolean {
     return methodName === "constructor" || methodName.startsWith("%");
+}
+
+export function isArkUiMethod(method: ArkMethod): boolean {
+    if (method.hasBuilderDecorator()) {
+        return true;
+    }
+
+    if (method.hasViewTree()) {
+        return true;
+    }
+
+    const declaringClass = method.getDeclaringArkClass();
+    if (declaringClass && declaringClass.getCategory() === ClassCategory.STRUCT) {
+        const methodName = method.getName();
+
+        if (methodName === "build") {
+            return true;
+        }
+
+        if (UI_LIFECYCLE_METHODS.has(methodName) && declaringClass.hasComponentDecorator()) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 export function isLogStatement(stmt: Stmt): boolean {

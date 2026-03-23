@@ -6,7 +6,7 @@
 
 import { Token } from './Token';
 import { TokenWindow } from './SlidingWindow';
-import { djb2Hash } from '../shared';
+import { appendToBucket, djb2Hash } from '../shared';
 
 /**
  * 片段位置信息
@@ -50,12 +50,7 @@ export class HashIndex {
      * @param location 位置信息
      */
     add(hash: string, location: FragmentLocation): void {
-        const existing = this.index.get(hash);
-        if (existing) {
-            existing.push(location);
-        } else {
-            this.index.set(hash, [location]);
-        }
+        appendToBucket(this.index, hash, location);
     }
     
     /**

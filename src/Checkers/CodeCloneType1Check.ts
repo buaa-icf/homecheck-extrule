@@ -16,7 +16,7 @@
 import { Stmt } from "arkanalyzer";
 import { BaseMetaData } from "homecheck";
 import { CodeCloneBaseCheck } from "./CodeCloneBaseCheck";
-import { MethodInfo } from "./method-clone";
+import { formatMethodCloneAnchor, formatMethodCloneTarget, MethodInfo } from "./method-clone";
 import { stripDecorators, stripTypeAnnotations } from "./shared";
 
 const gMetaData: BaseMetaData = {
@@ -65,9 +65,8 @@ export class CodeCloneType1Check extends CodeCloneBaseCheck {
     }
 
     protected getDescription(method: MethodInfo, cloneWith: MethodInfo): string {
-        const cloneFileName = cloneWith.filePath;
-        return `Code Clone Type-1: Method '${method.methodName}' (lines ${method.startLine}-${method.endLine}) ` +
-            `is identical to '${cloneWith.className}.${cloneWith.methodName}' in ${cloneFileName}:${cloneWith.startLine}-${cloneWith.endLine}. ` +
+        return `Code Clone Type-1: ${formatMethodCloneAnchor(method)} ` +
+            `is identical to ${formatMethodCloneTarget(cloneWith, true)}. ` +
             `(${method.stmtCount} statements)`;
     }
 }

@@ -1,5 +1,6 @@
 import { CodeLocation, CloneScope, FragmentCloneReport } from "./types";
 import { FragmentCloneRuleOptions } from "../config/types";
+import { getBaseName } from "../shared";
 
 /**
  * 判定两段代码的克隆范围（同方法/同类/跨类）。
@@ -78,8 +79,7 @@ export function getScopeDescription(scope: CloneScope): string {
  * 约定：左侧可读性优先（文件名），右侧可定位性优先（完整路径）。
  */
 export function formatLocation(loc: CodeLocation, useFullPath: boolean = false): string {
-    const fileName = loc.file.split("/").pop() ?? loc.file;
-    const filePart = useFullPath ? loc.file : fileName;
+    const filePart = useFullPath ? loc.file : getBaseName(loc.file);
 
     if (loc.className && loc.methodName) {
         return `${filePart} > ${loc.className}.${loc.methodName}():${loc.startLine}-${loc.endLine}`;

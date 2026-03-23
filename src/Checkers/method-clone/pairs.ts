@@ -1,3 +1,4 @@
+import { flattenBuckets, groupBy, pairwiseCombinations } from "../shared";
 import { ClonePair, MethodInfo } from "./types";
 
 const RATIO_UPPER = 1.25;
@@ -14,28 +15,18 @@ export function collectExactClonePairs(methodsByHash: Map<string, MethodInfo[]>)
             continue;
         }
 
-        const contentGroups = new Map<string, MethodInfo[]>();
-        for (const method of methods) {
-            const existing = contentGroups.get(method.normalizedContent);
-            if (existing) {
-                existing.push(method);
-            } else {
-                contentGroups.set(method.normalizedContent, [method]);
-            }
-        }
+        const contentGroups = groupBy(methods, method => method.normalizedContent);
 
         for (const group of contentGroups.values()) {
             if (group.length < 2) {
                 continue;
             }
 
-            for (let i = 0; i < group.length; i++) {
-                for (let j = i + 1; j < group.length; j++) {
-                    pairs.push({
-                        method1: group[i],
-                        method2: group[j]
-                    });
-                }
+            for (const [method1, method2] of pairwiseCombinations(group)) {
+                pairs.push({
+                    method1,
+                    method2
+                });
             }
         }
     }
@@ -90,9 +81,5 @@ export function collectNearMissClonePairs(
  * 将 hash 分桶展开为线性方法列表。
  */
 function flattenMethods(methodsByHash: Map<string, MethodInfo[]>): MethodInfo[] {
-    const result: MethodInfo[] = [];
-    for (const methods of methodsByHash.values()) {
-        result.push(...methods);
-    }
-    return result;
+    return flattenBuckets(methodsByHash);
 }

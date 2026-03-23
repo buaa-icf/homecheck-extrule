@@ -18,8 +18,18 @@ import { BaseMetaData, MatcherCallback, MatcherTypes, MethodMatcher } from "home
 import { RuleOptionSchema } from "./config/parseRuleOptions";
 import { SwitchStatementRuleOptions } from "./config/types";
 import { BaseRuleChecker } from "./BaseRuleChecker";
-import { Tokenizer } from "./FragmentDetection/Tokenizer";
-import { TokenType } from "./FragmentDetection/Token";
+import {
+    buildSwitchKey,
+    calculateCaseLineCounts,
+    CaseLineCount,
+    collectBraceDelimitedBlock,
+    collectSourceSwitchBlocks,
+    containsSwitch,
+    countCases,
+    countElseIfChainBranches,
+    isNestedInsideElseBlock,
+    scanConditionalTokens
+} from "./switch-statement/sourceAnalysis";
 
 // Detect "Switch Statement" smell: large switch blocks or long if/else-if chains
 // that may signal missing polymorphism.
@@ -37,19 +47,10 @@ const DEFAULT_OPTIONS: SwitchStatementRuleOptions = {
     minCases: 6
 };
 
-type ConditionalTokenKind = "if" | "elseIf" | "else";
-
-interface ConditionalToken {
-    kind: ConditionalTokenKind;
-    depth: number;
-    line: number;
-    column: number;
-}
-
 interface SwitchIssueParams {
     method: ArkMethod;
     caseCount: number;
-    caseLineCounts: Array<{ label: string; lines: number }>;
+    caseLineCounts: CaseLineCount[];
     line: number;
     startCol: number;
     endCol: number;
@@ -112,17 +113,19 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
      * Detect switch statements from CFG statement stream.
      */
     private detectSwitchesFromCfg(method: ArkMethod, stmts: Stmt[], reported: Set<string>): void {
+        const stmtTexts = stmts.map(stmt => this.getStmtText(stmt));
+
         for (let i = 0; i < stmts.length; i++) {
             const stmt = stmts[i];
-            const text = this.getStmtText(stmt);
-            if (!this.containsSwitch(text)) {
+            const text = stmtTexts[i];
+            if (!containsSwitch(text)) {
                 continue;
             }
 
-            const switchBlockText = this.collectSwitchBlockText(stmts, i);
-            const caseCount = this.countCases(switchBlockText);
+            const switchBlockText = collectBraceDelimitedBlock(stmtTexts, i);
+            const caseCount = countCases(switchBlockText);
             if (caseCount >= this.getCaseThreshold()) {
-                const caseLineCounts = this.calculateCaseLineCounts(switchBlockText);
+                const caseLineCounts = calculateCaseLineCounts(switchBlockText);
                 const originPosition = stmt.getOriginPositionInfo();
                 this.addSwitchIssueReport({
                     method,
@@ -133,7 +136,7 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
                     endCol: originPosition.getColNo() + (stmt.getOriginalText()?.length ?? 0),
                     filePath: stmt.getCfg()?.getDeclaringMethod().getDeclaringArkFile()?.getFilePath() ?? "",
                 });
-                reported.add(this.buildSwitchKey(originPosition.getLineNo(), caseCount));
+                reported.add(buildSwitchKey(originPosition.getLineNo(), caseCount));
             }
         }
     }
@@ -143,54 +146,6 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
      */
     private getStmtText(stmt: Stmt): string {
         return stmt.getOriginalText() ?? stmt.toString();
-    }
-
-    /**
-     * Basic switch detection on a single line of text.
-     */
-    private containsSwitch(text: string): boolean {
-        return /\bswitch\s*\(/.test(text);
-    }
-
-    /**
-     * Count case/default labels inside a switch block.
-     */
-    private countCases(text: string): number {
-        const matches = text.match(/\bcase\b|\bdefault\b/g);
-        return matches ? matches.length : 0;
-    }
-
-    /**
-     * Collect the textual switch block starting at a statement index.
-     * Uses brace depth to determine the block end.
-     */
-    private collectSwitchBlockText(stmts: Stmt[], startIdx: number): string {
-        const lines: string[] = [];
-        let braceDepth = 0;
-        let started = false;
-
-        for (let i = startIdx; i < stmts.length; i++) {
-            const text = this.getStmtText(stmts[i]);
-            const open = (text.match(/\{/g)?.length ?? 0);
-            const close = (text.match(/\}/g)?.length ?? 0);
-
-            if (!started) {
-                // Ensure we include the switch line even if it lacks '{' on the same line.
-                started = true;
-                braceDepth += open - close;
-                lines.push(text);
-                continue;
-            }
-
-            braceDepth += open - close;
-            lines.push(text);
-
-            if (braceDepth <= 0) {
-                break;
-            }
-        }
-
-        return lines.join("\n");
     }
 
     /**
@@ -204,83 +159,24 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
         }
 
         const lines = code.split(/\r?\n/);
-
-        let inSwitch = false;
-        let braceDepth = 0;
-        let blockLines: string[] = [];
-        let startLine = 0;
-
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            if (!inSwitch) {
-                if (this.containsSwitch(line)) {
-                    inSwitch = true;
-                    startLine = i;
-                    blockLines = [line];
-                    braceDepth = (line.match(/\{/g)?.length ?? 0) - (line.match(/\}/g)?.length ?? 0);
-                    if (braceDepth === 0) {
-                        // If switch line lacks '{', continue to find block start.
-                        continue;
-                    }
-                    if (braceDepth < 0) {
-                        // Unbalanced; abandon this switch.
-                        inSwitch = false;
-                        blockLines = [];
-                    }
-                }
+        for (const block of collectSourceSwitchBlocks(lines)) {
+            const caseCount = countCases(block.text);
+            if (caseCount < this.getCaseThreshold()) {
                 continue;
             }
 
-            // In switch block
-            blockLines.push(line);
-            braceDepth += (line.match(/\{/g)?.length ?? 0);
-            braceDepth -= (line.match(/\}/g)?.length ?? 0);
-
-            if (braceDepth <= 0) {
-                this.flushSwitchBlock(method, blockLines, lines, startLine, reported);
-                inSwitch = false;
-                blockLines = [];
+            const key = buildSwitchKey(block.startLineIndex + 1, caseCount);
+            if (reported.has(key)) {
+                continue;
             }
-        }
 
-        // Handle unterminated block (best-effort)
-        if (inSwitch) {
-            this.flushSwitchBlock(method, blockLines, lines, startLine, reported);
-        }
-    }
-
-    /**
-     * Evaluate a collected switch block and report if it exceeds the threshold.
-     */
-    private flushSwitchBlock(
-        method: ArkMethod,
-        blockLines: string[],
-        allLines: string[],
-        startLine: number,
-        reported: Set<string>
-    ): void {
-        if (!blockLines.length) {
-            return;
-        }
-
-        const blockText = blockLines.join("\n");
-        const caseCount = this.countCases(blockText);
-        if (caseCount < this.getCaseThreshold()) {
-            return;
-        }
-
-        const caseLineCounts = this.calculateCaseLineCounts(blockText);
-        // Columns are best-effort; we align to start of switch line.
-        const col = (allLines[startLine].indexOf("switch") >= 0) ? allLines[startLine].indexOf("switch") : 0;
-        const key = this.buildSwitchKey(startLine + 1, caseCount);
-        if (!reported.has(key)) {
             this.addSwitchIssueReport({
                 method,
                 caseCount,
-                caseLineCounts,
-                line: startLine + 1,
-                startCol: col,
-                endCol: col + 1,
+                caseLineCounts: calculateCaseLineCounts(block.text),
+                line: block.startLineIndex + 1,
+                startCol: block.switchColumn,
+                endCol: block.switchColumn + 1,
                 filePath: method.getDeclaringArkFile()?.getFilePath() ?? "",
             });
             reported.add(key);
@@ -298,7 +194,7 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             return;
         }
 
-        const conditionalTokens = this.scanConditionalTokens(code);
+        const conditionalTokens = scanConditionalTokens(code);
         const threshold = this.getCaseThreshold();
 
         for (let i = 0; i < conditionalTokens.length; i++) {
@@ -306,11 +202,11 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             if (token.kind !== "if") {
                 continue;
             }
-            if (this.isNestedInsideElseBlock(conditionalTokens, i)) {
+            if (isNestedInsideElseBlock(conditionalTokens, i)) {
                 continue;
             }
 
-            const branchCount = this.countElseIfChainBranches(conditionalTokens, i);
+            const branchCount = countElseIfChainBranches(conditionalTokens, i);
             if (branchCount < threshold) {
                 continue;
             }
@@ -324,141 +220,6 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
                 filePath: method.getDeclaringArkFile()?.getFilePath() ?? "",
             });
         }
-    }
-
-    /**
-     * Create a stable-ish dedupe key for a detected switch block.
-     */
-    private buildSwitchKey(line: number, caseCount: number): string {
-        return `${line}-${caseCount}`;
-    }
-
-    private scanConditionalTokens(code: string): ConditionalToken[] {
-        const rawTokens = new Tokenizer({ skipComments: true }).tokenize(code);
-        const conditionalTokens: ConditionalToken[] = [];
-        let depth = 0;
-
-        for (let i = 0; i < rawTokens.length; i++) {
-            const tok = rawTokens[i];
-
-            if (tok.type === TokenType.PUNCTUATION && tok.value === "{") {
-                depth++;
-                continue;
-            }
-
-            if (tok.type === TokenType.PUNCTUATION && tok.value === "}") {
-                depth = Math.max(0, depth - 1);
-                continue;
-            }
-
-            if (tok.type !== TokenType.KEYWORD) {
-                continue;
-            }
-
-            if (tok.value === "else") {
-                const next = rawTokens[i + 1];
-                if (next && next.type === TokenType.KEYWORD && next.value === "if") {
-                    conditionalTokens.push({ kind: "elseIf", depth, line: tok.line, column: tok.column });
-                    i++; // consume the 'if' token
-                } else {
-                    conditionalTokens.push({ kind: "else", depth, line: tok.line, column: tok.column });
-                }
-                continue;
-            }
-
-            if (tok.value === "if") {
-                conditionalTokens.push({ kind: "if", depth, line: tok.line, column: tok.column });
-                continue;
-            }
-        }
-
-        return conditionalTokens;
-    }
-
-    private isNestedInsideElseBlock(tokens: ConditionalToken[], startIndex: number): boolean {
-        const current = tokens[startIndex];
-        if (current.depth <= 0) {
-            return false;
-        }
-
-        for (let i = startIndex - 1; i >= 0; i--) {
-            const candidate = tokens[i];
-            if (candidate.depth < current.depth) {
-                return candidate.kind === "else" && candidate.depth === current.depth - 1;
-            }
-        }
-
-        return false;
-    }
-
-    private countElseIfChainBranches(tokens: ConditionalToken[], startIndex: number): number {
-        const chainDepth = tokens[startIndex].depth;
-        let branches = 1;
-
-        for (let i = startIndex + 1; i < tokens.length; i++) {
-            const candidate = tokens[i];
-            if (candidate.depth < chainDepth) {
-                break;
-            }
-            if (candidate.depth > chainDepth) {
-                continue;
-            }
-            if (candidate.kind === "elseIf") {
-                branches++;
-                continue;
-            }
-            if (candidate.kind === "else") {
-                break;
-            }
-            if (candidate.kind === "if") {
-                break;
-            }
-        }
-
-        return branches;
-    }
-
-    /**
-     * Estimate per-case line counts for reporting detail.
-     */
-    private calculateCaseLineCounts(text: string): Array<{ label: string; lines: number }> {
-        const lines = text.split(/\r?\n/);
-        const result: Array<{ label: string; lines: number }> = [];
-
-        let currentLabel: string | null = null;
-        let startLineIdx = 0;
-
-        const pushCase = (endIdx: number, isFinal: boolean) => {
-            if (currentLabel === null) {
-                return;
-            }
-
-            let trimmedEnd = endIdx;
-            if (isFinal) {
-                while (trimmedEnd > startLineIdx && /^[\s}]*$/.test(lines[trimmedEnd - 1])) {
-                    trimmedEnd--;
-                }
-            }
-
-            const count = Math.max(1, trimmedEnd - startLineIdx);
-            result.push({ label: currentLabel, lines: count });
-        };
-
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            const caseMatch = line.match(/\bcase\s+([^:]+):/);
-            const isDefault = /\bdefault\s*:/.test(line);
-
-            if (caseMatch || isDefault) {
-                pushCase(i, false);
-                currentLabel = caseMatch ? caseMatch[1].trim() : "default";
-                startLineIdx = i;
-            }
-        }
-
-        pushCase(lines.length, true);
-
-        return result;
     }
 
     /**

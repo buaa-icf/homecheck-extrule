@@ -14,25 +14,17 @@
  */
 
 import { ArkMethod } from "arkanalyzer";
-import { ClassCategory } from "arkanalyzer/lib/core/model/ArkClass";
 import { BaseMetaData, MethodMatcher, MatcherTypes, MatcherCallback } from "homecheck";
 import { RuleOptionSchema } from "./config/parseRuleOptions";
 import { LongMethodRuleOptions } from "./config/types";
 import { BaseRuleChecker } from "./BaseRuleChecker";
+import { isArkUiMethod } from "./shared";
 
 const gMetaData: BaseMetaData = {
     severity: 2,
     ruleDocPath: "docs/long-method-check.md",
     description: 'Method is too long. Consider refactoring it into smaller methods for better readability and maintainability.'
 };
-
-const UI_LIFECYCLE_METHODS = new Set([
-    'aboutToAppear',
-    'aboutToDisappear',
-    'onPageShow',
-    'onPageHide',
-    'onBackPress'
-]);
 
 const LONG_METHOD_OPTIONS_SCHEMA: RuleOptionSchema<LongMethodRuleOptions> = {
     maxStmts: { type: "number", min: 0 },
@@ -90,7 +82,7 @@ export class LongMethodCheck extends BaseRuleChecker<LongMethodRuleOptions> {
     public check = (targetMtd: ArkMethod) => {
         const stmtCount = this.countMethodStmts(targetMtd);
 
-        if (this.isUIMethod(targetMtd)) {
+        if (isArkUiMethod(targetMtd)) {
             this.checkUIMethod(targetMtd, stmtCount);
         } else {
             this.checkNormalMethod(targetMtd, stmtCount);
@@ -112,40 +104,6 @@ export class LongMethodCheck extends BaseRuleChecker<LongMethodRuleOptions> {
         } else if (stmtCount > softLimit) {
             this.addIssueReport(method, stmtCount, softLimit, 1);
         }
-    }
-
-    /**
-     * 判断方法是否为 UI 组装/渲染/构建类方法
-     *
-     * 满足以下任一条件即视为 UI 方法：
-     * 1. 方法本身带有 @Builder 装饰器
-     * 2. 方法关联了 ViewTree（UI 渲染树）
-     * 3. 方法名为 build 且所属类为 STRUCT（@Component struct 的 build 方法）
-     * 4. 方法名为 UI 生命周期方法且所属类为 @Component struct
-     */
-    private isUIMethod(method: ArkMethod): boolean {
-        if (method.hasBuilderDecorator()) {
-            return true;
-        }
-
-        if (method.hasViewTree()) {
-            return true;
-        }
-
-        const declaringClass = method.getDeclaringArkClass();
-        if (declaringClass && declaringClass.getCategory() === ClassCategory.STRUCT) {
-            const methodName = method.getName();
-
-            if (methodName === 'build') {
-                return true;
-            }
-
-            if (UI_LIFECYCLE_METHODS.has(methodName) && declaringClass.hasComponentDecorator()) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**

@@ -24,6 +24,7 @@ import {
     Rule
 } from "homecheck";
 import {
+    appendToBucket,
     createDefects,
     djb2Hash,
     getMethodEndLine,
@@ -40,6 +41,9 @@ import {
     collectExactClonePairs,
     collectNearMissClonePairs,
     DEFAULT_METHOD_CLONE_OPTIONS,
+    formatMethodCloneAnchor,
+    formatMethodCloneMembers,
+    formatMethodCloneTarget,
     getPairKey as buildPairKey,
     jaccardSimilarityFromMultisets,
     METHOD_CLONE_OPTIONS_SCHEMA,
@@ -84,9 +88,8 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 默认描述模板；子类可按规则类型覆盖。
      */
     protected getDescription(method: MethodInfo, cloneWith: MethodInfo, _pair?: ClonePair): string {
-        const cloneFileName = cloneWith.filePath.split("/").pop() ?? cloneWith.filePath;
-        return `Code Clone ${this.getCloneType()}: Method '${method.methodName}' (lines ${method.startLine}-${method.endLine}) ` +
-            `is identical to '${cloneWith.className}.${cloneWith.methodName}' in ${cloneFileName}:${cloneWith.startLine}-${cloneWith.endLine}. ` +
+        return `Code Clone ${this.getCloneType()}: ${formatMethodCloneAnchor(method)} ` +
+            `is identical to ${formatMethodCloneTarget(cloneWith)}. ` +
             `(${method.stmtCount} statements)`;
     }
 
@@ -228,12 +231,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 将方法按 hash 分桶，供后续配对。
      */
     protected addMethodToHash(methodInfo: MethodInfo): void {
-        const existing = this.methodsByHash.get(methodInfo.hash);
-        if (existing) {
-            existing.push(methodInfo);
-            return;
-        }
-        this.methodsByHash.set(methodInfo.hash, [methodInfo]);
+        appendToBucket(this.methodsByHash, methodInfo.hash, methodInfo);
     }
 
     /**
@@ -302,12 +300,7 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
         for (const cloneClass of cloneClasses) {
             const members = cloneClass.members;
             const anchor = members[0];
-            const memberDesc = members
-                .map(member => {
-                    const fileName = member.filePath.split("/").pop() ?? member.filePath;
-                    return `${member.className}.${member.methodName}() in ${fileName}:${member.startLine}-${member.endLine}`;
-                })
-                .join("; ");
+            const memberDesc = formatMethodCloneMembers(members);
 
             const description = `Code Clone ${this.getCloneType()} [Class #${cloneClass.classId}, ${members.length} members]: ${memberDesc}.`;
 

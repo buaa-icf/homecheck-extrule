@@ -9,3 +9,4 @@ report/
 .DS_Store
 *.log
 __snapshots__/
+__pycache__/
