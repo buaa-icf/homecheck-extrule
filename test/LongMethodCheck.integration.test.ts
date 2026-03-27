@@ -6,7 +6,7 @@
  *
  * 测试流程：
  * 1. 构建 Scene（解析 test/sample/LongMethod/ 项目）
- * 2. 遍历所有方法，记录每个方法的 CFG 语句数
+ * 2. 遍历所有方法，记录每个方法的代码行数
  * 3. 用 LongMethodCheck 检测，验证正确的方法被标记
  */
 
@@ -38,7 +38,16 @@ function getMethodKey(method: ArkMethod): string {
     return `${fileStem}::${className}::${methodName}`;
 }
 
-function getStmtCount(method: ArkMethod): number {
+function getCodeLineCount(method: ArkMethod): number {
+    const code = method.getCode();
+    if (code) {
+        return code
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => line.length > 0 && line !== '{' && line !== '}')
+            .length;
+    }
+
     const body = method.getBody();
     if (!body) return 0;
     return body.getCfg().getStmts().length;
@@ -72,7 +81,7 @@ beforeAll(() => {
     scene = buildScene();
 }, 60_000);
 
-describe('校准：arkanalyzer CFG 语句数', () => {
+describe('校准：方法代码行数', () => {
     test('Scene 应成功构建并包含 .ets 文件', () => {
         const files = scene.getFiles();
         expect(files.length).toBeGreaterThan(0);
@@ -85,13 +94,13 @@ describe('校准：arkanalyzer CFG 语句数', () => {
         ]));
     });
 
-    test('打印所有用户方法及其 CFG 语句数（用于校准）', () => {
+    test('打印所有用户方法及其代码行数（用于校准）', () => {
         const methods = collectUserMethods(scene);
         expect(methods.length).toBeGreaterThan(0);
 
         const methodInfo: Record<string, number> = {};
         for (const m of methods) {
-            methodInfo[getMethodKey(m)] = getStmtCount(m);
+            methodInfo[getMethodKey(m)] = getCodeLineCount(m);
         }
         const longMethodKey = Object.keys(methodInfo).find(k => k.includes('longMethod'));
         if (longMethodKey) {
@@ -118,12 +127,12 @@ describe('LongMethodCheck 集成测试：NormalMethods.ets', () => {
         const reportedMethods = checker.issues.map(i => i.defect.methodName);
 
         const longMethodStmts = normalMethods.find(m => m.getName() === 'longMethod');
-        if (longMethodStmts && getStmtCount(longMethodStmts) > 50) {
+        if (longMethodStmts && getCodeLineCount(longMethodStmts) > 50) {
             expect(reportedMethods).toContain('longMethod');
         }
 
         const standaloneStmts = normalMethods.find(m => m.getName() === 'standaloneLongFunction');
-        if (standaloneStmts && getStmtCount(standaloneStmts) > 50) {
+        if (standaloneStmts && getCodeLineCount(standaloneStmts) > 50) {
             expect(reportedMethods).toContain('standaloneLongFunction');
         }
 
@@ -154,7 +163,7 @@ describe('LongMethodCheck 集成测试：UIBuilderMethods.ets', () => {
 
         const longBuilder = builderMethods.find(m => m.getName() === 'longBuilderFunction');
         if (longBuilder) {
-            const stmts = getStmtCount(longBuilder);
+            const stmts = getCodeLineCount(longBuilder);
             if (stmts > 80) {
                 expect(reportedMethods).toContain('longBuilderFunction');
                 const issue = checker.issues.find(i => i.defect.methodName === 'longBuilderFunction');
@@ -192,7 +201,7 @@ describe('LongMethodCheck 集成测试：ComponentMethods.ets', () => {
             m.getDeclaringArkClass()?.getName() === 'LongBuildComponent'
         );
         if (buildMethod) {
-            const stmts = getStmtCount(buildMethod);
+            const stmts = getCodeLineCount(buildMethod);
             if (stmts > 80) {
                 expect(reportedMethods).toContain('build');
                 const issue = checker.issues.find(i =>
@@ -210,7 +219,7 @@ describe('LongMethodCheck 集成测试：ComponentMethods.ets', () => {
             m.getDeclaringArkClass()?.getName() === 'LongBuildComponent'
         );
         if (lifecycleMethod) {
-            const stmts = getStmtCount(lifecycleMethod);
+            const stmts = getCodeLineCount(lifecycleMethod);
             if (stmts > 80) {
                 expect(reportedMethods).toContain('aboutToAppear');
                 const issue = checker.issues.find(i => i.defect.methodName === 'aboutToAppear');
@@ -225,7 +234,7 @@ describe('LongMethodCheck 集成测试：ComponentMethods.ets', () => {
             m.getDeclaringArkClass()?.getName() === 'LongBuildComponent'
         );
         if (helperMethod) {
-            const stmts = getStmtCount(helperMethod);
+            const stmts = getCodeLineCount(helperMethod);
             if (stmts > 50) {
                 expect(reportedMethods).toContain('helperMethod');
                 const issue = checker.issues.find(i => i.defect.methodName === 'helperMethod');
@@ -239,7 +248,7 @@ describe('LongMethodCheck 集成测试：ComponentMethods.ets', () => {
             m.getDeclaringArkClass()?.getName() === 'ShortComponent'
         );
         if (shortBuild) {
-            const stmts = getStmtCount(shortBuild);
+            const stmts = getCodeLineCount(shortBuild);
             expect(stmts).toBeLessThanOrEqual(80);
         }
     });
@@ -278,7 +287,7 @@ describe('LongMethodCheck 集成测试：全量检测', () => {
             checker.check(method);
         }
 
-        const methodsWithBody = methods.filter(m => m.getBody() && getStmtCount(m) > 0);
-        expect(checker.issues.length).toBeGreaterThanOrEqual(methodsWithBody.filter(m => getStmtCount(m) > 1).length);
+        const methodsWithBody = methods.filter(m => m.getBody() && getCodeLineCount(m) > 0);
+        expect(checker.issues.length).toBeGreaterThanOrEqual(methodsWithBody.filter(m => getCodeLineCount(m) > 1).length);
     });
 });

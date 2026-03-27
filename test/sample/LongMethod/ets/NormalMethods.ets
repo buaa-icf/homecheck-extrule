@@ -1,6 +1,6 @@
 // NormalMethods.ets
 // Tests for normal (non-UI) method long method detection
-// Default threshold: 50 statements
+// Default threshold: 50 lines of code
 
 // === POSITIVE: Normal method exceeding default threshold (should trigger) ===
 class NormalLongClass {

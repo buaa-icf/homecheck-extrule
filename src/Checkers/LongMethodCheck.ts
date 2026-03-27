@@ -49,10 +49,10 @@ const DEFAULT_OPTIONS: LongMethodRuleOptions = {
  * 3. 难以测试和复用
  *
  * 阈值策略：
- * - 普通函数：默认 50 个语句节点
+ * - 普通函数：默认 50 行代码
  * - UI 组装/渲染/构建类函数（build、@Builder、含 ViewTree 的方法等）：
- *   - 软阈值：80 个语句节点（severity 降为 warning）
- *   - 硬阈值：120 个语句节点（保持原 severity）
+ *   - 软阈值：80 行代码（severity 降为 warning）
+ *   - 硬阈值：120 行代码（保持原 severity）
  *
  * 可通过 ruleConfig.json 配置各阈值参数
  */
@@ -62,9 +62,9 @@ export class LongMethodCheck extends BaseRuleChecker<LongMethodRuleOptions> {
     protected readonly optionSchema = LONG_METHOD_OPTIONS_SCHEMA;
     protected readonly defaultOptions = DEFAULT_OPTIONS;
 
-    private readonly DEFAULT_MAX_STMTS = 50;
-    private readonly DEFAULT_MAX_UI_STMTS_SOFT = 80;
-    private readonly DEFAULT_MAX_UI_STMTS_HARD = 120;
+    private readonly DEFAULT_MAX_LINES = 50;
+    private readonly DEFAULT_MAX_UI_LINES_SOFT = 80;
+    private readonly DEFAULT_MAX_UI_LINES_HARD = 120;
 
     // 匹配所有方法
     private methodMatcher: MethodMatcher = {
@@ -80,46 +80,46 @@ export class LongMethodCheck extends BaseRuleChecker<LongMethodRuleOptions> {
     }
 
     public check = (targetMtd: ArkMethod) => {
-        const stmtCount = this.countMethodStmts(targetMtd);
+        const codeLineCount = this.countMethodCodeLines(targetMtd);
 
         if (isArkUiMethod(targetMtd)) {
-            this.checkUIMethod(targetMtd, stmtCount);
+            this.checkUIMethod(targetMtd, codeLineCount);
         } else {
-            this.checkNormalMethod(targetMtd, stmtCount);
+            this.checkNormalMethod(targetMtd, codeLineCount);
         }
     }
 
-    private checkNormalMethod(method: ArkMethod, stmtCount: number): void {
-        const maxStmts = this.getMaxStmtsFromConfig();
-        if (stmtCount > maxStmts) {
-            this.addIssueReport(method, stmtCount, maxStmts);
+    private checkNormalMethod(method: ArkMethod, codeLineCount: number): void {
+        const maxLines = this.getMaxCodeLinesFromConfig();
+        if (codeLineCount > maxLines) {
+            this.addIssueReport(method, codeLineCount, maxLines);
         }
     }
 
-    private checkUIMethod(method: ArkMethod, stmtCount: number): void {
+    private checkUIMethod(method: ArkMethod, codeLineCount: number): void {
         const { softLimit, hardLimit } = this.getUIThresholdsFromConfig();
 
-        if (stmtCount > hardLimit) {
-            this.addIssueReport(method, stmtCount, hardLimit);
-        } else if (stmtCount > softLimit) {
-            this.addIssueReport(method, stmtCount, softLimit, 1);
+        if (codeLineCount > hardLimit) {
+            this.addIssueReport(method, codeLineCount, hardLimit);
+        } else if (codeLineCount > softLimit) {
+            this.addIssueReport(method, codeLineCount, softLimit, 1);
         }
     }
 
     /**
-     * 从配置中获取普通方法的最大语句数阈值
+     * 从配置中获取普通方法的最大代码行数阈值
      */
-    private getMaxStmtsFromConfig(): number {
+    private getMaxCodeLinesFromConfig(): number {
         const option = this.getOptions();
 
-        if (Number.isFinite(option.maxStmts)) {
-            return option.maxStmts;
-        }
         if (Number.isFinite(option.maxLines)) {
             return option.maxLines;
         }
+        if (Number.isFinite(option.maxStmts)) {
+            return option.maxStmts;
+        }
 
-        return this.DEFAULT_MAX_STMTS;
+        return this.DEFAULT_MAX_LINES;
     }
 
     private getUIThresholdsFromConfig(): { softLimit: number; hardLimit: number } {
@@ -127,37 +127,44 @@ export class LongMethodCheck extends BaseRuleChecker<LongMethodRuleOptions> {
 
         const softLimit = Number.isFinite(option.maxUIStmtsSoft)
             ? option.maxUIStmtsSoft
-            : this.DEFAULT_MAX_UI_STMTS_SOFT;
+            : this.DEFAULT_MAX_UI_LINES_SOFT;
 
         const hardLimit = Number.isFinite(option.maxUIStmtsHard)
             ? option.maxUIStmtsHard
-            : this.DEFAULT_MAX_UI_STMTS_HARD;
+            : this.DEFAULT_MAX_UI_LINES_HARD;
 
         return { softLimit, hardLimit };
     }
 
     /**
-     * 计算方法的语句数量
-     * CFG 中的 stmts 已经包含了方法的所有语句（包括嵌套语句）
+     * 计算方法的代码行数。
+     * 优先使用源码文本统计非空且非纯大括号行；若源码缺失则回退到 CFG 节点数。
      */
-    private countMethodStmts(method: ArkMethod): number {
+    private countMethodCodeLines(method: ArkMethod): number {
+        const code = method.getCode();
+        if (code) {
+            return code
+                .split(/\r?\n/)
+                .map(line => line.trim())
+                .filter(line => line.length > 0 && line !== '{' && line !== '}')
+                .length;
+        }
+
         const body = method.getBody();
         if (!body) {
             return 0;
         }
 
-        // getStmts() 返回方法的所有语句（包括控制流中的所有语句）
-        const stmts = body.getCfg().getStmts();
-        return stmts.length;
+        return body.getCfg().getStmts().length;
     }
 
-    private addIssueReport(method: ArkMethod, actualStmts: number, maxStmts: number, severityOverride?: number) {
+    private addIssueReport(method: ArkMethod, actualLines: number, maxLines: number, severityOverride?: number) {
         const line = method.getLine() ?? 0;
         const startCol = method.getColumn() ?? 0;
         const endCol = startCol + method.getName().length;
         const filePath = method.getDeclaringArkFile()?.getFilePath() ?? '';
         const methodName = method.getName() ?? '';
-        const description = `Method '${methodName}' is too long. Consider refactoring. (Current: ${actualStmts} statements, Max: ${maxStmts})`;
+        const description = `Method '${methodName}' is too long. Consider refactoring. (Current: ${actualLines} lines, Max: ${maxLines})`;
 
         this.reportIssue({
             line,

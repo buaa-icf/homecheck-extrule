@@ -54,6 +54,7 @@
 ```
 
 **配置参数说明**：
+
 - `atfdThreshold`：`ATFD` 判定阈值，规则要求 `ATFD > atfdThreshold`
 - `ldaThreshold`：`LDA` 判定阈值，规则要求 `LDA < ldaThreshold`
 - `cpfdThreshold`：`CPFD` 判定阈值，规则要求 `CPFD <= cpfdThreshold`

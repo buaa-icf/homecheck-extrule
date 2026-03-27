@@ -19,6 +19,7 @@ import { ClassCategory } from 'arkanalyzer/lib/core/model/ArkClass';
 interface MockMethodOptions {
     name?: string;
     stmtCount?: number;
+    code?: string;
     hasBuilderDecorator?: boolean;
     hasViewTree?: boolean;
     hasComponentDecorator?: boolean;
@@ -32,6 +33,7 @@ function createMockMethod(options: MockMethodOptions = {}) {
     const {
         name = 'testMethod',
         stmtCount = 10,
+        code,
         hasBuilderDecorator = false,
         hasViewTree = false,
         hasComponentDecorator = false,
@@ -54,6 +56,7 @@ function createMockMethod(options: MockMethodOptions = {}) {
         getColumn: () => column,
         hasBuilderDecorator: () => hasBuilderDecorator,
         hasViewTree: () => hasViewTree,
+        getCode: () => code ?? createMethodCode(stmtCount),
         getDeclaringArkClass: () => mockClass,
         getDeclaringArkFile: () => ({
             getFilePath: () => filePath
@@ -76,6 +79,20 @@ function createChecker(ruleOptions?: Record<string, unknown>) {
     return checker;
 }
 
+function createMethodCode(lineCount: number): string {
+    if (lineCount <= 0) {
+        return '';
+    }
+
+    const bodyLineCount = Math.max(lineCount - 1, 0);
+    const bodyLines = Array.from({ length: bodyLineCount }, (_, index) => `  const value${index} = ${index};`);
+    return [
+        'function testMethod() {',
+        ...bodyLines,
+        '}'
+    ].join('\n');
+}
+
 // ============================================================
 // isUIMethod 判定逻辑
 // ============================================================
@@ -93,7 +110,7 @@ describe('isUIMethod 判定逻辑', () => {
             stmtCount: 100
         });
         (checker as any).check(method);
-        // @Builder 方法 100 条语句，在软阈值 80 和硬阈值 120 之间
+        // @Builder 方法 100 行代码，在软阈值 80 和硬阈值 120 之间
         // 应触发软阈值告警（severity=1）
         expect(checker.issues.length).toBe(1);
         expect(checker.issues[0].defect.severity).toBe(1);
@@ -179,21 +196,31 @@ describe('isUIMethod 判定逻辑', () => {
 // ============================================================
 
 describe('普通方法阈值检测', () => {
-    test('语句数 <= 50 不应触发告警', () => {
+    test('代码行数 > 50 时应触发告警，即使 CFG 节点数未超阈值', () => {
+        const checker = createChecker();
+        const method = createMockMethod({
+            stmtCount: 10,
+            code: createMethodCode(51)
+        });
+        (checker as any).check(method);
+        expect(checker.issues.length).toBe(1);
+    });
+
+    test('代码行数 <= 50 不应触发告警', () => {
         const checker = createChecker();
         const method = createMockMethod({ stmtCount: 50 });
         (checker as any).check(method);
         expect(checker.issues.length).toBe(0);
     });
 
-    test('语句数 = 51 应触发告警', () => {
+    test('代码行数 = 51 应触发告警', () => {
         const checker = createChecker();
         const method = createMockMethod({ stmtCount: 51 });
         (checker as any).check(method);
         expect(checker.issues.length).toBe(1);
     });
 
-    test('语句数 = 0 不应触发告警', () => {
+    test('代码行数 = 0 不应触发告警', () => {
         const checker = createChecker();
         const method = createMockMethod({ stmtCount: 0 });
         (checker as any).check(method);
@@ -203,7 +230,8 @@ describe('普通方法阈值检测', () => {
     test('无方法体不应触发告警', () => {
         const checker = createChecker();
         const method = createMockMethod({ stmtCount: 100 });
-        // 覆盖 getBody 返回 undefined
+        // 覆盖 getCode/getBody 缺失时的兜底逻辑
+        (method as any).getCode = () => undefined;
         (method as any).getBody = () => undefined;
         (checker as any).check(method);
         expect(checker.issues.length).toBe(0);
@@ -230,12 +258,12 @@ describe('普通方法阈值检测', () => {
         expect(checker.issues.length).toBe(1);
     });
 
-    test('maxStmts 优先于 maxLines', () => {
+    test('maxLines 优先于 maxStmts', () => {
         const checker = createChecker({ maxStmts: 30, maxLines: 40 });
         const method = createMockMethod({ stmtCount: 35 });
         (checker as any).check(method);
-        // maxStmts=30 生效, 35 > 30
-        expect(checker.issues.length).toBe(1);
+        // maxLines=40 生效, 35 <= 40
+        expect(checker.issues.length).toBe(0);
     });
 });
 
@@ -244,7 +272,7 @@ describe('普通方法阈值检测', () => {
 // ============================================================
 
 describe('UI 方法双阈值检测', () => {
-    test('UI 方法语句数 <= 80 不应触发告警', () => {
+    test('UI 方法代码行数 <= 80 不应触发告警', () => {
         const checker = createChecker();
         const method = createMockMethod({
             hasBuilderDecorator: true,
@@ -254,7 +282,7 @@ describe('UI 方法双阈值检测', () => {
         expect(checker.issues.length).toBe(0);
     });
 
-    test('UI 方法语句数 = 81 应触发软阈值告警 (severity=1)', () => {
+    test('UI 方法代码行数 = 81 应触发软阈值告警 (severity=1)', () => {
         const checker = createChecker();
         const method = createMockMethod({
             hasBuilderDecorator: true,
@@ -265,7 +293,7 @@ describe('UI 方法双阈值检测', () => {
         expect(checker.issues[0].defect.severity).toBe(1);
     });
 
-    test('UI 方法语句数 = 120 应触发软阈值告警（边界值）', () => {
+    test('UI 方法代码行数 = 120 应触发软阈值告警（边界值）', () => {
         const checker = createChecker();
         const method = createMockMethod({
             hasBuilderDecorator: true,
@@ -276,7 +304,7 @@ describe('UI 方法双阈值检测', () => {
         expect(checker.issues[0].defect.severity).toBe(1);
     });
 
-    test('UI 方法语句数 = 121 应触发硬阈值告警 (severity=2)', () => {
+    test('UI 方法代码行数 = 121 应触发硬阈值告警 (severity=2)', () => {
         const checker = createChecker();
         const method = createMockMethod({
             hasBuilderDecorator: true,
@@ -287,7 +315,7 @@ describe('UI 方法双阈值检测', () => {
         expect(checker.issues[0].defect.severity).toBe(2);
     });
 
-    test('UI 方法语句数远超硬阈值 (200) 应触发硬阈值告警', () => {
+    test('UI 方法代码行数远超硬阈值 (200) 应触发硬阈值告警', () => {
         const checker = createChecker();
         const method = createMockMethod({
             hasBuilderDecorator: true,
