@@ -43,6 +43,34 @@ describe("switch-statement source analysis", () => {
         expect(collectBraceDelimitedBlock(lines, 0)).toBe(lines.slice(0, 4).join("\n"));
     });
 
+    test("collectBraceDelimitedBlock 不应拼接重复的完整 builder 语句", () => {
+        const builderStmt = [
+            "CalendarSheetHeader({",
+            "  onConfirm: async () => {",
+            "    switch (this.currentIndex) {",
+            "      case 0:",
+            "        dispatchToSchedule();",
+            "        break;",
+            "      case 1:",
+            "        dispatchToBirthday();",
+            "        break;",
+            "      case 2:",
+            "        dispatchToReminder();",
+            "        break;",
+            "      case 3:",
+            "        dispatchToTodo();",
+            "        break;",
+            "    }",
+            "  },",
+            "})"
+        ].join("\n");
+
+        const block = collectBraceDelimitedBlock([builderStmt, builderStmt, "return"], 0);
+
+        expect(block).toBe(builderStmt);
+        expect(countCases(block)).toBe(4);
+    });
+
     test("calculateCaseLineCounts 应统计各分支行数并忽略结尾空白花括号", () => {
         const text = [
             "switch (kind) {",

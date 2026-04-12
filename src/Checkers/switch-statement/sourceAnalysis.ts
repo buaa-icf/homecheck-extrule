@@ -51,6 +51,12 @@ export function collectBraceDelimitedBlock(lines: string[], startIdx: number): s
             started = true;
             braceDepth += delta;
             blockLines.push(text);
+
+            // Some ArkAnalyzer CFG entries already contain the full switch body.
+            // Stop immediately so adjacent duplicated statements do not get merged.
+            if (braceDepth <= 0 && containsSwitch(text) && countCases(text) > 0) {
+                break;
+            }
             continue;
         }
 
