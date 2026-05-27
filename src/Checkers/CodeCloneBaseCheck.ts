@@ -50,6 +50,7 @@ import {
     ClonePair,
     MethodInfo
 } from "./method-clone";
+import { PerfReporter } from "./perf";
 
 /**
  * 方法级克隆检测基类。
@@ -123,50 +124,70 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 从 ArkFile 收集候选方法并按身份去重后入桶。
      */
     public collectMethods = (arkFile: ArkFile): void => {
-        const filePath = arkFile.getFilePath();
+        PerfReporter.time(this.constructor.name, 'collectMethods', () => {
+            const filePath = arkFile.getFilePath();
 
-        for (const arkClass of arkFile.getClasses()) {
-            const className = arkClass.getName();
-            if (shouldSkipClass(className)) {
-                continue;
+            for (const arkClass of arkFile.getClasses()) {
+                const className = arkClass.getName();
+                if (shouldSkipClass(className)) {
+                    continue;
+                }
+
+                for (const method of arkClass.getMethods()) {
+                    if (shouldSkipMethod(method.getName())) {
+                        continue;
+                    }
+
+                    const methodInfo = PerfReporter.time(
+                        this.constructor.name,
+                        'collectMethods.extractMethodInfo',
+                        () => this.extractMethodInfo(method, filePath, className)
+                    );
+                    if (!methodInfo || methodInfo.stmtCount < this.option("minStmts")) {
+                        continue;
+                    }
+
+                    const methodKey = this.getMethodIdentityKey(methodInfo);
+                    if (this.collectedMethodKeys.has(methodKey)) {
+                        continue;
+                    }
+
+                    this.collectedMethodKeys.add(methodKey);
+                    this.addMethodToHash(methodInfo);
+                }
             }
-
-            for (const method of arkClass.getMethods()) {
-                if (shouldSkipMethod(method.getName())) {
-                    continue;
-                }
-
-                const methodInfo = this.extractMethodInfo(method, filePath, className);
-                if (!methodInfo || methodInfo.stmtCount < this.option("minStmts")) {
-                    continue;
-                }
-
-                const methodKey = this.getMethodIdentityKey(methodInfo);
-                if (this.collectedMethodKeys.has(methodKey)) {
-                    continue;
-                }
-
-                this.collectedMethodKeys.add(methodKey);
-                this.addMethodToHash(methodInfo);
-            }
-        }
+        });
     }
 
     /**
      * 收尾阶段：先做精确克隆，再按阈值可选做近似克隆，最后按配置决定是否聚合为克隆类。
      */
     public afterCheck(): void {
-        this.findClonePairs();
+        PerfReporter.time(this.constructor.name, 'afterCheck', () => {
+            PerfReporter.time(
+                this.constructor.name,
+                'afterCheck.findClonePairs',
+                () => this.findClonePairs()
+            );
 
-        const threshold = this.option("similarityThreshold");
-        if (threshold < 1.0) {
-            this.findNearMissClones(threshold);
-        }
+            const threshold = this.option("similarityThreshold");
+            if (threshold < 1.0) {
+                PerfReporter.time(
+                    this.constructor.name,
+                    'afterCheck.findNearMissClones',
+                    () => this.findNearMissClones(threshold)
+                );
+            }
 
-        if (this.option("enableCloneClasses") && this.collectedPairs.length > 0) {
-            this.issues = [];
-            this.reportCloneClasses();
-        }
+            if (this.option("enableCloneClasses") && this.collectedPairs.length > 0) {
+                this.issues = [];
+                PerfReporter.time(
+                    this.constructor.name,
+                    'afterCheck.reportCloneClasses',
+                    () => this.reportCloneClasses()
+                );
+            }
+        });
     }
 
     /**
@@ -188,7 +209,11 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
             return null;
         }
 
-        const { hash, normalizedContent } = this.computeHash(stmts);
+        const { hash, normalizedContent } = PerfReporter.time(
+            this.constructor.name,
+            'collectMethods.computeHash',
+            () => this.computeHash(stmts)
+        );
         const normalizedTokens = normalizedContent.split("|").filter(token => token.length > 0);
 
         const minComplexity = this.option("minComplexity");
