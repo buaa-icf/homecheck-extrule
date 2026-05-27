@@ -37,8 +37,22 @@ describe('PerfReporter (disabled)', () => {
 });
 
 describe('PerfReporter (enabled)', () => {
+    const created: Array<{ dispose(): void }> = [];
+
+    function make(): ReturnType<typeof createPerfReporter> {
+        const r = createPerfReporter(true);
+        created.push(r);
+        return r;
+    }
+
+    afterEach(() => {
+        while (created.length > 0) {
+            created.pop()!.dispose();
+        }
+    });
+
     it('record() 累加 count/total 并更新 min/max', () => {
-        const reporter = createPerfReporter(true);
+        const reporter = make();
         reporter.record('CheckerA', 'check', BigInt(1_000_000)); // 1ms
         reporter.record('CheckerA', 'check', BigInt(3_000_000)); // 3ms
         reporter.record('CheckerA', 'check', BigInt(2_000_000)); // 2ms
@@ -53,7 +67,7 @@ describe('PerfReporter (enabled)', () => {
     });
 
     it('time(fn) 返回 fn 结果并记录耗时', () => {
-        const reporter = createPerfReporter(true);
+        const reporter = make();
         const result = reporter.time('CheckerA', 'beforeCheck', () => 'ok');
         expect(result).toBe('ok');
         const stage = reporter.toJSON().checkers['CheckerA'].stages['beforeCheck'];
@@ -62,7 +76,7 @@ describe('PerfReporter (enabled)', () => {
     });
 
     it('time(fn) 抛异常时仍记录耗时', () => {
-        const reporter = createPerfReporter(true);
+        const reporter = make();
         expect(() => reporter.time('CheckerA', 'beforeCheck', () => {
             throw new Error('boom');
         })).toThrow('boom');
@@ -71,14 +85,14 @@ describe('PerfReporter (enabled)', () => {
     });
 
     it('start().end() 与 time() 等价', () => {
-        const reporter = createPerfReporter(true);
+        const reporter = make();
         const h = reporter.start('CheckerA', 'check');
         h.end();
         expect(reporter.toJSON().checkers['CheckerA'].stages['check'].count).toBe(1);
     });
 
     it('totalMs 仅累加顶层阶段，不重复计入子阶段', () => {
-        const reporter = createPerfReporter(true);
+        const reporter = make();
         reporter.record('CheckerA', 'collectMethods', BigInt(5_000_000));
         reporter.record('CheckerA', 'collectMethods.computeHash', BigInt(2_000_000));
         const checker = reporter.toJSON().checkers['CheckerA'];
@@ -87,7 +101,7 @@ describe('PerfReporter (enabled)', () => {
     });
 
     it('flush() 写出符合 schema 的 JSON', () => {
-        const reporter = createPerfReporter(true);
+        const reporter = make();
         reporter.record('CheckerA', 'beforeCheck', BigInt(1_000_000));
         const tmp = path.join(os.tmpdir(), `perf-enabled-${Date.now()}.json`);
         reporter.flush(tmp);
@@ -104,9 +118,21 @@ describe('PerfReporter (enabled)', () => {
     });
 
     it('reset() 清空累计', () => {
-        const reporter = createPerfReporter(true);
+        const reporter = make();
         reporter.record('CheckerA', 'beforeCheck', BigInt(1_000_000));
         reporter.reset();
         expect(reporter.toJSON().checkers).toEqual({});
+    });
+
+    it('dispose() 移除 exit 监听并清空数据', () => {
+        const reporter = make();
+        reporter.record('CheckerA', 'beforeCheck', BigInt(1_000_000));
+        const before = process.listenerCount('exit');
+        reporter.dispose();
+        const after = process.listenerCount('exit');
+        expect(after).toBe(before - 1);
+        expect(reporter.toJSON().checkers).toEqual({});
+        // 重复 dispose 不应抛
+        expect(() => reporter.dispose()).not.toThrow();
     });
 });

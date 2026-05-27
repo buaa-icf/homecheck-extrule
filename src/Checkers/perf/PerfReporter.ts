@@ -21,6 +21,7 @@ export class PerfReporterImpl {
     private wallStartNs: bigint;
     private wallStartIso: string;
     private exitHookRegistered = false;
+    private exitHandler: (() => void) | null = null;
 
     constructor(enabled: boolean) {
         this.enabled = enabled;
@@ -36,13 +37,14 @@ export class PerfReporterImpl {
             return;
         }
         this.exitHookRegistered = true;
-        process.on('exit', () => {
+        this.exitHandler = () => {
             try {
                 this.flush();
             } catch {
                 // 退出钩子里吞掉所有异常，避免影响正常退出码
             }
-        });
+        };
+        process.on('exit', this.exitHandler);
     }
 
     public start(checker: string, stage: string): StageHandle {
@@ -142,6 +144,16 @@ export class PerfReporterImpl {
         this.data.clear();
         this.wallStartNs = process.hrtime.bigint();
         this.wallStartIso = new Date().toISOString();
+    }
+
+    /** 测试 / 长驻进程清理：移除 exit 钩子并清空累计。 */
+    public dispose(): void {
+        if (this.exitHandler) {
+            process.removeListener('exit', this.exitHandler);
+            this.exitHandler = null;
+            this.exitHookRegistered = false;
+        }
+        this.data.clear();
     }
 }
 
