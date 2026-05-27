@@ -55,6 +55,7 @@ import {
     Token,
     Tokenizer
 } from "./FragmentDetection";
+import { PerfReporter } from "./perf";
 
 const gMetaData: BaseMetaData = {
     severity: 2,
@@ -129,82 +130,130 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      * 读取源码、执行预处理并将 token 送入匹配器。
      */
     public collectTokens = (arkFile: ArkFile): void => {
-        const filePath = arkFile.getFilePath();
-        const readResult = readSourceFile(filePath);
-        let sourceCode = readResult.content;
+        const checkerName = this.constructor.name;
+        PerfReporter.time(checkerName, 'collectTokens', () => {
+            const filePath = arkFile.getFilePath();
+            const readResult = PerfReporter.time(
+                checkerName,
+                'collectTokens.readSourceFile',
+                () => readSourceFile(filePath)
+            );
+            let sourceCode = readResult.content;
 
-        if (sourceCode === null) {
-            this.diagnostics.filesReadFailed++;
-            this.diagnostics.errors.push({
-                filePath,
-                phase: "read",
-                message: readResult.errorMessage ?? "failed to read source file"
-            });
-            return;
-        }
-
-        this.fileCache.set(filePath, arkFile);
-
-        if (this.options.ignoreLogs) {
-            sourceCode = removeLogLines(sourceCode, arkFile);
-        }
-
-        try {
-            const tokens = this.tokenizer.tokenize(sourceCode, filePath);
-            if (tokens.length < this.options.minimumTokens) {
+            if (sourceCode === null) {
+                this.diagnostics.filesReadFailed++;
+                this.diagnostics.errors.push({
+                    filePath,
+                    phase: "read",
+                    message: readResult.errorMessage ?? "failed to read source file"
+                });
                 return;
             }
 
-            const minDistinctTokenTypes = this.options.minDistinctTokenTypes;
-            if (minDistinctTokenTypes > 0) {
-                const distinctTypes = new Set(tokens.map(token => token.type)).size;
-                if (distinctTypes < minDistinctTokenTypes) {
-                    return;
-                }
+            this.fileCache.set(filePath, arkFile);
+
+            if (this.options.ignoreLogs) {
+                const narrowed = sourceCode;
+                sourceCode = PerfReporter.time(
+                    checkerName,
+                    'collectTokens.removeLogLines',
+                    () => removeLogLines(narrowed, arkFile)
+                );
             }
 
-            this.cloneMatcher.processFile(tokens, filePath);
-            this.fileTokenCache.set(filePath, tokens);
-        } catch (error) {
-            this.diagnostics.filesProcessFailed++;
-            this.diagnostics.errors.push({
-                filePath,
-                phase: "process",
-                message: error instanceof Error ? error.message : "failed to process file"
-            });
-        }
+            try {
+                const narrowedSource = sourceCode;
+                const tokens = PerfReporter.time(
+                    checkerName,
+                    'collectTokens.tokenize',
+                    () => this.tokenizer.tokenize(narrowedSource, filePath)
+                );
+                if (tokens.length < this.options.minimumTokens) {
+                    return;
+                }
+
+                const minDistinctTokenTypes = this.options.minDistinctTokenTypes;
+                if (minDistinctTokenTypes > 0) {
+                    const distinctTypes = new Set(tokens.map(token => token.type)).size;
+                    if (distinctTypes < minDistinctTokenTypes) {
+                        return;
+                    }
+                }
+
+                PerfReporter.time(
+                    checkerName,
+                    'collectTokens.processFile',
+                    () => this.cloneMatcher.processFile(tokens, filePath)
+                );
+                this.fileTokenCache.set(filePath, tokens);
+            } catch (error) {
+                this.diagnostics.filesProcessFailed++;
+                this.diagnostics.errors.push({
+                    filePath,
+                    phase: "process",
+                    message: error instanceof Error ? error.message : "failed to process file"
+                });
+            }
+        });
     }
 
     /**
      * 收尾阶段统一生成 issue。
      */
     public afterCheck(): void {
-        const clonePairs = this.cloneMatcher.getClonePairs();
-        const merged = clonePairs.length > 0 ? this.cloneMerger.merge(clonePairs) : [];
-        const exactClones = deduplicateMergedClones(filterSelfOverlappingClones(merged));
+        const checkerName = this.constructor.name;
+        PerfReporter.time(checkerName, 'afterCheck', () => {
+            const clonePairs = PerfReporter.time(
+                checkerName,
+                'afterCheck.getClonePairs',
+                () => this.cloneMatcher.getClonePairs()
+            );
 
-        const threshold = this.options.similarityThreshold;
-        const nearMissClones = threshold < 1.0 ? this.findNearMissClones(threshold) : [];
+            const merged = clonePairs.length > 0
+                ? PerfReporter.time(
+                    checkerName,
+                    'afterCheck.merge',
+                    () => this.cloneMerger.merge(clonePairs)
+                )
+                : [];
 
-        if (exactClones.length === 0 && nearMissClones.length === 0) {
-            return;
-        }
+            const exactClones = PerfReporter.time(
+                checkerName,
+                'afterCheck.dedup',
+                () => deduplicateMergedClones(filterSelfOverlappingClones(merged))
+            );
 
-        if (this.options.enableCloneClasses) {
-            const classReports = this.createCloneClassReports(exactClones);
-            for (const report of classReports) {
-                this.addCloneClassIssueReport(report);
+            const threshold = this.options.similarityThreshold;
+            const nearMissClones = threshold < 1.0
+                ? PerfReporter.time(
+                    checkerName,
+                    'afterCheck.findNearMissClones',
+                    () => this.findNearMissClones(threshold)
+                )
+                : [];
+
+            if (exactClones.length === 0 && nearMissClones.length === 0) {
+                return;
             }
-            return;
-        }
 
-        for (const clone of exactClones) {
-            this.addIssueReport(this.createCloneReport(clone));
-        }
+            PerfReporter.time(checkerName, 'afterCheck.reportGen', () => {
+                if (this.options.enableCloneClasses) {
+                    const classReports = this.createCloneClassReports(exactClones);
+                    for (const report of classReports) {
+                        this.addCloneClassIssueReport(report);
+                    }
+                    return;
+                }
 
-        for (const clone of nearMissClones) {
-            this.addIssueReport(this.createNearMissReport(clone));
-        }
+                for (const clone of exactClones) {
+                    this.addIssueReport(this.createCloneReport(clone));
+                }
+
+                for (const clone of nearMissClones) {
+                    this.addIssueReport(this.createNearMissReport(clone));
+                }
+            });
+        });
     }
 
     /**
