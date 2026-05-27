@@ -1012,16 +1012,25 @@ git commit -m "test(perf): add end-to-end smoke test for perf instrumentation"
 Run: `npm test`
 Expected: 所有测试通过，包含 PerfReporter 单元 + 集成。
 
-- [ ] **手动验证 perfReport.json 产物**
+- [ ] **手动验证 perfReport.json 产物**（须用直接 Node 调用，不是 Jest）
+
+> 备注：Jest 在测试结束时会强制终止 worker，**不会**触发用户注册的 `'exit'`/`'beforeExit'` 监听器。因此 PerfReporter 的 exit-hook 自动 flush 在 Jest 内观察不到。生产路径（`node ./node_modules/homecheck/lib/run.js ...` 或任何直接 Node 调用）退出时会正常触发并写文件。Task 8 的集成测试通过显式 `PerfReporter.flush(tmp)` 验证 schema，不依赖 exit-hook。
 
 Run:
 
 ```bash
-EXTRULES_PERF=1 npx jest test/LongMethodCheck.integration.test.ts -v
+rm -f report/perfReport.json
+npx tsc -p ./tsconfig.prod.json
+EXTRULES_PERF=1 node -e "
+const { PerfReporter } = require('./lib/Checkers/perf/PerfReporter');
+PerfReporter.record('SmokeCheck', 'beforeCheck', BigInt(1500000));
+PerfReporter.record('SmokeCheck', 'check', BigInt(3000000));
+PerfReporter.record('SmokeCheck', 'check', BigInt(5000000));
+"
 ls -l report/perfReport.json
 ```
 
-Expected: `report/perfReport.json` 存在，包含 `checkers.LongMethodCheck.stages.{beforeCheck,check}` 字段。
+Expected: `report/perfReport.json` 存在，`checkers.SmokeCheck.stages.{beforeCheck,check}` 字段齐全且 `check.count === 2`。
 
 - [ ] **手动验证关闭时无产物**
 
@@ -1030,8 +1039,12 @@ Run:
 ```bash
 rm -f report/perfReport.json
 unset EXTRULES_PERF
-npx jest test/LongMethodCheck.integration.test.ts -v
+node -e "
+const { PerfReporter } = require('./lib/Checkers/perf/PerfReporter');
+PerfReporter.record('SmokeCheck', 'beforeCheck', BigInt(1500000));
+PerfReporter.flush();
+"
 test ! -f report/perfReport.json && echo OK
 ```
 
-Expected: 输出 `OK`（关闭时不应该写文件）。
+Expected: 输出 `OK`（关闭时 `flush()` 是 no-op，且未注册 exit hook）。
