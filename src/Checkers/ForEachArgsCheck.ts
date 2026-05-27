@@ -27,6 +27,7 @@ import {
 import { RuleOptionSchema } from "./config/parseRuleOptions";
 import { ForeachArgsRuleOptions } from "./config/types";
 import { BaseRuleChecker } from "./BaseRuleChecker";
+import { PerfReporter } from "./perf";
 
 const logger = Logger.getLogger(LOG_MODULE_TYPE.HOMECHECK, "ForeachArgsCheck");
 const gMetaData: BaseMetaData = {
@@ -78,22 +79,24 @@ export class ForEachArgsCheck extends BaseRuleChecker<ForeachArgsRuleOptions> {
     }
 
     public check = (targetMtd: ArkMethod) => {
-        const stmts = targetMtd.getBody()?.getCfg().getStmts() ?? [];
-        const minArgs = this.getOptions().minArgs;
+        PerfReporter.time(this.constructor.name, 'check', () => {
+            const stmts = targetMtd.getBody()?.getCfg().getStmts() ?? [];
+            const minArgs = this.getOptions().minArgs;
 
-        for (const stmt of stmts) {
-            const invokeExpr = CheckerUtils.getInvokeExprFromStmt(stmt);
-            if (!invokeExpr) {
-                continue;
+            for (const stmt of stmts) {
+                const invokeExpr = CheckerUtils.getInvokeExprFromStmt(stmt);
+                if (!invokeExpr) {
+                    continue;
+                }
+                const methodSign = invokeExpr.getMethodSignature();
+                const className = methodSign.getDeclaringClassSignature().getClassName();
+                const methodName = methodSign.getMethodSubSignature().getMethodName();
+                const argsNum = invokeExpr.getArgs().length;
+                if (className === this.FOREACH_CLASS && methodName === this.CREATE_METHOD && argsNum < minArgs) {
+                    this.addIssueReport(stmt);
+                }
             }
-            const methodSign = invokeExpr.getMethodSignature();
-            const className = methodSign.getDeclaringClassSignature().getClassName();
-            const methodName = methodSign.getMethodSubSignature().getMethodName();
-            const argsNum = invokeExpr.getArgs().length;
-            if (className === this.FOREACH_CLASS && methodName === this.CREATE_METHOD && argsNum < minArgs) {
-                this.addIssueReport(stmt);
-            }
-        }
+        });
     };
 
     private addIssueReport(stmt: Stmt) {

@@ -20,6 +20,7 @@ import { FeatureEnvyRuleOptions } from "./config/types";
 import { BaseRuleChecker } from "./BaseRuleChecker";
 import { buildFeatureEnvyFieldTypeMap, FeatureEnvyAnalyzer, FeatureEnvyMetrics } from "./feature-envy/analysis";
 import { isArkUiMethod, shouldSkipMethod } from "./shared/ark";
+import { PerfReporter } from "./perf";
 
 // Heuristic detection for "Feature Envy" code smell: a method that tends to
 // interact much more with another class than with its own.
@@ -66,43 +67,45 @@ export class FeatureEnvyCheck extends BaseRuleChecker<FeatureEnvyRuleOptions> {
      * Analyze a method's call targets and report if dominated by one foreign class.
      */
     public check = (targetMtd: ArkMethod) => {
-        const methodName = targetMtd.getName() ?? "";
-        if (shouldSkipMethod(methodName) || isArkUiMethod(targetMtd)) {
-            return;
-        }
+        PerfReporter.time(this.constructor.name, 'check', () => {
+            const methodName = targetMtd.getName() ?? "";
+            if (shouldSkipMethod(methodName) || isArkUiMethod(targetMtd)) {
+                return;
+            }
 
-        const body = targetMtd.getBody();
-        if (!body) {
-            return;
-        }
+            const body = targetMtd.getBody();
+            if (!body) {
+                return;
+            }
 
-        const stmts = body.getCfg().getStmts();
-        if (!stmts.length) {
-            return;
-        }
+            const stmts = body.getCfg().getStmts();
+            if (!stmts.length) {
+                return;
+            }
 
-        const selfClass = targetMtd.getSignature().getDeclaringClassSignature().getClassName();
-        const analyzer = new FeatureEnvyAnalyzer(selfClass, buildFeatureEnvyFieldTypeMap(targetMtd));
-        const analysis = analyzer.analyze(stmts);
-        const { metrics, pureMappingAdapter } = analysis;
-        const { atfdThreshold, ldaThreshold, cpfdThreshold } = this.getOptions();
+            const selfClass = targetMtd.getSignature().getDeclaringClassSignature().getClassName();
+            const analyzer = new FeatureEnvyAnalyzer(selfClass, buildFeatureEnvyFieldTypeMap(targetMtd));
+            const analysis = analyzer.analyze(stmts);
+            const { metrics, pureMappingAdapter } = analysis;
+            const { atfdThreshold, ldaThreshold, cpfdThreshold } = this.getOptions();
 
-        if (!metrics.dominantProvider) {
-            return;
-        }
+            if (!metrics.dominantProvider) {
+                return;
+            }
 
-        if (pureMappingAdapter) {
-            return;
-        }
+            if (pureMappingAdapter) {
+                return;
+            }
 
-        const envyDetected = metrics.atfd > atfdThreshold
-            && metrics.lda < ldaThreshold
-            && metrics.cpfd <= cpfdThreshold;
-        if (!envyDetected) {
-            return;
-        }
+            const envyDetected = metrics.atfd > atfdThreshold
+                && metrics.lda < ldaThreshold
+                && metrics.cpfd <= cpfdThreshold;
+            if (!envyDetected) {
+                return;
+            }
 
-        this.addIssueReport(targetMtd, metrics);
+            this.addIssueReport(targetMtd, metrics);
+        });
     }
     private getMethodPosition(method: ArkMethod): { line: number; startCol: number; endCol: number; filePath: string } {
         const line = method.getLine() ?? 0;
