@@ -98,13 +98,15 @@ export abstract class CodeCloneBaseCheck implements AdviceChecker {
      * 每轮检测开始时重置状态并解析配置。
      */
     public beforeCheck(): void {
-        this.methodsByHash.clear();
-        this.collectedMethodKeys.clear();
-        this.reportedPairs.clear();
-        this.collectedPairs = [];
-        this.issues = [];
-        this.options = parseRuleOptions(this.rule, METHOD_CLONE_OPTIONS_SCHEMA, DEFAULT_METHOD_CLONE_OPTIONS);
-        this.optionsResolved = true;
+        PerfReporter.time(this.constructor.name, 'beforeCheck', () => {
+            this.methodsByHash.clear();
+            this.collectedMethodKeys.clear();
+            this.reportedPairs.clear();
+            this.collectedPairs = [];
+            this.issues = [];
+            this.options = parseRuleOptions(this.rule, METHOD_CLONE_OPTIONS_SCHEMA, DEFAULT_METHOD_CLONE_OPTIONS);
+            this.optionsResolved = true;
+        });
     }
 
     public check = (): void => {}

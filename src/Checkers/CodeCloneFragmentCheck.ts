@@ -102,15 +102,17 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      * 每轮检测开始时重置配置与缓存状态。
      */
     public beforeCheck(): void {
-        this.options = parseFragmentCloneOptions(this.rule);
-        this.diagnostics = createEmptyDiagnostics();
-        this.issues = [];
-        this.fileCache.clear();
-        this.fileTokenCache.clear();
+        PerfReporter.time(this.constructor.name, 'beforeCheck', () => {
+            this.options = parseFragmentCloneOptions(this.rule);
+            this.diagnostics = createEmptyDiagnostics();
+            this.issues = [];
+            this.fileCache.clear();
+            this.fileTokenCache.clear();
 
-        this.cloneMatcher = new CloneMatcher(this.options.minimumTokens);
-        this.cloneMerger = new CloneMerger(this.options.minimumTokens);
-        this.tokenizer = this.createTokenizer(this.options);
+            this.cloneMatcher = new CloneMatcher(this.options.minimumTokens);
+            this.cloneMerger = new CloneMerger(this.options.minimumTokens);
+            this.tokenizer = this.createTokenizer(this.options);
+        });
     }
 
     public check = (): void => {}
