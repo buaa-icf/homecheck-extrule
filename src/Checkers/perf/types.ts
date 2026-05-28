@@ -36,5 +36,9 @@ export interface PerfReportShape {
     wallStartIso: string;
     wallEndIso: string;
     totalWallMs: number;
+    /** 检测阶段观测到的进程堆内存峰值（MB，两位小数）。 */
+    peakHeapUsedMB: number;
+    /** 检测阶段观测到的进程常驻内存(RSS)峰值（MB，两位小数）。 */
+    peakRssMB: number;
     checkers: Record<string, CheckerReportJson>;
 }

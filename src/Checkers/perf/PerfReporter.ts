@@ -11,8 +11,15 @@ import {
 
 const NOOP_HANDLE: StageHandle = { end: () => {} };
 
+/** 内存采样间隔（毫秒）。采样器 unref，不会阻止进程退出。 */
+const MEM_SAMPLE_INTERVAL_MS = 200;
+
 function roundMs(ns: bigint): number {
     return Math.round(Number(ns) / 1e4) / 1e2; // ns -> 0.01ms 精度
+}
+
+function bytesToMB(bytes: number): number {
+    return Math.round((bytes / (1024 * 1024)) * 100) / 100;
 }
 
 export class PerfReporterImpl {
@@ -22,6 +29,9 @@ export class PerfReporterImpl {
     private wallStartIso: string;
     private exitHookRegistered = false;
     private exitHandler: (() => void) | null = null;
+    private peakHeapUsedBytes = 0;
+    private peakRssBytes = 0;
+    private memSampler: ReturnType<typeof setInterval> | null = null;
 
     constructor(enabled: boolean) {
         this.enabled = enabled;
@@ -29,6 +39,33 @@ export class PerfReporterImpl {
         this.wallStartIso = new Date().toISOString();
         if (enabled) {
             this.registerExitHook();
+            this.startMemorySampler();
+            this.sampleMemory();
+        }
+    }
+
+    /** 采样一次进程内存并更新峰值。 */
+    public sampleMemory(): void {
+        if (!this.enabled) {
+            return;
+        }
+        const usage = process.memoryUsage();
+        if (usage.heapUsed > this.peakHeapUsedBytes) {
+            this.peakHeapUsedBytes = usage.heapUsed;
+        }
+        if (usage.rss > this.peakRssBytes) {
+            this.peakRssBytes = usage.rss;
+        }
+    }
+
+    private startMemorySampler(): void {
+        if (this.memSampler) {
+            return;
+        }
+        this.memSampler = setInterval(() => this.sampleMemory(), MEM_SAMPLE_INTERVAL_MS);
+        // unref：采样器不应阻止进程正常退出。
+        if (typeof this.memSampler.unref === 'function') {
+            this.memSampler.unref();
         }
     }
 
@@ -127,6 +164,8 @@ export class PerfReporterImpl {
             wallStartIso: this.wallStartIso,
             wallEndIso: new Date().toISOString(),
             totalWallMs,
+            peakHeapUsedMB: bytesToMB(this.peakHeapUsedBytes),
+            peakRssMB: bytesToMB(this.peakRssBytes),
             checkers
         };
     }
@@ -135,6 +174,7 @@ export class PerfReporterImpl {
         if (!this.enabled) {
             return;
         }
+        this.sampleMemory(); // 落盘前再采一次，捕获收尾阶段峰值
         const target = filePath ?? path.resolve(process.cwd(), 'report/perfReport.json');
         fs.mkdirSync(path.dirname(target), { recursive: true });
         fs.writeFileSync(target, JSON.stringify(this.toJSON(), null, 2));
@@ -144,14 +184,20 @@ export class PerfReporterImpl {
         this.data.clear();
         this.wallStartNs = process.hrtime.bigint();
         this.wallStartIso = new Date().toISOString();
+        this.peakHeapUsedBytes = 0;
+        this.peakRssBytes = 0;
     }
 
-    /** 测试 / 长驻进程清理：移除 exit 钩子并清空累计。 */
+    /** 测试 / 长驻进程清理：移除 exit 钩子、停止采样器并清空累计。 */
     public dispose(): void {
         if (this.exitHandler) {
             process.removeListener('exit', this.exitHandler);
             this.exitHandler = null;
             this.exitHookRegistered = false;
+        }
+        if (this.memSampler) {
+            clearInterval(this.memSampler);
+            this.memSampler = null;
         }
         this.data.clear();
     }

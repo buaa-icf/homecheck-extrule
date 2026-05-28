@@ -135,4 +135,45 @@ describe('PerfReporter (enabled)', () => {
         // 重复 dispose 不应抛
         expect(() => reporter.dispose()).not.toThrow();
     });
+
+    it('sampleMemory() 后报告中峰值内存 > 0', () => {
+        const reporter = make();
+        reporter.sampleMemory();
+        const json = reporter.toJSON();
+        expect(json.peakHeapUsedMB).toBeGreaterThan(0);
+        expect(json.peakRssMB).toBeGreaterThan(0);
+        expect(json.peakRssMB).toBeGreaterThanOrEqual(json.peakHeapUsedMB);
+    });
+
+    it('peak 内存只增不减（取最大值）', () => {
+        const reporter = make();
+        reporter.sampleMemory();
+        const first = reporter.toJSON().peakHeapUsedMB;
+        // 分配一大块内存以抬高 heapUsed，再采样
+        const big: number[] = new Array(2_000_000).fill(1);
+        reporter.sampleMemory();
+        const second = reporter.toJSON().peakHeapUsedMB;
+        expect(second).toBeGreaterThanOrEqual(first);
+        // 防止 JIT 把 big 优化掉
+        expect(big.length).toBe(2_000_000);
+    });
+
+    it('reset() 清空内存峰值', () => {
+        const reporter = make();
+        reporter.sampleMemory();
+        expect(reporter.toJSON().peakHeapUsedMB).toBeGreaterThan(0);
+        reporter.reset();
+        expect(reporter.toJSON().peakHeapUsedMB).toBe(0);
+        expect(reporter.toJSON().peakRssMB).toBe(0);
+    });
+});
+
+describe('PerfReporter (disabled, memory)', () => {
+    it('disabled 时 sampleMemory() 不更新峰值', () => {
+        const reporter = createPerfReporter(false);
+        reporter.sampleMemory();
+        const json = reporter.toJSON();
+        expect(json.peakHeapUsedMB).toBe(0);
+        expect(json.peakRssMB).toBe(0);
+    });
 });
