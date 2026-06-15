@@ -172,12 +172,8 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
                     return;
                 }
 
-                const minDistinctTokenTypes = this.options.minDistinctTokenTypes;
-                if (minDistinctTokenTypes > 0) {
-                    const distinctTypes = new Set(tokens.map(token => token.type)).size;
-                    if (distinctTypes < minDistinctTokenTypes) {
-                        return;
-                    }
+                if (!hasEnoughDistinctTokenTypes(tokens, this.options.minDistinctTokenTypes)) {
+                    return;
                 }
 
                 PerfReporter.time(
@@ -400,4 +396,20 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             errors: [...this.diagnostics.errors]
         };
     }
+}
+
+function hasEnoughDistinctTokenTypes(tokens: Token[], minDistinctTokenTypes: number): boolean {
+    if (minDistinctTokenTypes <= 0) {
+        return true;
+    }
+
+    const distinctTypes = new Set<Token['type']>();
+    for (const token of tokens) {
+        distinctTypes.add(token.type);
+        if (distinctTypes.size >= minDistinctTokenTypes) {
+            return true;
+        }
+    }
+
+    return false;
 }

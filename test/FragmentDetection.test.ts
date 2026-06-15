@@ -1189,6 +1189,44 @@ describe('CodeCloneFragmentCheck - 规则类创建', () => {
         expect(matchers[0].matcher).toBeDefined();
         expect(matchers[0].callback).toBeDefined();
     });
+
+    test('collectTokens 检查 distinct token types 时不应对 token 数组调用 map', () => {
+        const check = new CodeCloneFragmentCheck();
+        check.rule = {
+            option: [{ minimumTokens: 1, minDistinctTokenTypes: 3, ignoreLogs: false }]
+        } as any;
+        check.beforeCheck();
+
+        const originalMap = Array.prototype.map;
+        let tokenArrayMaps = 0;
+        Array.prototype.map = function <T, U>(
+            this: T[],
+            callbackfn: (value: T, index: number, array: T[]) => U,
+            thisArg?: unknown
+        ): U[] {
+            if (this.every((item: unknown) =>
+                item !== null &&
+                typeof item === 'object' &&
+                'value' in item &&
+                'type' in item &&
+                'line' in item &&
+                'column' in item
+            )) {
+                tokenArrayMaps++;
+            }
+            return originalMap.call(this, callbackfn, thisArg) as U[];
+        };
+
+        try {
+            check.collectTokens({
+                getFilePath: () => 'test/sample/CodeClone/positive/type1/FileA.ets'
+            } as any);
+        } finally {
+            Array.prototype.map = originalMap;
+        }
+
+        expect(tokenArrayMaps).toBe(0);
+    });
 });
 
 describe('CodeCloneFragmentCheck - 范围判定逻辑', () => {
