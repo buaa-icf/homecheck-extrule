@@ -27,10 +27,10 @@ export interface FragmentLocation {
     /** Token 指纹（规范化后的 Token 序列拼接），用于哈希碰撞验证 */
     tokenFingerprint?: string;
 
-    /** 当前文件的 Token ID 序列引用（用于惰性校验） */
+    /** 可选 Token ID 序列引用（兼容手工构造 location；主路径使用文件级缓存） */
     tokenIds?: number[];
 
-    /** 当前文件的 Token 序列引用（用于惰性生成指纹） */
+    /** 可选 Token 序列引用（兼容手工构造 location；主路径使用文件级缓存） */
     allTokens?: Token[];
 }
 

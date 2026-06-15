@@ -76,6 +76,9 @@ export class CloneMatcher {
     /** 每个文件的 Token 序列引用（用于惰性指纹计算） */
     private fileTokens: Map<string, Token[]> = new Map();
 
+    /** 每个文件的 Token ID 序列引用（用于窗口等价校验） */
+    private fileTokenIds: Map<string, number[]> = new Map();
+
     /** 单个规范化指纹最多展开的候选克隆对数量 */
     private readonly maxPairsPerFingerprint: number;
     
@@ -125,25 +128,24 @@ export class CloneMatcher {
 
         // 将 Token 值映射为整数 ID
         const tokenIds = tokens.map(t => this.getTokenId(t.value));
+        this.fileTokenIds.set(file, tokenIds);
 
         const rollingHash = new RollingHash(this.windowSize);
 
         // 初始化首个窗口
-        const firstHash = rollingHash.init(tokenIds.slice(0, this.windowSize));
+        const firstHash = rollingHash.initWindow(tokenIds, 0);
         const firstEndLine = tokens[this.windowSize - 1].line;
 
         this.hashIndex.add(firstHash, {
             file,
             startIndex: 0,
             startLine: tokens[0].line,
-            endLine: firstEndLine,
-            tokenIds,
-            allTokens: tokens
+            endLine: firstEndLine
         });
 
         // 滑动计算后续窗口（每步 O(1)）
         for (let i = 1; i <= tokens.length - this.windowSize; i++) {
-            const hash = rollingHash.slide(
+            const hash = rollingHash.slidePositive(
                 tokenIds[i - 1],
                 tokenIds[i + this.windowSize - 1]
             );
@@ -152,9 +154,7 @@ export class CloneMatcher {
                 file,
                 startIndex: i,
                 startLine: tokens[i].line,
-                endLine: tokens[i + this.windowSize - 1].line,
-                tokenIds,
-                allTokens: tokens
+                endLine: tokens[i + this.windowSize - 1].line
             });
         }
     }
@@ -305,8 +305,10 @@ export class CloneMatcher {
     }
 
     private haveSameTokenWindow(a: FragmentLocation, b: FragmentLocation): boolean {
-        if (a.tokenIds !== undefined && b.tokenIds !== undefined) {
-            return sameTokenIdWindow(a.tokenIds, a.startIndex, b.tokenIds, b.startIndex, this.windowSize);
+        const firstIds = a.tokenIds ?? this.fileTokenIds.get(a.file);
+        const secondIds = b.tokenIds ?? this.fileTokenIds.get(b.file);
+        if (firstIds !== undefined && secondIds !== undefined) {
+            return sameTokenIdWindow(firstIds, a.startIndex, secondIds, b.startIndex, this.windowSize);
         }
 
         return this.resolveFingerprint(a) === this.resolveFingerprint(b);
@@ -326,6 +328,7 @@ export class CloneMatcher {
         this.hashIndex.clear();
         this.tokenVocab.clear();
         this.fileTokens.clear();
+        this.fileTokenIds.clear();
     }
     
     /**

@@ -397,6 +397,18 @@ describe('克隆匹配器', () => {
             Array.prototype.slice = originalSlice;
         }
     });
+
+    test('processFile 应避免在每个窗口位置重复挂载 token 序列引用', () => {
+        const matcher = new CloneMatcher(4);
+        matcher.processFile(mockTokens(['a', 'b', 'c', 'd', 'x', 'a', 'b', 'c', 'd']), 'a.ts');
+
+        const duplicateLocations = matcher.getMatches().flatMap(match => match.locations);
+
+        expect(duplicateLocations.length).toBeGreaterThan(0);
+        expect(duplicateLocations.every(location => !('tokenIds' in location))).toBe(true);
+        expect(duplicateLocations.every(location => !('allTokens' in location))).toBe(true);
+        expect(matcher.getExactCloneGroups()).toHaveLength(1);
+    });
     
     test('没有克隆时应返回空数组', () => {
         const matcher = new CloneMatcher(3);
@@ -1840,6 +1852,24 @@ describe('RollingHash', () => {
             const directHash = rhDirect.init(sequence.slice(i, i + windowSize));
             expect(slideHash).toBe(directHash);
         }
+    });
+
+    test('initWindow 应直接从 Token ID 数组窗口初始化且结果等同 init', () => {
+        const sequence = [1, 2, 3, 4, 5, 6, 7];
+        const rhWindow = new RollingHash(3);
+        const rhSlice = new RollingHash(3);
+
+        expect(rhWindow.initWindow(sequence, 2)).toBe(rhSlice.init([3, 4, 5]));
+    });
+
+    test('slidePositive 应在正整数 Token ID 下与 slide 结果一致', () => {
+        const rhFast = new RollingHash(3);
+        const rhRegular = new RollingHash(3);
+
+        rhFast.init([1, 2, 3]);
+        rhRegular.init([1, 2, 3]);
+
+        expect(rhFast.slidePositive(1, 4)).toBe(rhRegular.slide(1, 4));
     });
 
     test('windowSize=1 边界情况', () => {

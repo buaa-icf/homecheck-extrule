@@ -62,10 +62,26 @@ export class RollingHash {
             throw new Error(`tokenIds length must equal windowSize (${this.windowSize})`);
         }
 
+        return this.initWindow(tokenIds, 0);
+    }
+
+    /**
+     * 从完整 Token ID 数组的指定窗口初始化哈希，避免调用方复制首窗口数组。
+     *
+     * @param tokenIds 完整 Token ID 序列
+     * @param startIndex 窗口起始位置
+     * @returns 组合哈希键
+     */
+    initWindow(tokenIds: number[], startIndex: number): string {
+        if (startIndex < 0 || startIndex + this.windowSize > tokenIds.length) {
+            throw new Error(`tokenIds window must contain windowSize (${this.windowSize}) items`);
+        }
+
         this.hash1 = 0;
         this.hash2 = 0;
 
-        for (const tokenId of tokenIds) {
+        for (let i = startIndex; i < startIndex + this.windowSize; i++) {
+            const tokenId = tokenIds[i];
             const normalized1 = this.normalizeMod(tokenId, this.mod1);
             const normalized2 = this.normalizeMod(tokenId, this.mod2);
 
@@ -111,6 +127,49 @@ export class RollingHash {
                 this.normalizeMod(addId, this.mod2),
             this.mod2
         );
+
+        return this.getHashKey();
+    }
+
+    /**
+     * 正整数 Token ID 的快速滑动路径。
+     *
+     * CloneMatcher 生成的 Token ID 始终为正整数，因此可以少做负数规范化。
+     */
+    slidePositive(removeId: number, addId: number): string {
+        const removeContribution1 = this.mulMod(
+            removeId >= this.mod1 ? removeId % this.mod1 : removeId,
+            this.pow1,
+            this.mod1
+        );
+        const removeContribution2 = this.mulMod(
+            removeId >= this.mod2 ? removeId % this.mod2 : removeId,
+            this.pow2,
+            this.mod2
+        );
+
+        let nextHash1 = this.hash1 - removeContribution1;
+        if (nextHash1 < 0) {
+            nextHash1 += this.mod1;
+        }
+
+        let nextHash2 = this.hash2 - removeContribution2;
+        if (nextHash2 < 0) {
+            nextHash2 += this.mod2;
+        }
+
+        const add1 = addId >= this.mod1 ? addId % this.mod1 : addId;
+        const add2 = addId >= this.mod2 ? addId % this.mod2 : addId;
+
+        this.hash1 = this.mulMod(nextHash1, this.base1, this.mod1) + add1;
+        if (this.hash1 >= this.mod1) {
+            this.hash1 %= this.mod1;
+        }
+
+        this.hash2 = this.mulMod(nextHash2, this.base2, this.mod2) + add2;
+        if (this.hash2 >= this.mod2) {
+            this.hash2 %= this.mod2;
+        }
 
         return this.getHashKey();
     }
