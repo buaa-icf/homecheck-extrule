@@ -127,7 +127,10 @@ export class CloneMatcher {
         this.fileTokens.set(file, tokens);
 
         // 将 Token 值映射为整数 ID
-        const tokenIds = tokens.map(t => this.getTokenId(t.value));
+        const tokenIds = new Array<number>(tokens.length);
+        for (let index = 0; index < tokens.length; index++) {
+            tokenIds[index] = this.getTokenId(tokens[index].value);
+        }
         this.fileTokenIds.set(file, tokenIds);
 
         const rollingHash = new RollingHash(this.windowSize);

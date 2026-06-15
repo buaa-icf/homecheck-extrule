@@ -271,6 +271,37 @@ describe('克隆匹配器', () => {
         // 5 个 Token，窗口大小 3，应该有 3 个窗口
         expect(matcher.getIndexSize()).toBe(3);
     });
+
+    test('processFile 构建 Token ID 时不应对 token 数组调用 map', () => {
+        const matcher = new CloneMatcher(3);
+        const tokens = mockTokens(['a', 'b', 'c', 'd', 'e']);
+        const originalMap = Array.prototype.map;
+        let tokenArrayMaps = 0;
+        Array.prototype.map = function <T, U>(
+            this: T[],
+            callbackfn: (value: T, index: number, array: T[]) => U,
+            thisArg?: unknown
+        ): U[] {
+            if (this.every((item: unknown) =>
+                item !== null &&
+                typeof item === 'object' &&
+                'value' in item &&
+                'type' in item
+            )) {
+                tokenArrayMaps++;
+            }
+            return originalMap.call(this, callbackfn, thisArg) as U[];
+        };
+
+        try {
+            matcher.processFile(tokens, 'test.ets');
+        } finally {
+            Array.prototype.map = originalMap;
+        }
+
+        expect(matcher.getIndexSize()).toBe(3);
+        expect(tokenArrayMaps).toBe(0);
+    });
     
     test('应能检测到同一文件内的克隆', () => {
         const matcher = new CloneMatcher(3);
