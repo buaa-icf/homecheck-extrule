@@ -130,12 +130,7 @@ export class CloneMatcher {
         const firstHash = rollingHash.initWindow(tokenIds, 0);
         const firstEndLine = tokens[this.windowSize - 1].line;
 
-        this.hashIndex.add(firstHash, {
-            file,
-            startIndex: 0,
-            startLine: tokens[0].line,
-            endLine: firstEndLine
-        });
+        this.hashIndex.addWindow(firstHash, file, 0, tokens[0].line, firstEndLine);
 
         // 滑动计算后续窗口（每步 O(1)）
         for (let i = 1; i <= tokens.length - this.windowSize; i++) {
@@ -144,12 +139,13 @@ export class CloneMatcher {
                 tokenIds[i + this.windowSize - 1]
             );
 
-            this.hashIndex.add(hash, {
+            this.hashIndex.addWindow(
+                hash,
                 file,
-                startIndex: i,
-                startLine: tokens[i].line,
-                endLine: tokens[i + this.windowSize - 1].line
-            });
+                i,
+                tokens[i].line,
+                tokens[i + this.windowSize - 1].line
+            );
         }
     }
     

@@ -233,6 +233,30 @@ describe('哈希索引', () => {
         expect(Array.isArray((index as any).index.get('hash1'))).toBe(true);
         expect(index.get('hash1')).toEqual([loc1, loc2]);
     });
+
+    test('addWindow 应以紧凑位置索引保存窗口并按需物化位置对象', () => {
+        const index = new HashIndex();
+
+        (index as any).addWindow('hash1', 'a.ets', 0, 1, 5);
+        expect(typeof (index as any).index.get('hash1')).toBe('number');
+
+        (index as any).addWindow('hash1', 'b.ets', 100, 10, 15);
+        expect((index as any).index.get('hash1')).toEqual([0, 1]);
+
+        expect(index.get('hash1')).toEqual([
+            { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5 },
+            { file: 'b.ets', startIndex: 100, startLine: 10, endLine: 15 }
+        ]);
+        expect(index.getDuplicates()).toEqual([
+            [
+                'hash1',
+                [
+                    { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5 },
+                    { file: 'b.ets', startIndex: 100, startLine: 10, endLine: 15 }
+                ]
+            ]
+        ]);
+    });
     
     test('getDuplicates 应只返回有重复的哈希', () => {
         const index = new HashIndex();
@@ -333,6 +357,22 @@ describe('克隆匹配器', () => {
 
         expect(matcher.getIndexSize()).toBe(3);
         expect(getTokenIdCalls).toBe(0);
+    });
+
+    test('processFile 应通过 HashIndex.addWindow 延迟物化窗口位置对象', () => {
+        const matcher = new CloneMatcher(3);
+        const addWindowSpy = jest.spyOn(HashIndex.prototype as any, 'addWindow');
+        const addSpy = jest.spyOn(HashIndex.prototype, 'add');
+
+        try {
+            matcher.processFile(mockTokens(['a', 'b', 'c', 'd', 'e']), 'file.ts');
+
+            expect(addWindowSpy).toHaveBeenCalledTimes(3);
+            expect(addSpy).toHaveBeenCalledTimes(0);
+        } finally {
+            addWindowSpy.mockRestore();
+            addSpy.mockRestore();
+        }
     });
     
     test('应能检测到同一文件内的克隆', () => {
