@@ -219,6 +219,19 @@ describe('哈希索引', () => {
         
         expect(index.get('hash1').length).toBe(2);
     });
+
+    test('单次出现的哈希不应提前分配数组桶', () => {
+        const index = new HashIndex();
+        const loc1 = { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5, tokenFingerprint: '' };
+        const loc2 = { file: 'b.ets', startIndex: 100, startLine: 10, endLine: 15, tokenFingerprint: '' };
+
+        index.add('hash1', loc1);
+        expect(Array.isArray((index as any).index.get('hash1'))).toBe(false);
+
+        index.add('hash1', loc2);
+        expect(Array.isArray((index as any).index.get('hash1'))).toBe(true);
+        expect(index.get('hash1')).toEqual([loc1, loc2]);
+    });
     
     test('getDuplicates 应只返回有重复的哈希', () => {
         const index = new HashIndex();

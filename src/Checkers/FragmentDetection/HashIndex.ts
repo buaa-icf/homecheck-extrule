@@ -6,7 +6,7 @@
 
 import { Token } from './Token';
 import { TokenWindow } from './SlidingWindow';
-import { appendToBucket, djb2Hash } from '../shared';
+import { djb2Hash } from '../shared';
 
 /**
  * 片段位置信息
@@ -41,7 +41,7 @@ export interface FragmentLocation {
  */
 export class HashIndex {
     /** 哈希值 → 位置列表 */
-    private index: Map<string, FragmentLocation[]> = new Map();
+    private index: Map<string, FragmentLocation | FragmentLocation[]> = new Map();
     
     /**
      * 添加一个位置到索引
@@ -50,7 +50,16 @@ export class HashIndex {
      * @param location 位置信息
      */
     add(hash: string, location: FragmentLocation): void {
-        appendToBucket(this.index, hash, location);
+        const existing = this.index.get(hash);
+        if (existing === undefined) {
+            this.index.set(hash, location);
+            return;
+        }
+        if (Array.isArray(existing)) {
+            existing.push(location);
+            return;
+        }
+        this.index.set(hash, [existing, location]);
     }
     
     /**
@@ -60,7 +69,11 @@ export class HashIndex {
      * @returns 位置列表，如果不存在则返回空数组
      */
     get(hash: string): FragmentLocation[] {
-        return this.index.get(hash) || [];
+        const value = this.index.get(hash);
+        if (value === undefined) {
+            return [];
+        }
+        return Array.isArray(value) ? value : [value];
     }
     
     /**
@@ -71,9 +84,9 @@ export class HashIndex {
     getDuplicates(): [string, FragmentLocation[]][] {
         const duplicates: [string, FragmentLocation[]][] = [];
         
-        for (const [hash, locations] of this.index) {
-            if (locations.length >= 2) {
-                duplicates.push([hash, locations]);
+        for (const [hash, value] of this.index) {
+            if (Array.isArray(value) && value.length >= 2) {
+                duplicates.push([hash, value]);
             }
         }
         
