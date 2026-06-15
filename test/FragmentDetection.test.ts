@@ -1064,6 +1064,7 @@ import {
     CloneScope,
     CodeLocation,
     FragmentCloneReport,
+    blankSourceLines,
     collectLogLines,
     detectCloneType,
     determineScope,
@@ -1406,6 +1407,26 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
 
     test('isLogStatement 不匹配嵌入式日志', () => {
         expect(isLogStatement({ toString: () => 'doSomething() && console.log("done")' } as any)).toBe(false);
+    });
+
+    test('blankSourceLines 只清空目标行并保留原始换行符', () => {
+        const sourceCode = [
+            'let x = 1;',
+            'console.log("debug");',
+            'let y = 2;'
+        ].join('\r\n') + '\r\n';
+
+        const result = blankSourceLines(sourceCode, new Set([2]));
+
+        expect(result).toBe('let x = 1;\r\n\r\nlet y = 2;\r\n');
+    });
+
+    test('blankSourceLines 清空末尾无换行行时不追加新换行', () => {
+        const sourceCode = 'let x = 1;\nconsole.log("debug");';
+
+        const result = blankSourceLines(sourceCode, new Set([2]));
+
+        expect(result).toBe('let x = 1;\n');
     });
 
     test('collectLogLines 收集单行日志的行号', () => {
