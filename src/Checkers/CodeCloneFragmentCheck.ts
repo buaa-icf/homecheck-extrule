@@ -87,6 +87,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
 
     private fileTokenCache: Map<string, Token[]> = new Map();
     private fileCache: Map<string, ArkFile> = new Map();
+    private locationCache: Map<string, CodeLocation> = new Map();
 
     private fileMatcher: FileMatcher = {
         matcherType: MatcherTypes.FILE
@@ -107,6 +108,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             this.issues = [];
             this.fileCache.clear();
             this.fileTokenCache.clear();
+            this.locationCache.clear();
 
             this.cloneMatcher = this.createCloneMatcher(this.options);
             this.tokenizer = this.createTokenizer(this.options);
@@ -340,7 +342,15 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      * 基于缓存 ArkFile 反查片段归属（类/方法）。
      */
     private resolveCodeLocation(file: string, startLine: number, endLine: number): CodeLocation {
-        return resolveCodeLocationFromCache(this.fileCache, file, startLine, endLine);
+        const cacheKey = `${file}\0${startLine}\0${endLine}`;
+        const cached = this.locationCache.get(cacheKey);
+        if (cached !== undefined) {
+            return cached;
+        }
+
+        const location = resolveCodeLocationFromCache(this.fileCache, file, startLine, endLine);
+        this.locationCache.set(cacheKey, location);
+        return location;
     }
 
     /**

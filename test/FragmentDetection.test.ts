@@ -1255,6 +1255,49 @@ describe('CodeCloneFragmentCheck - 规则类创建', () => {
 
         expect((check as any).fileCache.has(filePath)).toBe(false);
     });
+
+    test('resolveCodeLocation 应缓存相同行范围的解析结果', () => {
+        const check = new CodeCloneFragmentCheck();
+        const filePath = '/cached-location.ets';
+        let getClassesCalls = 0;
+        const mockStmts = [
+            { getOriginPositionInfo: () => ({ getLineNo: () => 10 }) },
+            { getOriginPositionInfo: () => ({ getLineNo: () => 20 }) }
+        ];
+        const mockMethod = {
+            getName: () => 'build',
+            getLine: () => 8,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        const mockClass = {
+            getName: () => 'CachedComponent',
+            getMethods: () => [mockMethod]
+        };
+        const mockArkFile = {
+            getClasses: () => {
+                getClassesCalls++;
+                return [mockClass];
+            }
+        };
+        (check as any).fileCache.set(filePath, mockArkFile);
+
+        const first = (check as any).resolveCodeLocation(filePath, 12, 18);
+        const second = (check as any).resolveCodeLocation(filePath, 12, 18);
+
+        expect(first).toEqual({
+            file: filePath,
+            startLine: 12,
+            endLine: 18,
+            className: 'CachedComponent',
+            methodName: 'build'
+        });
+        expect(second).toEqual(first);
+        expect(getClassesCalls).toBe(1);
+    });
 });
 
 describe('CodeCloneFragmentCheck - 范围判定逻辑', () => {
