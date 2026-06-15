@@ -681,6 +681,18 @@ describe('Tokenizer - offsetToLineColumn 位置转换', () => {
         expect(mapper.toLineColumn(22)).toEqual({ line: 3, column: 0 });
         expect(mapper.toLineColumn(code.length)).toEqual({ line: 3, column: 10 });
     });
+
+    test('SourcePositionMapper 游标应按递增 offset 计算行列号', () => {
+        const code = 'let x = 1;\n\nlet y = 2;\nlet z = 3;';
+        const mapper = new SourcePositionMapper(code);
+        const cursor = mapper.createCursor();
+
+        expect(cursor.toLineColumn(0)).toEqual({ line: 1, column: 0 });
+        expect(cursor.toLineColumn(11)).toEqual({ line: 2, column: 0 });
+        expect(cursor.toLineColumn(12)).toEqual({ line: 3, column: 0 });
+        expect(cursor.toLineColumn(23)).toEqual({ line: 4, column: 0 });
+        expect(cursor.toLineColumn(code.length)).toEqual({ line: 4, column: 10 });
+    });
 });
 
 describe('Tokenizer - mapSyntaxKindToTokenType 类型映射', () => {

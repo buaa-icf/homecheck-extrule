@@ -202,6 +202,10 @@ export class SourcePositionMapper {
         };
     }
 
+    public createCursor(): SourcePositionCursor {
+        return new SourcePositionCursor(this.lineStarts);
+    }
+
     private findLineIndex(offset: number): number {
         let low = 0;
         let high = this.lineStarts.length - 1;
@@ -219,6 +223,29 @@ export class SourcePositionMapper {
         }
 
         return result;
+    }
+}
+
+export class SourcePositionCursor {
+    private lineIndex: number = 0;
+
+    constructor(private readonly lineStarts: number[]) {}
+
+    public toLineColumn(offset: number): { line: number; column: number } {
+        if (offset < (this.lineStarts[this.lineIndex] ?? 0)) {
+            this.lineIndex = 0;
+        }
+
+        while (this.lineIndex + 1 < this.lineStarts.length &&
+            this.lineStarts[this.lineIndex + 1] <= offset) {
+            this.lineIndex++;
+        }
+
+        const lineStart = this.lineStarts[this.lineIndex] ?? 0;
+        return {
+            line: this.lineIndex + 1,
+            column: offset - lineStart
+        };
     }
 }
 
@@ -258,7 +285,7 @@ export class Tokenizer {
         
         // 设置源代码
         scanner.setText(sourceCode);
-        const positionMapper = new SourcePositionMapper(sourceCode);
+        const positionCursor = new SourcePositionMapper(sourceCode).createCursor();
         
         // 开启 ArkTS/ETS 模式
         if (typeof scanner.setEtsContext === 'function') {
@@ -291,7 +318,7 @@ export class Tokenizer {
             
             // 计算位置
             const pos = scanner.getTokenPos();
-            const { line, column } = positionMapper.toLineColumn(pos);
+            const { line, column } = positionCursor.toLineColumn(pos);
             
             // 创建 Token
             const token = createToken(tokenValue, tokenType, line, column, filePath);
