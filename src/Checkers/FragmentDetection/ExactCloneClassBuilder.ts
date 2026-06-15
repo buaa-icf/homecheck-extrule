@@ -60,7 +60,7 @@ export class ExactCloneClassBuilder {
         const selected: MergedCloneMember[] = [];
         const lastSelectedByFile = new Map<string, MergedCloneMember>();
 
-        for (const location of [...group.locations].sort(compareLocation)) {
+        for (const location of getLocationsInStableOrder(group.locations)) {
             const member = toMember(location, group.tokenCount);
             const lastSelected = lastSelectedByFile.get(member.file);
             if (lastSelected !== undefined && intervalsOverlap(lastSelected, member)) {
@@ -86,6 +86,22 @@ function toMember(location: FragmentLocation, tokenCount: number): MergedCloneMe
 
 function intervalsOverlap(a: MergedCloneMember, b: MergedCloneMember): boolean {
     return Math.max(a.startIndex, b.startIndex) <= Math.min(a.endIndex, b.endIndex);
+}
+
+function getLocationsInStableOrder(locations: FragmentLocation[]): FragmentLocation[] {
+    if (isSortedByLocation(locations)) {
+        return locations;
+    }
+    return [...locations].sort(compareLocation);
+}
+
+function isSortedByLocation(locations: FragmentLocation[]): boolean {
+    for (let index = 1; index < locations.length; index++) {
+        if (compareLocation(locations[index - 1], locations[index]) > 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 function compareLocation(a: FragmentLocation, b: FragmentLocation): number {

@@ -2102,6 +2102,42 @@ describe('ExactCloneClassBuilder', () => {
         expect(classes[0].tokenCount).toBe(4);
     });
 
+    test('build 对已排序 group 不应重复排序 locations', () => {
+        const builder = new ExactCloneClassBuilder();
+        const groups = [
+            makeGroup([
+                makeLocation('a.ts', 0, 10),
+                makeLocation('b.ts', 0, 20),
+                makeLocation('c.ts', 0, 30)
+            ])
+        ];
+        const originalSort = Array.prototype.sort;
+        let locationSorts = 0;
+        let classes: MergedCloneClass[] = [];
+        (Array.prototype.sort as typeof originalSort) = function (this: unknown[], ...args: Parameters<typeof originalSort>) {
+            if (this.every((item: unknown) =>
+                item !== null &&
+                typeof item === 'object' &&
+                'file' in item &&
+                'startIndex' in item &&
+                'startLine' in item
+            )) {
+                locationSorts++;
+            }
+            return originalSort.apply(this, args);
+        };
+
+        try {
+            classes = builder.build(groups);
+        } finally {
+            Array.prototype.sort = originalSort;
+        }
+
+        expect(classes).toHaveLength(1);
+        expect(classes[0].members.map(member => member.file)).toEqual(['a.ts', 'b.ts', 'c.ts']);
+        expect(locationSorts).toBe(0);
+    });
+
     test('build 应过滤同文件重叠成员但保留同文件非重叠成员', () => {
         const builder = new ExactCloneClassBuilder();
         const classes = builder.build([
