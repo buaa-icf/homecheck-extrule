@@ -47,6 +47,7 @@ export interface ClonePair {
  * 表示同一个规范化 Token 指纹出现的所有位置，不预先展开两两候选对。
  */
 export interface ExactCloneGroup {
+    /** 克隆组内部标识：主路径使用滚动哈希键，兼容兜底路径可使用规范化 Token 指纹 */
     fingerprint: string;
     locations: FragmentLocation[];
     tokenCount: number;
@@ -189,12 +190,13 @@ export class CloneMatcher {
 
         for (const match of this.getMatches()) {
             const verifiedGroups = this.groupByVerifiedWindow(match.locations);
-            for (const group of verifiedGroups) {
+            for (let groupIndex = 0; groupIndex < verifiedGroups.length; groupIndex++) {
+                const group = verifiedGroups[groupIndex];
                 if (group.locations.length < 2) {
                     continue;
                 }
 
-                const fingerprint = this.resolveFingerprint(group.representative);
+                const fingerprint = this.resolveExactGroupFingerprint(match.hash, group.representative, groupIndex);
                 if (fingerprint === '') {
                     continue;
                 }
@@ -208,6 +210,15 @@ export class CloneMatcher {
         }
 
         return groups;
+    }
+
+    private resolveExactGroupFingerprint(hash: string, representative: FragmentLocation, groupIndex: number): string {
+        const tokenIds = representative.tokenIds ?? this.fileTokenIds.get(representative.file);
+        if (tokenIds !== undefined) {
+            return groupIndex === 0 ? hash : `${hash}:${groupIndex}`;
+        }
+
+        return this.resolveFingerprint(representative);
     }
     
     /**

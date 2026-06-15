@@ -442,6 +442,36 @@ describe('克隆匹配器', () => {
         }
     });
 
+    test('getExactCloneGroups 主路径不应为代表窗口切片生成字符串指纹', () => {
+        const matcher = new CloneMatcher(4);
+        matcher.processFile(mockTokens(['a', 'b', 'c', 'd'], 1), 'a.ts');
+        matcher.processFile(mockTokens(['a', 'b', 'c', 'd'], 10), 'b.ts');
+
+        const originalSlice = Array.prototype.slice;
+        let tokenWindowSlices = 0;
+        (Array.prototype.slice as typeof originalSlice) = function (this: unknown[], ...args: Parameters<typeof originalSlice>) {
+            if (this.every((item: unknown) =>
+                item !== null &&
+                typeof item === 'object' &&
+                'value' in item &&
+                'type' in item
+            )) {
+                tokenWindowSlices++;
+            }
+            return originalSlice.apply(this, args);
+        };
+
+        try {
+            const groups = matcher.getExactCloneGroups();
+
+            expect(groups).toHaveLength(1);
+            expect(groups[0].locations.map(location => location.file)).toEqual(['a.ts', 'b.ts']);
+            expect(tokenWindowSlices).toBe(0);
+        } finally {
+            Array.prototype.slice = originalSlice;
+        }
+    });
+
     test('processFile 应避免在每个窗口位置重复挂载 token 序列引用', () => {
         const matcher = new CloneMatcher(4);
         matcher.processFile(mockTokens(['a', 'b', 'c', 'd', 'x', 'a', 'b', 'c', 'd']), 'a.ts');
