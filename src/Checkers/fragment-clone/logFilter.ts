@@ -1,7 +1,7 @@
 import { ArkFile } from "arkanalyzer";
 import { getMethodEndLine, isLogStatement } from "../shared";
 
-const LOG_STATEMENT_PREFIX_PATTERN = /\b(?:console|hilog|logger)\./i;
+const LOG_PREFIXES = ["console", "hilog", "logger"];
 
 export function collectLogLines(arkFile: ArkFile): Set<number> {
     const logLines = new Set<number>();
@@ -62,7 +62,45 @@ export function removeLogLines(sourceCode: string, arkFile: ArkFile): string {
 }
 
 function mayContainLogStatementPrefix(sourceCode: string): boolean {
-    return LOG_STATEMENT_PREFIX_PATTERN.test(sourceCode);
+    let dotIndex = sourceCode.indexOf(".");
+    while (dotIndex !== -1) {
+        for (const prefix of LOG_PREFIXES) {
+            if (matchesPrefixBeforeDot(sourceCode, dotIndex, prefix)) {
+                return true;
+            }
+        }
+        dotIndex = sourceCode.indexOf(".", dotIndex + 1);
+    }
+    return false;
+}
+
+function matchesPrefixBeforeDot(sourceCode: string, dotIndex: number, prefix: string): boolean {
+    const startIndex = dotIndex - prefix.length;
+    if (startIndex < 0 || !hasWordBoundaryBefore(sourceCode, startIndex)) {
+        return false;
+    }
+
+    for (let offset = 0; offset < prefix.length; offset++) {
+        if (toLowerAscii(sourceCode.charCodeAt(startIndex + offset)) !== prefix.charCodeAt(offset)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function hasWordBoundaryBefore(sourceCode: string, index: number): boolean {
+    return index === 0 || !isAsciiWordChar(sourceCode.charCodeAt(index - 1));
+}
+
+function isAsciiWordChar(charCode: number): boolean {
+    return (charCode >= 48 && charCode <= 57) ||
+        (charCode >= 65 && charCode <= 90) ||
+        (charCode >= 97 && charCode <= 122) ||
+        charCode === 95;
+}
+
+function toLowerAscii(charCode: number): number {
+    return charCode >= 65 && charCode <= 90 ? charCode + 32 : charCode;
 }
 
 export function blankSourceLines(sourceCode: string, lineNumbers: Iterable<number>): string {

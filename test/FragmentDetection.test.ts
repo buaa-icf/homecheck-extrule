@@ -1735,6 +1735,65 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
         expect(lines[6]).toBe('        let y = 2;');
     });
 
+    test('removeLogLines 前缀预检不应依赖 RegExp.test', () => {
+        const originalTest = RegExp.prototype.test;
+        let testCalls = 0;
+        RegExp.prototype.test = function (this: RegExp, value: string): boolean {
+            testCalls++;
+            return originalTest.call(this, value);
+        };
+
+        try {
+            const sourceCode = 'function test() {\n    let value = compute();\n}';
+            const mockArkFile = {
+                getClasses: () => {
+                    throw new Error('should not inspect ArkFile without log prefix');
+                }
+            };
+
+            expect(removeLogLines(sourceCode, mockArkFile as any)).toBe(sourceCode);
+        } finally {
+            RegExp.prototype.test = originalTest;
+        }
+
+        expect(testCalls).toBe(0);
+    });
+
+    test('removeLogLines 前缀预检保持大小写不敏感', () => {
+        const sourceCode = [
+            'class MyClass {',
+            '    method() {',
+            '        let x = 1;',
+            '        Console.log("debug");',
+            '        let y = 2;',
+            '    }',
+            '}'
+        ].join('\n');
+        const mockStmts = [
+            { toString: () => 'let x = 1', getOriginPositionInfo: () => ({ getLineNo: () => 3 }) },
+            { toString: () => 'Console.log("debug")', getOriginPositionInfo: () => ({ getLineNo: () => 4 }) },
+            { toString: () => 'let y = 2', getOriginPositionInfo: () => ({ getLineNo: () => 5 }) }
+        ];
+        const mockMethod = {
+            getLine: () => 2,
+            getBody: () => ({
+                getCfg: () => ({
+                    getStmts: () => mockStmts
+                })
+            })
+        };
+        const mockClass = {
+            getMethods: () => [mockMethod]
+        };
+        const mockArkFile = {
+            getClasses: () => [mockClass]
+        };
+
+        const result = removeLogLines(sourceCode, mockArkFile as any);
+
+        expect(result.split('\n')[3]).toBe('');
+    });
+
     test('removeLogLines 保持行号不变（多行日志）', () => {
         const sourceCode = [
             'function test() {',                       // line 1
