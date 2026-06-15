@@ -8,7 +8,7 @@
  */
 
 import { ts } from 'arkanalyzer';
-import { Token, TokenType, createToken } from './Token';
+import { Token, TokenType } from './Token';
 
 /**
  * Tokenizer 配置选项
@@ -274,6 +274,7 @@ export class Tokenizer {
         // 每次 tokenize 重置标识符计数器
         this.identifierCounter = 0;
         this.identifierMap.clear();
+        const options = this.options;
         
         const tokens: Token[] = [];
         
@@ -299,7 +300,7 @@ export class Tokenizer {
             const tokenType = mapSyntaxKindToTokenType(kind);
             
             // 跳过注释（如果配置了）
-            if (this.options.skipComments && tokenType === TokenType.COMMENT) {
+            if (options.skipComments && tokenType === TokenType.COMMENT) {
                 kind = scanner.scan();
                 continue;
             }
@@ -314,15 +315,23 @@ export class Tokenizer {
             let tokenValue = scanner.getTokenText();
             
             // 规范化处理
-            tokenValue = this.normalizeToken(tokenValue, tokenType, kind);
+            if (options.normalizeIdentifiers && tokenType === TokenType.IDENTIFIER) {
+                tokenValue = this.normalizeIdentifier(tokenValue);
+            } else if (options.normalizeLiterals && tokenType === TokenType.LITERAL) {
+                tokenValue = this.normalizeLiteral(tokenValue, kind);
+            }
             
             // 计算位置
             const pos = scanner.getTokenPos();
             const { line, column } = positionCursor.toLineColumn(pos);
             
-            // 创建 Token
-            const token = createToken(tokenValue, tokenType, line, column, filePath);
-            tokens.push(token);
+            tokens.push({
+                value: tokenValue,
+                type: tokenType,
+                line,
+                column,
+                file: filePath
+            });
             
             // 继续扫描
             kind = scanner.scan();
@@ -330,31 +339,14 @@ export class Tokenizer {
         
         // 后处理过滤
         let filteredTokens = tokens;
-        if (this.options.ignoreDecorators) {
+        if (options.ignoreDecorators) {
             filteredTokens = this.filterDecorators(filteredTokens);
         }
-        if (this.options.ignoreTypes) {
+        if (options.ignoreTypes) {
             filteredTokens = this.filterTypeAnnotations(filteredTokens);
         }
 
         return filteredTokens;
-    }
-    
-    /**
-     * 规范化 Token 值
-     */
-    private normalizeToken(value: string, type: TokenType, kind: ts.SyntaxKind): string {
-        // 规范化标识符
-        if (this.options.normalizeIdentifiers && type === TokenType.IDENTIFIER) {
-            return this.normalizeIdentifier(value);
-        }
-        
-        // 规范化字面量
-        if (this.options.normalizeLiterals && type === TokenType.LITERAL) {
-            return this.normalizeLiteral(value, kind);
-        }
-        
-        return value;
     }
     
     /**

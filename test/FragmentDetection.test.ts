@@ -39,6 +39,7 @@ import {
     filterSelfOverlappingClones,
     deduplicateMergedClones
 } from '../src/Checkers/FragmentDetection';
+import * as TokenModule from '../src/Checkers/FragmentDetection/Token';
 import { isLogStatement } from '../src/Checkers/shared';
 
 // ============================================================
@@ -916,6 +917,22 @@ describe('Tokenizer - 基础 tokenize 功能', () => {
             expect(token.file).toBe('test.ets');
         });
     });
+
+    test('tokenize 主循环不应逐 token 调用 createToken helper', () => {
+        const createTokenSpy = jest.spyOn(TokenModule, 'createToken');
+
+        try {
+            const tokens = tokenize('let firstValue = secondValue + 1;', 'test.ets', {
+                normalizeIdentifiers: true
+            });
+
+            expect(tokens.length).toBeGreaterThan(0);
+            expect(tokens.every(token => token.file === 'test.ets')).toBe(true);
+            expect(createTokenSpy).toHaveBeenCalledTimes(0);
+        } finally {
+            createTokenSpy.mockRestore();
+        }
+    });
     
     test('行号和列号记录', () => {
         const code = 'let x = 1;\nlet y = 2;';
@@ -1054,6 +1071,25 @@ describe('Tokenizer - 规范化功能', () => {
         }
 
         expect(repeatedIdentifierHasCalls).toBe(0);
+    });
+
+    test('默认片段克隆规范化路径不应逐 token 调用通用 normalizeToken 分发', () => {
+        const tokenizer = new Tokenizer({ normalizeIdentifiers: true, normalizeLiterals: false });
+        const originalNormalizeToken = (tokenizer as any).normalizeToken;
+        let normalizeTokenCalls = 0;
+        if (typeof originalNormalizeToken === 'function') {
+            (tokenizer as any).normalizeToken = (value: string, type: TokenType, kind: ts.SyntaxKind): string => {
+                normalizeTokenCalls++;
+                return originalNormalizeToken.call(tokenizer, value, type, kind);
+            };
+        }
+
+        const tokens = tokenizer.tokenize('let repeatedIdentifier = otherValue + repeatedIdentifier;');
+        const values = tokens.map(token => token.value);
+
+        expect(values).toContain('ID_0');
+        expect(values).toContain('ID_1');
+        expect(normalizeTokenCalls).toBe(0);
     });
     
     test('单字母标识符不规范化', () => {
