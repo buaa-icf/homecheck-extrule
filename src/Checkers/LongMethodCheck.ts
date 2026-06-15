@@ -19,6 +19,7 @@ import { RuleOptionSchema } from "./config/parseRuleOptions";
 import { LongMethodRuleOptions } from "./config/types";
 import { BaseRuleChecker } from "./BaseRuleChecker";
 import { isArkUiMethod } from "./shared";
+import { PerfReporter } from "./perf";
 
 const gMetaData: BaseMetaData = {
     severity: 2,
@@ -80,13 +81,15 @@ export class LongMethodCheck extends BaseRuleChecker<LongMethodRuleOptions> {
     }
 
     public check = (targetMtd: ArkMethod) => {
-        const codeLineCount = this.countMethodCodeLines(targetMtd);
+        PerfReporter.time(this.constructor.name, 'check', () => {
+            const codeLineCount = this.countMethodCodeLines(targetMtd);
 
-        if (isArkUiMethod(targetMtd)) {
-            this.checkUIMethod(targetMtd, codeLineCount);
-        } else {
-            this.checkNormalMethod(targetMtd, codeLineCount);
-        }
+            if (isArkUiMethod(targetMtd)) {
+                this.checkUIMethod(targetMtd, codeLineCount);
+            } else {
+                this.checkNormalMethod(targetMtd, codeLineCount);
+            }
+        });
     }
 
     private checkNormalMethod(method: ArkMethod, codeLineCount: number): void {

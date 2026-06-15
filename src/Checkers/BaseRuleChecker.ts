@@ -16,6 +16,7 @@
 import { BaseMetaData, BaseChecker, Rule, IssueReport, MatcherCallback } from "homecheck";
 import { RuleOptionSchema, parseRuleOptions } from "./config/parseRuleOptions";
 import { createDefects, DefectsParams } from "./shared";
+import { PerfReporter } from "./perf";
 
 /**
  * Issue 上报参数（ruleId / ruleDocPath / severity 由基类自动填充）。
@@ -49,9 +50,11 @@ export abstract class BaseRuleChecker<TOptions extends object> implements BaseCh
      * 每轮检测开始时重置状态并解析配置。
      */
     public beforeCheck(): void {
-        this.issues = [];
-        this._resolvedOptions = parseRuleOptions(this.rule, this.optionSchema, this.defaultOptions);
-        this._optionsInitialized = true;
+        PerfReporter.time(this.constructor.name, 'beforeCheck', () => {
+            this.issues = [];
+            this._resolvedOptions = parseRuleOptions(this.rule, this.optionSchema, this.defaultOptions);
+            this._optionsInitialized = true;
+        });
     }
 
     /**

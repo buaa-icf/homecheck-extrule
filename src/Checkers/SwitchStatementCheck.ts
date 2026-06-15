@@ -30,6 +30,7 @@ import {
     isNestedInsideElseBlock,
     scanConditionalTokens
 } from "./switch-statement/sourceAnalysis";
+import { PerfReporter } from "./perf";
 
 // Detect "Switch Statement" smell: large switch blocks or long if/else-if chains
 // that may signal missing polymorphism.
@@ -96,17 +97,19 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
      * 3. Source-based if-else chain detection (avoids CFG's overlapping ArkIfStmt nodes)
      */
     public check = (targetMtd: ArkMethod) => {
-        const body = targetMtd.getBody();
-        if (!body) {
-            return;
-        }
+        PerfReporter.time(this.constructor.name, 'check', () => {
+            const body = targetMtd.getBody();
+            if (!body) {
+                return;
+            }
 
-        const stmts = body.getCfg().getStmts();
-        const reported = new Set<string>();
+            const stmts = body.getCfg().getStmts();
+            const reported = new Set<string>();
 
-        this.detectSwitchesFromCfg(targetMtd, stmts, reported);
-        this.detectFromSource(targetMtd, reported);
-        this.detectIfElseChainsFromSource(targetMtd);
+            this.detectSwitchesFromCfg(targetMtd, stmts, reported);
+            this.detectFromSource(targetMtd, reported);
+            this.detectIfElseChainsFromSource(targetMtd);
+        });
     }
 
     /**

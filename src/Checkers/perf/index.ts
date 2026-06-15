@@ -1,0 +1,9 @@
+// src/Checkers/perf/index.ts
+export { PerfReporter, createPerfReporter, PerfReporterImpl } from './PerfReporter';
+export type {
+    StageHandle,
+    StageRecord,
+    StageRecordJson,
+    CheckerReportJson,
+    PerfReportShape
+} from './types';
