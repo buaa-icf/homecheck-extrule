@@ -52,6 +52,11 @@ export interface ExactCloneGroup {
     tokenCount: number;
 }
 
+interface VerifiedLocationGroup {
+    representative: FragmentLocation;
+    locations: FragmentLocation[];
+}
+
 /**
  * 克隆匹配器
  * 
@@ -132,6 +137,7 @@ export class CloneMatcher {
             startIndex: 0,
             startLine: tokens[0].line,
             endLine: firstEndLine,
+            tokenIds,
             allTokens: tokens
         });
 
@@ -147,6 +153,7 @@ export class CloneMatcher {
                 startIndex: i,
                 startLine: tokens[i].line,
                 endLine: tokens[i + this.windowSize - 1].line,
+                tokenIds,
                 allTokens: tokens
             });
         }
@@ -178,15 +185,20 @@ export class CloneMatcher {
         const groups: ExactCloneGroup[] = [];
 
         for (const match of this.getMatches()) {
-            const fingerprintGroups = groupBy(match.locations, loc => this.resolveFingerprint(loc));
-            for (const [fingerprint, group] of fingerprintGroups) {
-                if (fingerprint === '' || group.length < 2) {
+            const verifiedGroups = this.groupByVerifiedWindow(match.locations);
+            for (const group of verifiedGroups) {
+                if (group.locations.length < 2) {
+                    continue;
+                }
+
+                const fingerprint = this.resolveFingerprint(group.representative);
+                if (fingerprint === '') {
                     continue;
                 }
 
                 groups.push({
                     fingerprint,
-                    locations: sortFragmentLocations(group),
+                    locations: sortFragmentLocations(group.locations),
                     tokenCount: this.windowSize
                 });
             }
@@ -272,6 +284,33 @@ export class CloneMatcher {
         }
         return '';
     }
+
+    private groupByVerifiedWindow(locations: FragmentLocation[]): VerifiedLocationGroup[] {
+        const groups: VerifiedLocationGroup[] = [];
+
+        for (const location of locations) {
+            const existing = groups.find(group => this.haveSameTokenWindow(group.representative, location));
+            if (existing !== undefined) {
+                existing.locations.push(location);
+                continue;
+            }
+
+            groups.push({
+                representative: location,
+                locations: [location]
+            });
+        }
+
+        return groups;
+    }
+
+    private haveSameTokenWindow(a: FragmentLocation, b: FragmentLocation): boolean {
+        if (a.tokenIds !== undefined && b.tokenIds !== undefined) {
+            return sameTokenIdWindow(a.tokenIds, a.startIndex, b.tokenIds, b.startIndex, this.windowSize);
+        }
+
+        return this.resolveFingerprint(a) === this.resolveFingerprint(b);
+    }
     
     /**
      * 获取索引大小
@@ -317,4 +356,19 @@ function sortFragmentLocations(locations: FragmentLocation[]): FragmentLocation[
         }
         return a.startLine - b.startLine;
     });
+}
+
+function sameTokenIdWindow(
+    firstIds: number[],
+    firstStart: number,
+    secondIds: number[],
+    secondStart: number,
+    windowSize: number
+): boolean {
+    for (let offset = 0; offset < windowSize; offset++) {
+        if (firstIds[firstStart + offset] !== secondIds[secondStart + offset]) {
+            return false;
+        }
+    }
+    return true;
 }

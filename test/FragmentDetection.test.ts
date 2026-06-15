@@ -366,6 +366,37 @@ describe('克隆匹配器', () => {
 
         expect(groups).toHaveLength(0);
     });
+
+    test('getExactCloneGroups 高频重复窗口不应为每个位置切片生成字符串指纹', () => {
+        const matcher = new CloneMatcher(4);
+        for (let index = 0; index < 200; index++) {
+            matcher.processFile(mockTokens(['a', 'b', 'c', 'd'], index + 1), `file-${index}.ts`);
+        }
+
+        const originalSlice = Array.prototype.slice;
+        let tokenWindowSlices = 0;
+        (Array.prototype.slice as typeof originalSlice) = function (this: unknown[], ...args: Parameters<typeof originalSlice>) {
+            if (this.every((item: unknown) =>
+                item !== null &&
+                typeof item === 'object' &&
+                'value' in item &&
+                'type' in item
+            )) {
+                tokenWindowSlices++;
+            }
+            return originalSlice.apply(this, args);
+        };
+
+        try {
+            const groups = matcher.getExactCloneGroups();
+
+            expect(groups).toHaveLength(1);
+            expect(groups[0].locations).toHaveLength(200);
+            expect(tokenWindowSlices).toBeLessThan(10);
+        } finally {
+            Array.prototype.slice = originalSlice;
+        }
+    });
     
     test('没有克隆时应返回空数组', () => {
         const matcher = new CloneMatcher(3);
