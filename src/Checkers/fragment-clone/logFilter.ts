@@ -1,6 +1,8 @@
 import { ArkFile } from "arkanalyzer";
 import { getMethodEndLine, isLogStatement } from "../shared";
 
+const LOG_STATEMENT_PREFIX_PATTERN = /\b(?:console|hilog|logger)\./i;
+
 export function collectLogLines(arkFile: ArkFile): Set<number> {
     const logLines = new Set<number>();
 
@@ -47,12 +49,20 @@ export function collectLogLines(arkFile: ArkFile): Set<number> {
 }
 
 export function removeLogLines(sourceCode: string, arkFile: ArkFile): string {
+    if (!mayContainLogStatementPrefix(sourceCode)) {
+        return sourceCode;
+    }
+
     const logLines = collectLogLines(arkFile);
     if (logLines.size === 0) {
         return sourceCode;
     }
 
     return blankSourceLines(sourceCode, logLines);
+}
+
+function mayContainLogStatementPrefix(sourceCode: string): boolean {
+    return LOG_STATEMENT_PREFIX_PATTERN.test(sourceCode);
 }
 
 export function blankSourceLines(sourceCode: string, lineNumbers: Iterable<number>): string {

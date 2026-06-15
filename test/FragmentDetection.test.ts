@@ -1783,6 +1783,19 @@ describe('CodeCloneFragmentCheck - 日志过滤', () => {
         expect(result).toBe(sourceCode);
     });
 
+    test('removeLogLines 无日志前缀时不访问 ArkFile 语句树', () => {
+        const sourceCode = 'let x = 1;\nlet y = x + 2;';
+        const mockArkFile = {
+            getClasses: () => {
+                throw new Error('getClasses should not be called');
+            }
+        };
+
+        const result = removeLogLines(sourceCode, mockArkFile as any);
+
+        expect(result).toBe(sourceCode);
+    });
+
     test('ignoreLogs 默认返回 true', () => {
         expect(parseFragmentCloneOptions(undefined as any).ignoreLogs).toBe(true);
     });
