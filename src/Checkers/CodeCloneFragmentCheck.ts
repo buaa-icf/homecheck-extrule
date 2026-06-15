@@ -93,7 +93,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     };
 
     constructor() {
-        this.cloneMatcher = new CloneMatcher(this.options.minimumTokens);
+        this.cloneMatcher = this.createCloneMatcher(this.options);
         this.cloneMerger = new CloneMerger(this.options.minimumTokens);
         this.tokenizer = this.createTokenizer(this.options);
     }
@@ -109,7 +109,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             this.fileCache.clear();
             this.fileTokenCache.clear();
 
-            this.cloneMatcher = new CloneMatcher(this.options.minimumTokens);
+            this.cloneMatcher = this.createCloneMatcher(this.options);
             this.cloneMerger = new CloneMerger(this.options.minimumTokens);
             this.tokenizer = this.createTokenizer(this.options);
         });
@@ -267,6 +267,12 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             normalizeLiterals: options.normalizeLiterals,
             ignoreTypes: options.ignoreTypes,
             ignoreDecorators: options.ignoreDecorators
+        });
+    }
+
+    private createCloneMatcher(options: FragmentCloneRuleOptions): CloneMatcher {
+        return new CloneMatcher(options.minimumTokens, {
+            maxPairsPerFingerprint: options.maxPairsPerFingerprint
         });
     }
 

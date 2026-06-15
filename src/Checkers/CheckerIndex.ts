@@ -1,7 +1,5 @@
 import { ForEachArgsCheck } from "./ForEachArgsCheck";
 import { LongMethodCheck } from "./LongMethodCheck";
-import { CodeCloneType1Check } from "./CodeCloneType1Check";
-import { CodeCloneType2Check } from "./CodeCloneType2Check";
 import { CodeCloneFragmentCheck } from "./CodeCloneFragmentCheck";
 import { FeatureEnvyCheck } from "./FeatureEnvyCheck";
 import { SwitchStatementCheck } from "./SwitchStatementCheck";
@@ -17,8 +15,6 @@ const fileCheckerRegistry: Array<[string, CheckerClass]> = [
 ];
 
 const projectCheckerRegistry: Array<[string, CheckerClass]> = [
-    ["@extrulesproject/code-clone-type1-check", CodeCloneType1Check],
-    ["@extrulesproject/code-clone-type2-check", CodeCloneType2Check],
     ["@extrulesproject/code-clone-fragment-check", CodeCloneFragmentCheck]
 ];
 

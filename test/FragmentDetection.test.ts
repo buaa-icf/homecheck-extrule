@@ -325,6 +325,17 @@ describe('克隆匹配器', () => {
         );
         expect(abcPairs.length).toBe(3);
     });
+
+    test('高频重复窗口应限制候选克隆对数量', () => {
+        const matcher = new CloneMatcher(4, { maxPairsPerFingerprint: 12 });
+        const repeated = Array.from({ length: 240 }, () => 'ID');
+
+        matcher.processFile(mockTokens(repeated), 'noisy-a.ets');
+        matcher.processFile(mockTokens(repeated), 'noisy-b.ets');
+
+        const pairs = matcher.getClonePairs();
+        expect(pairs.length).toBeLessThanOrEqual(12);
+    });
     
     test('没有克隆时应返回空数组', () => {
         const matcher = new CloneMatcher(3);
@@ -1155,6 +1166,14 @@ describe('CodeCloneFragmentCheck - 配置读取', () => {
         const value = parseFragmentCloneOptions(rule).normalizeLiterals;
         expect(value).toBe(true);
     });
+
+    test('自定义 maxPairsPerFingerprint', () => {
+        const rule: any = {
+            option: [{ maxPairsPerFingerprint: 120 }]
+        };
+        const value = parseFragmentCloneOptions(rule).maxPairsPerFingerprint;
+        expect(value).toBe(120);
+    });
 });
 
 describe('CodeCloneFragmentCheck - 描述格式化', () => {
@@ -1885,148 +1904,6 @@ describe('CloneClassifier', () => {
         const classes = classifyClones(clones);
         expect(classes[0].classId).toBe(1);
         expect(classes[1].classId).toBe(2);
-    });
-});
-
-// ============================================================
-// Phase 2: Jaccard 相似度测试
-// ============================================================
-
-import { CodeCloneBaseCheck } from '../src/Checkers/CodeCloneBaseCheck';
-
-describe('Jaccard 相似度 (computeJaccardSimilarity)', () => {
-    // 创建一个具体子类来测试 protected 方法
-    class TestableCheck extends CodeCloneBaseCheck {
-        readonly metaData = { severity: 2, ruleDocPath: '', description: '' };
-        protected getCloneType() { return 'Test'; }
-        protected computeHash(): { hash: string; normalizedContent: string } {
-            return { hash: '', normalizedContent: '' };
-        }
-        private createMethod(content: string): any {
-            return {
-                method: {} as any,
-                filePath: '',
-                className: 'TestClass',
-                methodName: 'testMethod',
-                startLine: 1,
-                endLine: 1,
-                hash: '',
-                normalizedContent: content,
-                normalizedTokens: content.length > 0 ? content.split('|').filter(Boolean) : [],
-                stmtCount: 1
-            };
-        }
-        // 暴露 protected 方法
-        public testJaccard(c1: string, c2: string): number {
-            return this.computeJaccardSimilarity(this.createMethod(c1), this.createMethod(c2));
-        }
-    }
-
-    const check = new TestableCheck();
-
-    test('相同内容 → 1.0', () => {
-        expect(check.testJaccard('a|b|c', 'a|b|c')).toBe(1.0);
-    });
-
-    test('完全不同 → 0.0', () => {
-        expect(check.testJaccard('a|b|c', 'x|y|z')).toBe(0);
-    });
-
-    test('部分重叠 → 正确比率', () => {
-        // {a:1, b:1, c:1} vs {a:1, b:1, d:1}
-        // min: a=1, b=1, c=0, d=0 → 2
-        // max: a=1, b=1, c=1, d=1 → 4
-        // Jaccard = 2/4 = 0.5
-        expect(check.testJaccard('a|b|c', 'a|b|d')).toBe(0.5);
-    });
-
-    test('空内容 → 0', () => {
-        expect(check.testJaccard('', '')).toBe(0);
-    });
-
-    test('一边为空 → 0', () => {
-        expect(check.testJaccard('a|b', '')).toBe(0);
-    });
-
-    test('多重集合：重复 token 正确计数', () => {
-        // {a:2, b:1} vs {a:1, b:2}
-        // min: a=1, b=1 → 2
-        // max: a=2, b=2 → 4
-        // Jaccard = 2/4 = 0.5
-        expect(check.testJaccard('a|a|b', 'a|b|b')).toBe(0.5);
-    });
-
-    test('高相似度', () => {
-        // {a:5, b:5} vs {a:5, b:4, c:1}
-        // min: a=5, b=4, c=0 → 9
-        // max: a=5, b=5, c=1 → 11
-        // Jaccard = 9/11 ≈ 0.818
-        const result = check.testJaccard('a|a|a|a|a|b|b|b|b|b', 'a|a|a|a|a|b|b|b|b|c');
-        expect(result).toBeCloseTo(9 / 11, 5);
-    });
-});
-
-describe('CodeCloneBaseCheck 采集阶段去重', () => {
-    class DedupCheck extends CodeCloneBaseCheck {
-        readonly metaData = { severity: 2, ruleDocPath: '', description: '' };
-        protected getCloneType() { return 'Dedup'; }
-        protected computeHash(): { hash: string; normalizedContent: string } {
-            return { hash: 'H', normalizedContent: 'A|B' };
-        }
-
-        protected extractMethodInfo(method: any, filePath: string, className: string): any {
-            const startLine = method.getLine?.() ?? 1;
-            return {
-                method,
-                filePath,
-                className,
-                methodName: method.getName?.() ?? 'build',
-                startLine,
-                endLine: startLine + 1,
-                hash: 'same_hash',
-                normalizedContent: 'A|B',
-                normalizedTokens: ['A', 'B'],
-                stmtCount: 10
-            };
-        }
-
-        public getCollectedMethodCount(): number {
-            let count = 0;
-            for (const methods of this.methodsByHash.values()) {
-                count += methods.length;
-            }
-            return count;
-        }
-    }
-
-    test('同一方法被重复采集时，只应保留一份记录', () => {
-        const checker = new DedupCheck() as any;
-        checker.rule = {
-            ruleId: '@extrulesproject/code-clone-type1-check',
-            alert: 1,
-            option: [{ minStmts: 5 }]
-        };
-        checker.beforeCheck();
-
-        const method = {
-            getName: () => 'build',
-            getLine: () => 29
-        };
-        const arkClass = {
-            getName: () => 'BackgroundTest',
-            getMethods: () => [method]
-        };
-        const arkFile = {
-            getFilePath: () => '/tmp/BackgroundTest.ets',
-            getClasses: () => [arkClass]
-        };
-
-        checker.collectMethods(arkFile);
-        checker.collectMethods(arkFile);
-        checker.afterCheck();
-
-        expect(checker.getCollectedMethodCount()).toBe(1);
-        expect(checker.issues.length).toBe(0);
     });
 });
 

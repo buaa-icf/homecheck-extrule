@@ -1,14 +1,3 @@
-export interface MethodCloneRuleOptions {
-    minStmts: number;
-    ignoreLiterals: boolean;
-    ignoreLogs: boolean;
-    ignoreTypes: boolean;
-    ignoreDecorators: boolean;
-    minComplexity: number;
-    similarityThreshold: number;
-    enableCloneClasses: boolean;
-}
-
 export interface FragmentCloneRuleOptions {
     minimumTokens: number;
     normalizeIdentifiers: boolean;
@@ -19,6 +8,7 @@ export interface FragmentCloneRuleOptions {
     minDistinctTokenTypes: number;
     enableCloneClasses: boolean;
     similarityThreshold: number;
+    maxPairsPerFingerprint: number;
 }
 
 export interface LongMethodRuleOptions {

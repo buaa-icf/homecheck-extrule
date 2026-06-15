@@ -208,7 +208,7 @@ if (debug) console.log("debug mode")          // ❌ 条件语句
       "ruleSetName": "extrulesproject",
       "packagePath": "./homecheck-extrule",
       "extRules": {
-        "@extrulesproject/code-clone-type1-check": ["error", {
+        "@extrulesproject/code-clone-fragment-check": ["error", {
           "minStmts": 6,
           "ignoreLogs": false
         }]
@@ -284,7 +284,7 @@ increment(step: number, max: number): number {
       "ruleSetName": "extrulesproject",
       "packagePath": "./homecheck-extrule",
       "extRules": {
-        "@extrulesproject/code-clone-type2-check": ["error", {
+        "@extrulesproject/code-clone-fragment-check": ["error", {
           "minStmts": 6,
           "ignoreLiterals": true
         }]
@@ -303,10 +303,10 @@ increment(step: number, max: number): number {
 npm test
 
 # 运行 Type-1 检测
-homecheck --rule code-clone-type1-check
+homecheck --rule code-clone-fragment-check
 
 # 运行 Type-2 检测 (默认，不含字面量规范化)
-homecheck --rule code-clone-type2-check
+homecheck --rule code-clone-fragment-check
 
 # 运行 Type-2 检测 (开启字面量规范化)
 # 需在 ruleConfig.json 中配置 ignoreLiterals: true

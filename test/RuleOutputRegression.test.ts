@@ -4,8 +4,6 @@ import { Rule } from "homecheck";
 import { ALERT_LEVEL } from "homecheck/lib/model/Rule";
 import { IssueReport } from "homecheck";
 import { CodeCloneFragmentCheck } from "../src/Checkers/CodeCloneFragmentCheck";
-import { CodeCloneType1Check } from "../src/Checkers/CodeCloneType1Check";
-import { CodeCloneType2Check } from "../src/Checkers/CodeCloneType2Check";
 import { LongMethodCheck } from "../src/Checkers/LongMethodCheck";
 import { djb2Hash } from "../src/Checkers/shared";
 
@@ -69,27 +67,9 @@ describe("规则行为回归快照", () => {
         }).toMatchSnapshot();
     });
 
-    test("CodeClone 系列规则输出应稳定", () => {
+    test("CodeCloneFragmentCheck 输出应稳定", () => {
         const scene = buildScene(CODE_CLONE_PROJECT_DIR);
         const files = scene.getFiles();
-
-        const type1 = new CodeCloneType1Check() as any;
-        type1.rule = new Rule("@extrulesproject/code-clone-type1-check", ALERT_LEVEL.ERROR);
-        type1.rule.option = [{ minStmts: 5, ignoreLogs: true }];
-        type1.beforeCheck();
-        for (const file of files) {
-            type1.collectMethods(file);
-        }
-        type1.afterCheck();
-
-        const type2 = new CodeCloneType2Check() as any;
-        type2.rule = new Rule("@extrulesproject/code-clone-type2-check", ALERT_LEVEL.ERROR);
-        type2.rule.option = [{ minStmts: 5, ignoreLiterals: true, ignoreLogs: true, ignoreTypes: true }];
-        type2.beforeCheck();
-        for (const file of files) {
-            type2.collectMethods(file);
-        }
-        type2.afterCheck();
 
         const fragment = new CodeCloneFragmentCheck() as any;
         fragment.rule = new Rule("@extrulesproject/code-clone-fragment-check", ALERT_LEVEL.ERROR);
@@ -101,14 +81,6 @@ describe("规则行为回归快照", () => {
         fragment.afterCheck();
 
         expect({
-            type1: {
-                issueCount: type1.issues.length,
-                issues: summarizeIssues(type1.issues)
-            },
-            type2: {
-                issueCount: type2.issues.length,
-                issues: summarizeIssues(type2.issues)
-            },
             fragment: {
                 issueCount: fragment.issues.length,
                 issues: summarizeIssues(fragment.issues),

@@ -8,7 +8,13 @@
 import { Token } from './Token';
 import { HashIndex, FragmentLocation, computeFingerprint } from './HashIndex';
 import { RollingHash } from './RollingHash';
-import { groupBy, pairwiseCombinations } from '../shared';
+import { groupBy } from '../shared';
+
+const DEFAULT_MAX_PAIRS_PER_FINGERPRINT = 5000;
+
+export interface CloneMatcherOptions {
+    maxPairsPerFingerprint?: number;
+}
 
 /**
  * 克隆匹配结果
@@ -53,14 +59,18 @@ export class CloneMatcher {
 
     /** 每个文件的 Token 序列引用（用于惰性指纹计算） */
     private fileTokens: Map<string, Token[]> = new Map();
+
+    /** 单个规范化指纹最多展开的候选克隆对数量 */
+    private readonly maxPairsPerFingerprint: number;
     
     /**
      * 构造函数
      * 
      * @param windowSize 窗口大小，默认 100
      */
-    constructor(windowSize: number = 100) {
+    constructor(windowSize: number = 100, options: CloneMatcherOptions = {}) {
         this.windowSize = windowSize;
+        this.maxPairsPerFingerprint = normalizePairLimit(options.maxPairsPerFingerprint);
     }
 
     /**
@@ -165,18 +175,33 @@ export class CloneMatcher {
                     continue;  // 哈希碰撞，跳过
                 }
 
-                for (const [location1, location2] of pairwiseCombinations(group)) {
-                    // 跳过同文件重叠窗口（自身克隆误报）
-                    if (location1.file === location2.file &&
-                        Math.abs(location1.startIndex - location2.startIndex) < this.windowSize) {
-                        continue;
-                    }
+                const locations = sortFragmentLocations(group);
+                let emittedPairs = 0;
+                for (let i = 0; i < locations.length - 1; i++) {
+                    for (let j = i + 1; j < locations.length; j++) {
+                        if (emittedPairs >= this.maxPairsPerFingerprint) {
+                            break;
+                        }
 
-                    pairs.push({
-                        location1,
-                        location2,
-                        tokenCount: this.windowSize
-                    });
+                        const location1 = locations[i];
+                        const location2 = locations[j];
+
+                        // 跳过同文件重叠窗口（自身克隆误报）
+                        if (location1.file === location2.file &&
+                            Math.abs(location1.startIndex - location2.startIndex) < this.windowSize) {
+                            continue;
+                        }
+
+                        pairs.push({
+                            location1,
+                            location2,
+                            tokenCount: this.windowSize
+                        });
+                        emittedPairs++;
+                    }
+                    if (emittedPairs >= this.maxPairsPerFingerprint) {
+                        break;
+                    }
                 }
             }
         }
@@ -230,4 +255,26 @@ export class CloneMatcher {
     getWindowSize(): number {
         return this.windowSize;
     }
+}
+
+function normalizePairLimit(value: number | undefined): number {
+    if (value === undefined) {
+        return DEFAULT_MAX_PAIRS_PER_FINGERPRINT;
+    }
+    if (!Number.isFinite(value) || value <= 0) {
+        return DEFAULT_MAX_PAIRS_PER_FINGERPRINT;
+    }
+    return Math.floor(value);
+}
+
+function sortFragmentLocations(locations: FragmentLocation[]): FragmentLocation[] {
+    return [...locations].sort((a, b) => {
+        if (a.file !== b.file) {
+            return a.file.localeCompare(b.file);
+        }
+        if (a.startIndex !== b.startIndex) {
+            return a.startIndex - b.startIndex;
+        }
+        return a.startLine - b.startLine;
+    });
 }

@@ -26,8 +26,6 @@ RULE_TO_COLUMN = {
     "@extrulesproject/feature-envy-check": "feature_envy",
     "@extrulesproject/switch-statement-check": "switch_statement",
     "@extrulesproject/code-clone-fragment-check": "code_clone_fragment",
-    "@extrulesproject/code-clone-type1-check": "code_clone_type1",
-    "@extrulesproject/code-clone-type2-check": "code_clone_type2",
 }
 
 SMELL_COLUMNS = [
@@ -35,8 +33,6 @@ SMELL_COLUMNS = [
     "feature_envy",
     "switch_statement",
     "code_clone_fragment",
-    "code_clone_type1",
-    "code_clone_type2",
 ]
 
 

@@ -15,6 +15,7 @@
 - `minDistinctTokenTypes`: `3`
 - `enableCloneClasses`: `false`
 - `similarityThreshold`: `1.0`
+- `maxPairsPerFingerprint`: `5000`
 
 ## 配置示例
 
@@ -27,7 +28,8 @@
         "minimumTokens": 80,
         "normalizeIdentifiers": true,
         "normalizeLiterals": true,
-        "ignoreLogs": true
+        "ignoreLogs": true,
+        "maxPairsPerFingerprint": 3000
       }
     }
   }
@@ -38,3 +40,4 @@
 
 - `similarityThreshold < 1.0` 时启用 Type-3 近似克隆检测。
 - `enableCloneClasses=true` 时，结果按克隆类聚合输出。
+- `maxPairsPerFingerprint` 限制单个规范化 Token 指纹展开的候选对数量，避免高频样板片段造成二次方级别的匹配开销。

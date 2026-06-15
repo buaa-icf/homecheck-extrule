@@ -10,17 +10,17 @@
         {
           "method": "calculateTotal",
           "files": ["FileA.ets", "FileB.ets"],
-          "rule": "code-clone-type1-check"
+          "rule": "code-clone-fragment-check"
         },
         {
           "method": "formatPrice",
           "files": ["FileA.ets", "FileB.ets"],
-          "rule": "code-clone-type1-check"
+          "rule": "code-clone-fragment-check"
         },
         {
           "method": "validateInput",
           "files": ["FileA.ets", "FileB.ets"],
-          "rule": "code-clone-type1-check"
+          "rule": "code-clone-fragment-check"
         }
       ]
     },
@@ -32,19 +32,19 @@
           "method1": "calculateTotal",
           "method2": "computeSum",
           "files": ["FileD.ets", "FileE.ets"],
-          "rule": "code-clone-type2-check"
+          "rule": "code-clone-fragment-check"
         },
         {
           "method1": "formatDisplay",
           "method2": "formatOutput",
           "files": ["FileD.ets", "FileE.ets"],
-          "rule": "code-clone-type2-check"
+          "rule": "code-clone-fragment-check"
         },
         {
           "method1": "checkValidity",
           "method2": "validateInput",
           "files": ["FileD.ets", "FileE.ets"],
-          "rule": "code-clone-type2-check"
+          "rule": "code-clone-fragment-check"
         }
       ]
     },
@@ -56,17 +56,17 @@
         {
           "method": "getTimeout",
           "files": ["Config1.ets", "Config2.ets"],
-          "rule": "code-clone-type2-check"
+          "rule": "code-clone-fragment-check"
         },
         {
           "method": "getMessage",
           "files": ["Config1.ets", "Config2.ets"],
-          "rule": "code-clone-type2-check"
+          "rule": "code-clone-fragment-check"
         },
         {
           "method": "isEnabled",
           "files": ["Config1.ets", "Config2.ets"],
-          "rule": "code-clone-type2-check"
+          "rule": "code-clone-fragment-check"
         }
       ]
     },
@@ -79,12 +79,12 @@
         {
           "method": "processData",
           "files": ["LogFileA.ets", "LogFileB.ets"],
-          "rule": "code-clone-type1-check"
+          "rule": "code-clone-fragment-check"
         },
         {
           "method": "calculateSum",
           "files": ["LogFileA.ets", "LogFileB.ets"],
-          "rule": "code-clone-type1-check"
+          "rule": "code-clone-fragment-check"
         }
       ]
     },
@@ -98,7 +98,7 @@
           "method1": "handleRequest",
           "method2": "processInput",
           "files": ["Type2LogA.ets", "Type2LogB.ets"],
-          "rule": "code-clone-type2-check"
+          "rule": "code-clone-fragment-check"
         }
       ]
     },
@@ -225,19 +225,19 @@
               "method1": "add",
               "method2": "increment",
               "files": ["Calculator.ets", "Counter.ets"],
-              "rule": "code-clone-type2-check"
+              "rule": "code-clone-fragment-check"
             },
             {
               "method1": "multiply",
               "method2": "reset",
               "files": ["Calculator.ets", "Counter.ets"],
-              "rule": "code-clone-type2-check"
+              "rule": "code-clone-fragment-check"
             },
             {
               "method1": "divide",
               "method2": "getCount",
               "files": ["Calculator.ets", "Counter.ets"],
-              "rule": "code-clone-type2-check"
+              "rule": "code-clone-fragment-check"
             }
           ],
           "result": "误报：这些方法语义不同（数学计算 vs 计数器），但结构相同"

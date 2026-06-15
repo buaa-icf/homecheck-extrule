@@ -22,7 +22,7 @@ export {
 export { djb2Hash } from '../shared';
 
 // 克隆匹配器
-export { CloneMatch, ClonePair, CloneMatcher } from './CloneMatcher';
+export { CloneMatch, ClonePair, CloneMatcher, CloneMatcherOptions } from './CloneMatcher';
 
 // 克隆合并器
 export {

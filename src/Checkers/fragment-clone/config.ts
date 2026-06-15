@@ -11,7 +11,8 @@ export const DEFAULT_FRAGMENT_CLONE_OPTIONS: FragmentCloneRuleOptions = {
     ignoreLogs: true,
     minDistinctTokenTypes: 3,
     enableCloneClasses: false,
-    similarityThreshold: 1.0
+    similarityThreshold: 1.0,
+    maxPairsPerFingerprint: 5000
 };
 
 const FRAGMENT_CLONE_OPTIONS_SCHEMA: RuleOptionSchema<FragmentCloneRuleOptions> = {
@@ -23,7 +24,8 @@ const FRAGMENT_CLONE_OPTIONS_SCHEMA: RuleOptionSchema<FragmentCloneRuleOptions> 
     ignoreLogs: { type: "boolean" },
     minDistinctTokenTypes: { type: "number", min: 0 },
     enableCloneClasses: { type: "boolean" },
-    similarityThreshold: { type: "number", min: 0, max: 1 }
+    similarityThreshold: { type: "number", min: 0, max: 1 },
+    maxPairsPerFingerprint: { type: "number", min: 1 }
 };
 
 export function parseFragmentCloneOptions(rule?: Rule): FragmentCloneRuleOptions {

@@ -14,7 +14,7 @@
     },
     "files": [
         "lib",
-        "docs",
+        "docs/*.md",
         "patches",
         "README.md"
     ],
