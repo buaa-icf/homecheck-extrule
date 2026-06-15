@@ -34,7 +34,7 @@ ArkTS 代码检查自定义规则项目，基于 [homecheck](https://gitcode.com
 | `minDistinctTokenTypes` | number | `3` | 最小不同 Token 类型数，低于此值的片段不报告（过滤重复度过高的简单代码） |
 | `enableCloneClasses` | boolean | `false` | 是否启用克隆类分组报告 |
 | `similarityThreshold` | number | `1.0` | LCS 相似度阈值（范围 0~1），设为 `1.0` 仅报告精确匹配（Type-1/Type-2），低于 `1.0` 启用 Type-3 近似克隆检测 |
-| `maxPairsPerFingerprint` | number | `5000` | 单个规范化 Token 指纹最多展开的候选克隆对数量，用于限制高频样板片段的二次方爆炸 |
+| `maxPairsPerFingerprint` | number | `5000` | 兼容旧 pair 展开与 fallback 的候选上限；精确克隆主路径会先将重复 Token 窗口聚合为 clone class，再生成 pair 风格报告，避免高频指纹枚举全部候选对 |
 
 配置示例：
 

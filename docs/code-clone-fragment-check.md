@@ -40,4 +40,4 @@
 
 - `similarityThreshold < 1.0` 时启用 Type-3 近似克隆检测。
 - `enableCloneClasses=true` 时，结果按克隆类聚合输出。
-- `maxPairsPerFingerprint` 限制单个规范化 Token 指纹展开的候选对数量，避免高频样板片段造成二次方级别的匹配开销。
+- `maxPairsPerFingerprint` 保留为旧 pair 展开与 fallback 的候选上限；精确克隆主路径会先将重复 Token 窗口聚合为 clone class，再生成 pair 风格报告，避免高频指纹枚举全部候选对。

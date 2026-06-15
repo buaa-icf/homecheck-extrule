@@ -44,11 +44,11 @@ import {
 } from "./fragment-clone";
 import { FragmentCloneRuleOptions } from "./config/types";
 import {
-    classifyClones,
     CloneMatcher,
-    CloneMerger,
     deduplicateMergedClones,
+    ExactCloneClassBuilder,
     filterSelfOverlappingClones,
+    MergedCloneClass,
     MergedClone,
     NearMissClone,
     NearMissDetector,
@@ -82,7 +82,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     private diagnostics: FragmentCloneDiagnostics = createEmptyDiagnostics();
 
     private cloneMatcher: CloneMatcher;
-    private cloneMerger: CloneMerger;
+    private exactCloneClassBuilder: ExactCloneClassBuilder = new ExactCloneClassBuilder();
     private tokenizer: Tokenizer;
 
     private fileTokenCache: Map<string, Token[]> = new Map();
@@ -94,7 +94,6 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
 
     constructor() {
         this.cloneMatcher = this.createCloneMatcher(this.options);
-        this.cloneMerger = new CloneMerger(this.options.minimumTokens);
         this.tokenizer = this.createTokenizer(this.options);
     }
 
@@ -110,7 +109,6 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             this.fileTokenCache.clear();
 
             this.cloneMatcher = this.createCloneMatcher(this.options);
-            this.cloneMerger = new CloneMerger(this.options.minimumTokens);
             this.tokenizer = this.createTokenizer(this.options);
         });
     }
@@ -205,24 +203,28 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     public afterCheck(): void {
         const checkerName = this.constructor.name;
         PerfReporter.time(checkerName, 'afterCheck', () => {
-            const clonePairs = PerfReporter.time(
+            const exactGroups = PerfReporter.time(
                 checkerName,
-                'afterCheck.getClonePairs',
-                () => this.cloneMatcher.getClonePairs()
+                'afterCheck.getExactCloneGroups',
+                () => this.cloneMatcher.getExactCloneGroups()
             );
 
-            const merged = clonePairs.length > 0
+            const exactCloneClasses = exactGroups.length > 0
                 ? PerfReporter.time(
                     checkerName,
-                    'afterCheck.merge',
-                    () => this.cloneMerger.merge(clonePairs)
+                    'afterCheck.buildExactCloneClasses',
+                    () => this.exactCloneClassBuilder.build(exactGroups)
                 )
                 : [];
 
             const exactClones = PerfReporter.time(
                 checkerName,
                 'afterCheck.dedup',
-                () => deduplicateMergedClones(filterSelfOverlappingClones(merged))
+                () => deduplicateMergedClones(
+                    filterSelfOverlappingClones(
+                        this.exactCloneClassBuilder.toRepresentativeClones(exactCloneClasses)
+                    )
+                )
             );
 
             const threshold = this.options.similarityThreshold;
@@ -240,7 +242,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
 
             PerfReporter.time(checkerName, 'afterCheck.reportGen', () => {
                 if (this.options.enableCloneClasses) {
-                    const classReports = this.createCloneClassReports(exactClones);
+                    const classReports = this.createCloneClassReportsFromMergedClasses(exactCloneClasses);
                     for (const report of classReports) {
                         this.addCloneClassIssueReport(report);
                     }
@@ -290,11 +292,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         return deduplicateMergedClones(filterSelfOverlappingClones(rawResults)) as NearMissClone[];
     }
 
-    /**
-     * 将克隆对聚合为克隆类报告对象。
-     */
-    private createCloneClassReports(clones: MergedClone[]): FragmentCloneClassReport[] {
-        const classes = classifyClones(clones);
+    private createCloneClassReportsFromMergedClasses(classes: MergedCloneClass[]): FragmentCloneClassReport[] {
         const reports: FragmentCloneClassReport[] = [];
 
         for (const cloneClass of classes) {

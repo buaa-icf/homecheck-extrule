@@ -80,6 +80,11 @@ describe("规则行为回归快照", () => {
         }
         fragment.afterCheck();
 
+        expect(fragment.issues.some((issue: IssueReport) =>
+            (issue.defect.description ?? "").includes("Code Clone") &&
+            (issue.defect.description ?? "").includes("similar to")
+        )).toBe(true);
+
         expect({
             fragment: {
                 issueCount: fragment.issues.length,

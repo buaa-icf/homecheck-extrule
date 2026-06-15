@@ -22,7 +22,7 @@ export {
 export { djb2Hash } from '../shared';
 
 // 克隆匹配器
-export { CloneMatch, ClonePair, CloneMatcher, CloneMatcherOptions } from './CloneMatcher';
+export { CloneMatch, ClonePair, ExactCloneGroup, CloneMatcher, CloneMatcherOptions } from './CloneMatcher';
 
 // 克隆合并器
 export {
@@ -37,6 +37,12 @@ export {
 export { UnionFind } from './UnionFind';
 
 export { CloneClass, CloneClassMember, classifyClones } from './CloneClassifier';
+
+export {
+    ExactCloneClassBuilder,
+    MergedCloneClass,
+    MergedCloneMember
+} from './ExactCloneClassBuilder';
 
 // 滚动哈希
 export { RollingHash } from './RollingHash';

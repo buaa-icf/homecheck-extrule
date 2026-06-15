@@ -7,6 +7,12 @@
 
 import { MergedClone } from './CloneMerger';
 
+const LINE_BUCKET_SIZE = 128;
+
+interface CloneSelectionIndex {
+    byFirstLineBucket: Map<number, MergedClone[]>;
+}
+
 /**
  * 判断两个行范围是否重叠
  *
@@ -54,35 +60,124 @@ export function deduplicateMergedClones(clones: MergedClone[]): MergedClone[] {
         return clones;
     }
 
-    const sorted = [...clones].sort((a, b) => {
-        const f1 = a.location1.file.localeCompare(b.location1.file);
-        if (f1 !== 0) return f1;
-        const f2 = a.location2.file.localeCompare(b.location2.file);
-        if (f2 !== 0) return f2;
-        const s1 = a.location1.startLine - b.location1.startLine;
-        if (s1 !== 0) return s1;
-        const s2 = a.location2.startLine - b.location2.startLine;
-        if (s2 !== 0) return s2;
-        return b.tokenCount - a.tokenCount;
-    });
+    const sorted = [...clones].sort(compareCloneForSelection);
+    const selectedByFilePair = new Map<string, CloneSelectionIndex>();
+    const selected: MergedClone[] = [];
 
-    const result: MergedClone[] = [];
     for (const clone of sorted) {
-        const isDuplicate = result.some(existing =>
-            existing.location1.file === clone.location1.file &&
-            existing.location2.file === clone.location2.file &&
-            linesOverlap(
-                existing.location1.startLine, existing.location1.endLine,
-                clone.location1.startLine, clone.location1.endLine
-            ) &&
-            linesOverlap(
-                existing.location2.startLine, existing.location2.endLine,
-                clone.location2.startLine, clone.location2.endLine
-            )
-        );
-        if (!isDuplicate) {
-            result.push(clone);
+        const filePairKey = getFilePairKey(clone);
+        let index = selectedByFilePair.get(filePairKey);
+        if (index === undefined) {
+            index = { byFirstLineBucket: new Map<number, MergedClone[]>() };
+            selectedByFilePair.set(filePairKey, index);
+        }
+
+        if (hasOverlappingSelection(index, clone)) {
+            continue;
+        }
+
+        selected.push(clone);
+        addToSelectionIndex(index, clone);
+    }
+
+    return selected.sort(compareCloneForOutput);
+}
+
+function compareCloneForSelection(a: MergedClone, b: MergedClone): number {
+    const pairOrder = compareFilePair(a, b);
+    if (pairOrder !== 0) return pairOrder;
+
+    const tokenOrder = b.tokenCount - a.tokenCount;
+    if (tokenOrder !== 0) return tokenOrder;
+
+    return compareCloneForOutput(a, b);
+}
+
+function compareCloneForOutput(a: MergedClone, b: MergedClone): number {
+    const pairOrder = compareFilePair(a, b);
+    if (pairOrder !== 0) return pairOrder;
+
+    const location1Order = compareLocation(a.location1, b.location1);
+    if (location1Order !== 0) return location1Order;
+
+    const location2Order = compareLocation(a.location2, b.location2);
+    if (location2Order !== 0) return location2Order;
+
+    return b.tokenCount - a.tokenCount;
+}
+
+function compareFilePair(a: MergedClone, b: MergedClone): number {
+    const f1 = a.location1.file.localeCompare(b.location1.file);
+    if (f1 !== 0) return f1;
+    return a.location2.file.localeCompare(b.location2.file);
+}
+
+function compareLocation(a: MergedClone['location1'], b: MergedClone['location1']): number {
+    const startLine = a.startLine - b.startLine;
+    if (startLine !== 0) return startLine;
+
+    const endLine = a.endLine - b.endLine;
+    if (endLine !== 0) return endLine;
+
+    const startIndex = a.startIndex - b.startIndex;
+    if (startIndex !== 0) return startIndex;
+
+    return a.endIndex - b.endIndex;
+}
+
+function getFilePairKey(clone: MergedClone): string {
+    return `${clone.location1.file}\0${clone.location2.file}`;
+}
+
+function hasOverlappingSelection(index: CloneSelectionIndex, clone: MergedClone): boolean {
+    const seen = new Set<MergedClone>();
+    const startBucket = toLineBucket(clone.location1.startLine);
+    const endBucket = toLineBucket(clone.location1.endLine);
+
+    for (let bucket = startBucket; bucket <= endBucket; bucket++) {
+        const candidates = index.byFirstLineBucket.get(bucket);
+        if (candidates === undefined) {
+            continue;
+        }
+
+        for (const existing of candidates) {
+            if (seen.has(existing)) {
+                continue;
+            }
+            seen.add(existing);
+
+            if (
+                linesOverlap(
+                    existing.location1.startLine, existing.location1.endLine,
+                    clone.location1.startLine, clone.location1.endLine
+                ) &&
+                linesOverlap(
+                    existing.location2.startLine, existing.location2.endLine,
+                    clone.location2.startLine, clone.location2.endLine
+                )
+            ) {
+                return true;
+            }
         }
     }
-    return result;
+
+    return false;
+}
+
+function addToSelectionIndex(index: CloneSelectionIndex, clone: MergedClone): void {
+    const startBucket = toLineBucket(clone.location1.startLine);
+    const endBucket = toLineBucket(clone.location1.endLine);
+
+    for (let bucket = startBucket; bucket <= endBucket; bucket++) {
+        let bucketClones = index.byFirstLineBucket.get(bucket);
+        if (bucketClones === undefined) {
+            bucketClones = [];
+            index.byFirstLineBucket.set(bucket, bucketClones);
+        }
+        bucketClones.push(clone);
+    }
+}
+
+function toLineBucket(line: number): number {
+    return Math.floor(line / LINE_BUCKET_SIZE);
 }

@@ -23,10 +23,13 @@ import {
     computeFingerprint,
     computeTokensHash,
     CloneMatcher,
+    ExactCloneClassBuilder,
+    ExactCloneGroup,
     classifyClones,
     CloneClass,
     UnionFind,
     MergedClone,
+    MergedCloneClass,
     lcsLength,
     lcsSimilarity,
     buildQGramProfile,
@@ -335,6 +338,33 @@ describe('克隆匹配器', () => {
 
         const pairs = matcher.getClonePairs();
         expect(pairs.length).toBeLessThanOrEqual(12);
+    });
+
+    test('getExactCloneGroups 应按指纹聚合重复窗口而不是展开所有 pair', () => {
+        const matcher = new CloneMatcher(4);
+        const repeatedA = mockTokens(['a', 'b', 'c', 'd'], 1);
+        const repeatedB = mockTokens(['a', 'b', 'c', 'd'], 10);
+        const repeatedC = mockTokens(['a', 'b', 'c', 'd'], 20);
+
+        matcher.processFile(repeatedA, 'a.ts');
+        matcher.processFile(repeatedB, 'b.ts');
+        matcher.processFile(repeatedC, 'c.ts');
+
+        const groups = matcher.getExactCloneGroups();
+
+        expect(groups).toHaveLength(1);
+        expect(groups[0].tokenCount).toBe(4);
+        expect(groups[0].locations.map(location => location.file)).toEqual(['a.ts', 'b.ts', 'c.ts']);
+    });
+
+    test('getExactCloneGroups 应跳过哈希碰撞后指纹不同的位置', () => {
+        const matcher = new CloneMatcher(4);
+        matcher.processFile(mockTokens(['a', 'b', 'c', 'd'], 1), 'a.ts');
+        matcher.processFile(mockTokens(['a', 'b', 'c', 'e'], 10), 'b.ts');
+
+        const groups = matcher.getExactCloneGroups();
+
+        expect(groups).toHaveLength(0);
     });
     
     test('没有克隆时应返回空数组', () => {
@@ -1907,6 +1937,155 @@ describe('CloneClassifier', () => {
     });
 });
 
+describe('ExactCloneClassBuilder', () => {
+    function makeLocation(file: string, startIndex: number, startLine: number = startIndex + 1) {
+        return {
+            file,
+            startIndex,
+            startLine,
+            endLine: startLine + 3,
+            tokenFingerprint: 'a|b|c|d'
+        };
+    }
+
+    function makeGroup(locations: ReturnType<typeof makeLocation>[]): ExactCloneGroup {
+        return {
+            fingerprint: 'a|b|c|d',
+            locations,
+            tokenCount: 4
+        };
+    }
+
+    test('build 应把一个重复指纹组转换为一个稳定排序的 clone class', () => {
+        const builder = new ExactCloneClassBuilder();
+        const classes = builder.build([
+            makeGroup([
+                makeLocation('c.ts', 0, 30),
+                makeLocation('a.ts', 0, 10),
+                makeLocation('b.ts', 0, 20)
+            ])
+        ]);
+
+        expect(classes).toHaveLength(1);
+        expect(classes[0].classId).toBe(1);
+        expect(classes[0].members.map(member => member.file)).toEqual(['a.ts', 'b.ts', 'c.ts']);
+        expect(classes[0].tokenCount).toBe(4);
+    });
+
+    test('build 应过滤同文件重叠成员但保留同文件非重叠成员', () => {
+        const builder = new ExactCloneClassBuilder();
+        const classes = builder.build([
+            makeGroup([
+                makeLocation('a.ts', 0, 1),
+                makeLocation('a.ts', 1, 2),
+                makeLocation('a.ts', 10, 20)
+            ])
+        ]);
+
+        expect(classes).toHaveLength(1);
+        expect(classes[0].members.map(member => member.startIndex)).toEqual([0, 10]);
+    });
+
+    test('toRepresentativeClones 应从 clone class 派生稳定 pair 报告输入', () => {
+        const builder = new ExactCloneClassBuilder();
+        const classes = builder.build([
+            makeGroup([
+                makeLocation('a.ts', 0, 10),
+                makeLocation('b.ts', 0, 20),
+                makeLocation('c.ts', 0, 30)
+            ])
+        ]);
+
+        const clones = builder.toRepresentativeClones(classes);
+
+        expect(clones).toHaveLength(1);
+        expect(clones[0].location1.file).toBe('a.ts');
+        expect(clones[0].location2.file).toBe('b.ts');
+        expect(clones[0].tokenCount).toBe(4);
+    });
+
+    test('representative clones 可被现有 dedup 处理', () => {
+        const builder = new ExactCloneClassBuilder();
+        const classes: MergedCloneClass[] = [{
+            classId: 1,
+            tokenCount: 4,
+            members: [
+                { file: 'a.ts', startLine: 1, endLine: 4, startIndex: 0, endIndex: 3 },
+                { file: 'b.ts', startLine: 1, endLine: 4, startIndex: 0, endIndex: 3 },
+                { file: 'c.ts', startLine: 1, endLine: 4, startIndex: 0, endIndex: 3 }
+            ]
+        }];
+
+        const clones = deduplicateMergedClones(builder.toRepresentativeClones(classes));
+
+        expect(clones).toHaveLength(1);
+        expect(clones[0].location1.file).toBe('a.ts');
+        expect(clones[0].location2.file).toBe('b.ts');
+    });
+
+    test('高重复 group 构建结果随位置数线性增长且不展开 pair', () => {
+        const builder = new ExactCloneClassBuilder();
+        const locations = Array.from({ length: 1000 }, (_, index) => ({
+            file: `file-${index}.ts`,
+            startIndex: 0,
+            startLine: 1,
+            endLine: 4,
+            tokenFingerprint: 'a|b|c|d'
+        }));
+        const groups: ExactCloneGroup[] = [{
+            fingerprint: 'a|b|c|d',
+            locations,
+            tokenCount: 4
+        }];
+
+        const classes = builder.build(groups);
+        const representative = builder.toRepresentativeClones(classes);
+
+        expect(classes).toHaveLength(1);
+        expect(classes[0].members).toHaveLength(1000);
+        expect(representative).toHaveLength(1);
+    });
+
+    test('高频跨文件 group 构建不应扫描全部已选成员', () => {
+        const builder = new ExactCloneClassBuilder();
+        const locations = Array.from({ length: 120 }, (_, index) => ({
+            file: `file-${index}.ts`,
+            startIndex: 0,
+            startLine: 1,
+            endLine: 4,
+            tokenFingerprint: 'a|b|c|d'
+        }));
+        const groups: ExactCloneGroup[] = Array.from({ length: 12 }, (_, index) => ({
+            fingerprint: `a|b|c|d|${index}`,
+            locations,
+            tokenCount: 4
+        }));
+        const originalSome = Array.prototype.some;
+        let selectedMemberScans = 0;
+        (Array.prototype.some as typeof originalSome) = function (this: unknown[], ...args: Parameters<typeof originalSome>) {
+            if (this.every((item: unknown) =>
+                item !== null &&
+                typeof item === 'object' &&
+                'file' in item &&
+                'startIndex' in item &&
+                'endIndex' in item
+            )) {
+                selectedMemberScans++;
+            }
+            return originalSome.apply(this, args);
+        };
+
+        try {
+            const classes = builder.build(groups);
+
+            expect(classes).toHaveLength(12);
+            expect(selectedMemberScans).toBe(0);
+        } finally {
+            Array.prototype.some = originalSome;
+        }
+    });
+});
+
 // ============================================================
 // SimilarityScorer 测试
 // ============================================================
@@ -2188,6 +2367,16 @@ describe('deduplicateMergedClones', () => {
         const result = deduplicateMergedClones(clones);
         expect(result).toHaveLength(1);
         expect(result[0].tokenCount).toBe(100);
+    });
+
+    test('重叠行范围且较大克隆起点靠后 → 仍保留最大 tokenCount', () => {
+        const clones = [
+            makeMerged('a.ts', 1, 10, 'b.ts', 1, 10, 100),
+            makeMerged('a.ts', 2, 12, 'b.ts', 2, 12, 150),
+        ];
+        const result = deduplicateMergedClones(clones);
+        expect(result).toHaveLength(1);
+        expect(result[0].tokenCount).toBe(150);
     });
 
     test('空列表 → 空结果', () => {

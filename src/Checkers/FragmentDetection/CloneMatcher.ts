@@ -42,6 +42,17 @@ export interface ClonePair {
 }
 
 /**
+ * 精确克隆窗口组。
+ *
+ * 表示同一个规范化 Token 指纹出现的所有位置，不预先展开两两候选对。
+ */
+export interface ExactCloneGroup {
+    fingerprint: string;
+    locations: FragmentLocation[];
+    tokenCount: number;
+}
+
+/**
  * 克隆匹配器
  * 
  * 使用 Rabin-Karp 滚动哈希 + 惰性指纹验证检测代码克隆。
@@ -153,6 +164,35 @@ export class CloneMatcher {
             hash,
             locations
         }));
+    }
+
+    /**
+     * 获取精确克隆窗口组。
+     *
+     * 与 getClonePairs() 不同，这里按规范化指纹聚合重复窗口，
+     * 避免高重复代码在后续阶段立即展开成 O(n²) 候选对。
+     *
+     * @returns 精确克隆窗口组列表
+     */
+    getExactCloneGroups(): ExactCloneGroup[] {
+        const groups: ExactCloneGroup[] = [];
+
+        for (const match of this.getMatches()) {
+            const fingerprintGroups = groupBy(match.locations, loc => this.resolveFingerprint(loc));
+            for (const [fingerprint, group] of fingerprintGroups) {
+                if (fingerprint === '' || group.length < 2) {
+                    continue;
+                }
+
+                groups.push({
+                    fingerprint,
+                    locations: sortFragmentLocations(group),
+                    tokenCount: this.windowSize
+                });
+            }
+        }
+
+        return groups;
     }
     
     /**
