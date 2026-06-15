@@ -315,6 +315,24 @@ describe('克隆匹配器', () => {
         expect(matcher.getIndexSize()).toBe(3);
         expect(tokenArrayMaps).toBe(0);
     });
+
+    test('processFile 构建 Token ID 时不应逐 token 调用私有映射方法', () => {
+        const matcher = new CloneMatcher(3);
+        const tokens = mockTokens(['a', 'b', 'c', 'a', 'b']);
+        const originalGetTokenId = (matcher as any).getTokenId;
+        let getTokenIdCalls = 0;
+        if (typeof originalGetTokenId === 'function') {
+            (matcher as any).getTokenId = (tokenValue: string): number => {
+                getTokenIdCalls++;
+                return originalGetTokenId.call(matcher, tokenValue);
+            };
+        }
+
+        matcher.processFile(tokens, 'test.ets');
+
+        expect(matcher.getIndexSize()).toBe(3);
+        expect(getTokenIdCalls).toBe(0);
+    });
     
     test('应能检测到同一文件内的克隆', () => {
         const matcher = new CloneMatcher(3);

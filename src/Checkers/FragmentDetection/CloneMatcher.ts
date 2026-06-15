@@ -94,23 +94,6 @@ export class CloneMatcher {
     }
 
     /**
-     * 将 Token 值映射为整数 ID
-     * 
-     * @param tokenValue Token 的值
-     * @returns 整数 ID
-     */
-    private getTokenId(tokenValue: string): number {
-        const existing = this.tokenVocab.get(tokenValue);
-        if (existing !== undefined) {
-            return existing;
-        }
-        // ID 从 1 开始，避免 0 导致哈希退化
-        const id = this.tokenVocab.size + 1;
-        this.tokenVocab.set(tokenValue, id);
-        return id;
-    }
-    
-    /**
      * 处理单个文件的 Token 序列
      * 
      * 使用 Rabin-Karp 滚动哈希在 O(n) 时间内计算所有窗口哈希，
@@ -129,8 +112,15 @@ export class CloneMatcher {
 
         // 将 Token 值映射为整数 ID
         const tokenIds = new Array<number>(tokens.length);
+        const tokenVocab = this.tokenVocab;
         for (let index = 0; index < tokens.length; index++) {
-            tokenIds[index] = this.getTokenId(tokens[index].value);
+            const tokenValue = tokens[index].value;
+            let tokenId = tokenVocab.get(tokenValue);
+            if (tokenId === undefined) {
+                tokenId = tokenVocab.size + 1;
+                tokenVocab.set(tokenValue, tokenId);
+            }
+            tokenIds[index] = tokenId;
         }
         this.fileTokenIds.set(file, tokenIds);
 
