@@ -1227,6 +1227,21 @@ describe('CodeCloneFragmentCheck - 规则类创建', () => {
 
         expect(tokenArrayMaps).toBe(0);
     });
+
+    test('collectTokens 应避免缓存 token 数量不足的文件', () => {
+        const check = new CodeCloneFragmentCheck();
+        check.rule = {
+            option: [{ minimumTokens: Number.MAX_SAFE_INTEGER, ignoreLogs: false }]
+        } as any;
+        check.beforeCheck();
+
+        const filePath = 'test/sample/CodeClone/positive/type1/FileA.ets';
+        check.collectTokens({
+            getFilePath: () => filePath
+        } as any);
+
+        expect((check as any).fileCache.has(filePath)).toBe(false);
+    });
 });
 
 describe('CodeCloneFragmentCheck - 范围判定逻辑', () => {

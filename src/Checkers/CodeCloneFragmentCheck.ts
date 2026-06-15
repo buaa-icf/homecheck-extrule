@@ -150,8 +150,6 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
                 return;
             }
 
-            this.fileCache.set(filePath, arkFile);
-
             if (this.options.ignoreLogs) {
                 const narrowed = sourceCode;
                 sourceCode = PerfReporter.time(
@@ -181,6 +179,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
                     'collectTokens.processFile',
                     () => this.cloneMatcher.processFile(tokens, filePath)
                 );
+                this.fileCache.set(filePath, arkFile);
                 this.fileTokenCache.set(filePath, tokens);
             } catch (error) {
                 this.diagnostics.filesProcessFailed++;
