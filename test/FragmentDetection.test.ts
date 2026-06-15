@@ -969,6 +969,31 @@ describe('Tokenizer - 规范化功能', () => {
         const thirdOccurrence = idTokens[2].value;  // myVariable 的第二次出现
         expect(firstOccurrence).toBe(thirdOccurrence);
     });
+
+    test('重复标识符规范化不应额外调用 Map.has 查询', () => {
+        const tokenizer = new Tokenizer({ normalizeIdentifiers: true });
+        const originalHas = Map.prototype.has;
+        let repeatedIdentifierHasCalls = 0;
+        Map.prototype.has = function <K, V>(this: Map<K, V>, key: K): boolean {
+            if (key === 'repeatedIdentifier') {
+                repeatedIdentifierHasCalls++;
+            }
+            return originalHas.call(this, key);
+        };
+
+        try {
+            const tokens = tokenizer.tokenize(
+                'let repeatedIdentifier = 1; repeatedIdentifier = repeatedIdentifier + 1;'
+            );
+            const ids = tokens.filter(token => token.value.startsWith('ID_')).map(token => token.value);
+
+            expect(new Set(ids)).toEqual(new Set(['ID_0']));
+        } finally {
+            Map.prototype.has = originalHas;
+        }
+
+        expect(repeatedIdentifierHasCalls).toBe(0);
+    });
     
     test('单字母标识符不规范化', () => {
         const code = 'for (let i = 0; i < n; i++) {}';

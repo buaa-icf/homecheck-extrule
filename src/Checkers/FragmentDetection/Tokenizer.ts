@@ -371,9 +371,9 @@ export class Tokenizer {
             return value;
         }
         
-        // 检查是否已有映射
-        if (this.identifierMap.has(value)) {
-            return this.identifierMap.get(value)!;
+        const existing = this.identifierMap.get(value);
+        if (existing !== undefined) {
+            return existing;
         }
         
         // 创建新映射
