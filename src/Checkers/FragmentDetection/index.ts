@@ -54,7 +54,8 @@ export {
     tokenize,
     tokenizeNormalized,
     mapSyntaxKindToTokenType,
-    offsetToLineColumn
+    offsetToLineColumn,
+    SourcePositionMapper
 } from './Tokenizer';
 
 // 相似度计算

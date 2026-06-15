@@ -174,18 +174,52 @@ function isPunctuationKind(kind: ts.SyntaxKind): boolean {
  * @returns { line, column } 行号（1-based）和列号（0-based）
  */
 export function offsetToLineColumn(text: string, offset: number): { line: number; column: number } {
-    let line = 1;
-    let lastNewlinePos = -1;
-    
-    for (let i = 0; i < offset && i < text.length; i++) {
-        if (text[i] === '\n') {
-            line++;
-            lastNewlinePos = i;
+    return new SourcePositionMapper(text).toLineColumn(offset);
+}
+
+/**
+ * SourcePositionMapper caches line starts so many token offsets can be mapped
+ * without re-scanning the whole source for every token.
+ */
+export class SourcePositionMapper {
+    private readonly lineStarts: number[];
+
+    constructor(text: string) {
+        this.lineStarts = [0];
+        for (let i = 0; i < text.length; i++) {
+            if (text[i] === '\n') {
+                this.lineStarts.push(i + 1);
+            }
         }
     }
-    
-    const column = offset - lastNewlinePos - 1;
-    return { line, column };
+
+    public toLineColumn(offset: number): { line: number; column: number } {
+        const lineIndex = this.findLineIndex(offset);
+        const lineStart = this.lineStarts[lineIndex] ?? 0;
+        return {
+            line: lineIndex + 1,
+            column: offset - lineStart
+        };
+    }
+
+    private findLineIndex(offset: number): number {
+        let low = 0;
+        let high = this.lineStarts.length - 1;
+        let result = 0;
+
+        while (low <= high) {
+            const mid = Math.floor((low + high) / 2);
+            const lineStart = this.lineStarts[mid];
+            if (lineStart <= offset) {
+                result = mid;
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        return result;
+    }
 }
 
 /**
@@ -224,6 +258,7 @@ export class Tokenizer {
         
         // 设置源代码
         scanner.setText(sourceCode);
+        const positionMapper = new SourcePositionMapper(sourceCode);
         
         // 开启 ArkTS/ETS 模式
         if (typeof scanner.setEtsContext === 'function') {
@@ -256,7 +291,7 @@ export class Tokenizer {
             
             // 计算位置
             const pos = scanner.getTokenPos();
-            const { line, column } = offsetToLineColumn(sourceCode, pos);
+            const { line, column } = positionMapper.toLineColumn(pos);
             
             // 创建 Token
             const token = createToken(tokenValue, tokenType, line, column, filePath);

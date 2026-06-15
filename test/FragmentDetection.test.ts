@@ -615,7 +615,8 @@ import {
     tokenize,
     tokenizeNormalized,
     mapSyntaxKindToTokenType,
-    offsetToLineColumn
+    offsetToLineColumn,
+    SourcePositionMapper
 } from '../src/Checkers/FragmentDetection/Tokenizer';
 import { ts } from 'arkanalyzer';
 
@@ -638,6 +639,16 @@ describe('Tokenizer - offsetToLineColumn 位置转换', () => {
     
     test('空代码的位置计算', () => {
         expect(offsetToLineColumn('', 0)).toEqual({ line: 1, column: 0 });
+    });
+
+    test('SourcePositionMapper 应复用行索引计算多个 offset', () => {
+        const code = 'let x = 1;\nlet y = 2;\nlet z = 3;';
+        const mapper = new SourcePositionMapper(code);
+
+        expect(mapper.toLineColumn(0)).toEqual({ line: 1, column: 0 });
+        expect(mapper.toLineColumn(11)).toEqual({ line: 2, column: 0 });
+        expect(mapper.toLineColumn(22)).toEqual({ line: 3, column: 0 });
+        expect(mapper.toLineColumn(code.length)).toEqual({ line: 3, column: 10 });
     });
 });
 
@@ -773,6 +784,18 @@ describe('Tokenizer - 基础 tokenize 功能', () => {
         const letToken2 = tokens.find(t => t.value === 'let' && t.line === 2);
         expect(letToken2).toBeDefined();
         expect(letToken2?.line).toBe(2);
+    });
+
+    test('大量 token 的行列号记录保持正确', () => {
+        const source = Array.from({ length: 200 }, (_, index) => `let variable${index} = ${index};`).join('\n');
+        const tokenizer = new Tokenizer({ normalizeIdentifiers: true });
+
+        const tokens = tokenizer.tokenize(source, 'large.ets');
+        const letTokens = tokens.filter(token => token.value === 'let');
+
+        expect(tokens.length).toBeGreaterThan(900);
+        expect(letTokens[0]).toMatchObject({ line: 1, column: 0 });
+        expect(letTokens[199]).toMatchObject({ line: 200, column: 0 });
     });
 });
 
