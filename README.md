@@ -4,48 +4,10 @@ ArkTS 代码检查自定义规则项目，基于 [homecheck](https://gitcode.com
 
 ## 功能特性
 
-- **Long Method Check** (`@extrulesproject/long-method-check`)
-  - 检测方法语句数量超过阈值的方法
-  - 普通函数：默认 50 个语句节点
-  - UI 组装/渲染/构建类函数（build、@Builder、含 ViewTree 的方法等）：
-    - 软阈值：80 个语句节点（severity 降为 warning）
-    - 硬阈值：120 个语句节点（保持原 severity）
-
-- **Code Clone Fragment Check** (`@extrulesproject/code-clone-fragment-check`)
-  - 基于 Token 滑动窗口 + Rabin-Karp 滚动哈希的代码片段级克隆检测，可跨方法边界发现重复片段
-  - 支持标识符/字面量规范化、日志过滤、克隆类聚合与 Type-3 近似片段检测
-
-## 规则配置参数
-
-在 `ruleConfig.json` 的 `extRules` 字段中配置各规则，格式为 `["warn/error/suggestion", { ...options }]`。
-
-### CodeCloneFragmentCheck
-
-规则名：`@extrulesproject/code-clone-fragment-check`
-
-| 参数 | 类型 | 默认值 | 说明 |
-| ------ | ------ | -------- | ------ |
-| `minimumTokens` | number | `100` | 最小 Token 数量，滑动窗口大小，片段长度低于此值不报告 |
-| `normalizeIdentifiers` | boolean | `true` | 是否将标识符规范化为统一占位符，启用后变量名差异不影响匹配 |
-| `normalizeLiterals` | boolean | `false` | 是否将字面量规范化为统一占位符 |
-| `ignoreLogs` | boolean | `true` | 是否过滤日志语句的 Token |
-| `ignoreTypes` | boolean | `false` | 是否忽略类型注解的 Token |
-| `ignoreDecorators` | boolean | `false` | 是否忽略装饰器的 Token |
-| `minDistinctTokenTypes` | number | `3` | 最小不同 Token 类型数，低于此值的片段不报告（过滤重复度过高的简单代码） |
-| `enableCloneClasses` | boolean | `false` | 是否启用克隆类分组报告 |
-| `similarityThreshold` | number | `1.0` | LCS 相似度阈值（范围 0~1），设为 `1.0` 仅报告精确匹配（Type-1/Type-2），低于 `1.0` 启用 Type-3 近似克隆检测 |
-| `maxPairsPerFingerprint` | number | `5000` | 兼容旧 pair 展开与 fallback 的候选上限；精确克隆主路径会先将重复 Token 窗口聚合为 clone class，再生成 pair 风格报告，避免高频指纹枚举全部候选对 |
-
-配置示例：
-
-```json
-"@extrulesproject/code-clone-fragment-check": ["error", {
-  "minimumTokens": 80,
-  "normalizeIdentifiers": true,
-  "normalizeLiterals": true,
-  "maxPairsPerFingerprint": 3000
-}]
-```
+- [**Long Method Check**](docs/long-method-check.md) (`@extrulesproject/long-method-check`)
+- [**Feature Envy Check**](docs/feature-envy-check.md) (`@extrulesproject/feature-envy-check`)
+- [**Switch Statement Check**](docs/switch-statement-check.md) (`@extrulesproject/switch-statement-check`)
+- [**Code Clone Fragment Check**](docs/code-clone-fragment-check.md) (`@extrulesproject/code-clone-fragment-check`)
 
 ## 安装
 
@@ -62,6 +24,40 @@ npm pack
 node ./node_modules/homecheck/lib/run.js --projectConfigPath=./config/projectConfig.json --configPath=./config/ruleConfig.json
 ```
 
-## 许可证
+### 性能测试脚本
 
-ISC
+使用 `perf:gitcode` 可对固定的 4 个 GitCode 仓库执行端到端性能测试：
+
+```bash
+npm run perf:gitcode
+```
+
+脚本会克隆或复用以下仓库，使用 `cloc` 统计 `.ets` 代码行数，并分别运行
+`code-clone-fragment`、`feature-envy`、`long-method`、`switch-statement`
+四种异味检测：
+
+- `https://gitcode.com/HarmonyOS-Cases/cases.git`
+- `https://gitcode.com/openharmony-sig/ostest_integration_test`
+- `https://gitcode.com/openharmony/arkui_ace_engine.git`
+- `https://gitcode.com/appgallery_connect/agc-template-market-harmonyos-demos.git`
+
+输出目录默认为 `report/.perftest/gitcode_arkts_smell_perf`，主要产物包括：
+
+- `perfReport.md`：中文 Markdown 汇总，包含 `.ets` 行数、外层脚本耗时、告警对象数、告警指标数、端到端吞吐和 `peakHeapMB`
+- `summary.json`：结构化汇总数据
+- `perfReport.json`：类似 `report/.perftest/tier2_cases/perfReport.json` 的性能报告
+- `runs/<repo>/<smell>/issuesReport.json`：单仓库单异味的告警报告
+- `runs/<repo>/<smell>/perfReport.json`：单仓库单异味的原始性能报告
+
+常用参数：
+
+```bash
+# 只跑指定仓库或异味
+npm run perf:gitcode -- --includeRepos=cases --includeRules=long-method
+
+# 复用已有仓库时执行 git pull --ff-only
+npm run perf:gitcode -- --updateExisting=true
+
+# 调整单次检测超时和 homecheck 子进程堆内存
+npm run perf:gitcode -- --timeoutMs=1800000 --nodeMaxOldSpaceMB=8192
+```
