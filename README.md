@@ -11,10 +11,70 @@ ArkTS 代码检查自定义规则项目，基于 [homecheck](https://gitcode.com
 
 ## 安装
 
-参考
+```bash
+npm install
+```
 
-- [homecheck 安装与使用指南](https://gitcode.com/openharmony-sig/homecheck/blob/master/document/user/homecheck%E5%AE%89%E8%A3%85%E4%B8%8E%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97.md)
-- [ExtRule 自定义规则开发指南](https://gitcode.com/openharmony-sig/homecheck/blob/master/document/developer/ExtRule%E8%87%AA%E5%AE%9A%E4%B9%89%E8%A7%84%E5%88%99%E5%BC%80%E5%8F%91%E6%8C%87%E5%8D%97.md)
+### 配置文件
+
+根目录下新建 config 目录，并在其中创建 `projectConfig.json` 和 `ruleConfig.json` 两个配置文件。
+
+`ohosSdkPath` 和 `hmsSdkPath` 路径与 DevEco 安装路径有关，mac 中常为 `/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/ets` 与 `/Applications/DevEco-Studio.app/Contents/sdk/default/hms/ets`。
+
+projectConfig.json 示例：
+
+```json
+{
+  "projectName": "TestProject",
+  "projectPath": "/path/to/project",
+  "logPath": "./HomeCheck.log",
+  "ohosSdkPath": "/path/to/ohosSdk",
+  "hmsSdkPath": "/path/to/hmsSdk",
+  "checkPath": "",
+  "sdkVersion": 20,
+  "fix": "false",
+  "npmPath": "",
+  "npmInstallDir": "./",
+  "reportDir": "/path/to/reportDir",
+  "arkCheckPath": "./node_modules/homecheck",
+  "product": "default",
+  "sdksThirdParty": []
+}
+
+```
+
+ruleConfig.json 示例：
+
+`packagePath` 为本项目打包后的 tgz 文件路径。
+
+```json
+{
+  "files": [
+    "**/*.ets",
+    "**/*.ts"
+  ],
+  "ignore": [
+    "**/ohosTest/**/*",
+    "**/node_modules/**/*",
+    "**/build/**/*",
+    "**/hvigorfile/**/*",
+    "**/oh_modules/**/*",
+    "**/.preview/**/*"
+  ],
+  "rules": {},
+  "ruleSet": [],
+  "overrides": [],
+  "extRuleSet": [
+    {
+      "ruleSetName": "extrulesproject",
+      "packagePath": "path/to/extrulesproject-1.0.0.tgz",
+      "extRules": {
+        "@extrulesproject/code-clone-fragment-check": 3
+      }
+    }
+  ]
+}
+```
 
 ## 运行
 
@@ -26,11 +86,52 @@ node ./node_modules/homecheck/lib/run.js --projectConfigPath=./config/projectCon
 
 ### 性能测试脚本
 
+config 目录下新建 `ruleConfig.perfAll.json`
+
+```json
+{
+  "files": [
+    "**/*.ets"
+  ],
+  "ignore": [
+    "**/ohosTest/**/*",
+    "**/node_modules/**/*",
+    "**/build/**/*",
+    "**/hvigorfile/**/*",
+    "**/oh_modules/**/*",
+    "**/.preview/**/*"
+  ],
+  "rules": {},
+  "ruleSet": [],
+  "overrides": [],
+  "extRuleSet": [
+    {
+      "ruleSetName": "extrulesproject",
+      "packagePath": "path/to/extrulesproject-1.0.0.tgz",
+      "extRules": {
+        "@extrulesproject/long-method-check": 2,
+        "@extrulesproject/feature-envy-check": 2,
+        "@extrulesproject/switch-statement-check": 2,
+        "@extrulesproject/foreach-args-check": 2,
+        "@extrulesproject/code-clone-fragment-check": 2
+      }
+    }
+  ]
+}
+
+```
+
 使用 `perf:gitcode` 可对固定的 4 个 GitCode 仓库执行端到端性能测试：
 
 ```bash
 npm run perf:gitcode
 ```
+
+脚本基于 `projectConfig.json` 生成临时配置文件
+
+- 覆盖 projectName
+- 覆盖 projectPath 为当前被测仓库路径
+- 覆盖 reportDir 为当前仓库/异味的独立输出目录
 
 脚本会克隆或复用以下仓库，使用 `cloc` 统计 `.ets` 代码行数，并分别运行
 `code-clone-fragment`、`feature-envy`、`long-method`、`switch-statement`
