@@ -168,8 +168,9 @@ function countEtsLinesWithCloc(repoPath) {
     repoPath,
     '--json',
     '--quiet',
-    '--include-ext=ets',
-    '--force-lang=TypeScript,ets',
+    '--include-lang=ArkTs',
+    // '--include-ext=ets',
+    // '--force-lang=TypeScript,ets',
     `--exclude-dir=${CLOC_EXCLUDE_DIRS}`,
   ]);
   const start = output.indexOf('{');
