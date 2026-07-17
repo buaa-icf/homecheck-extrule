@@ -39,6 +39,10 @@ function toSafeFileName(name) {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
+function normalizeRelativePath(value) {
+  return value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+}
+
 function printUsage() {
   console.log('Usage: node ./scripts/batchScanRepos.js [options]');
   console.log('');
@@ -51,6 +55,7 @@ function printUsage() {
   console.log('  --outputDir=<path>             Output root for saved reports');
   console.log('  --npmCacheDir=<path>           npm cache dir used during scans');
   console.log('  --includeRepos=a,b,c           Only scan these repo names');
+  console.log('  --includeRepoPaths=a,b/c       Scan explicit paths relative to reposRoot');
   console.log('  --includeHidden=true           Include hidden directories (default false)');
   console.log('  --maxRepos=<n>                 Scan at most N repositories');
   console.log('  --stopOnError=true             Stop at first failed repository');
@@ -79,6 +84,9 @@ function main() {
   const tmpConfigDir = path.resolve(cwd, './report/.tmp');
   const npmCacheDir = path.resolve(cwd, args.npmCacheDir || './report/.npm-cache');
   const includeRepos = args.includeRepos ? new Set(args.includeRepos.split(',').filter(Boolean)) : null;
+  const includeRepoPaths = args.includeRepoPaths
+    ? args.includeRepoPaths.split(',').map((item) => normalizeRelativePath(item.trim())).filter(Boolean)
+    : null;
   const includeHidden = args.includeHidden === 'true';
   const maxRepos = args.maxRepos ? Number(args.maxRepos) : null;
   const stopOnError = args.stopOnError === 'true';
@@ -100,13 +108,15 @@ function main() {
   }
 
   const baseProjectConfig = readJson(baseProjectConfigPath);
-  let repoNames = fs
-    .readdirSync(reposRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && (includeHidden || !entry.name.startsWith('.')))
-    .map((entry) => entry.name)
-    .sort((a, b) => a.localeCompare(b));
+  let repoNames = includeRepoPaths
+    ? includeRepoPaths
+    : fs
+        .readdirSync(reposRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && (includeHidden || !entry.name.startsWith('.')))
+        .map((entry) => entry.name)
+        .sort((a, b) => a.localeCompare(b));
 
-  if (includeRepos) {
+  if (includeRepos && !includeRepoPaths) {
     repoNames = repoNames.filter((name) => includeRepos.has(name));
   }
   if (maxRepos !== null) {
@@ -139,14 +149,34 @@ function main() {
 
   for (let i = 0; i < repoNames.length; i += 1) {
     const repoName = repoNames[i];
-    const repoPath = path.join(reposRoot, repoName);
+    const repoPath = path.join(reposRoot, ...repoName.split('/'));
+    if (!fs.existsSync(repoPath)) {
+      const item = {
+        repoName,
+        repoPath,
+        success: false,
+        exitCode: null,
+        signal: null,
+        copied: false,
+        savedReportPath: path.join(outputDir, ...repoName.split('/'), 'issuesReport.json'),
+        durationMs: 0,
+        error: 'repo path does not exist'
+      };
+      summary.items.push(item);
+      console.log(`[${i + 1}/${repoNames.length}] missing: ${repoName} (${repoPath})`);
+      if (stopOnError) {
+        console.log('stopOnError=true, aborting.');
+        break;
+      }
+      continue;
+    }
     const repoStart = Date.now();
     const tempConfigPath = path.join(tmpConfigDir, `projectConfig.${toSafeFileName(repoName)}.json`);
-    const savedReportPath = path.join(outputDir, repoName, 'issuesReport.json');
+    const savedReportPath = path.join(outputDir, ...repoName.split('/'), 'issuesReport.json');
 
     const projectConfig = {
       ...baseProjectConfig,
-      projectName: repoName,
+      projectName: repoName.replace(/[\\/]/g, '__'),
       projectPath: ensureTrailingSeparator(path.resolve(repoPath))
     };
 
