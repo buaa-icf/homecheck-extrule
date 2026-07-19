@@ -27,18 +27,22 @@ const RULES = {
   codeCloneFragment: {
     smell: 'code-clone-fragment',
     ruleName: '@extrulesproject/code-clone-fragment-check',
+    checkerName: 'CodeCloneFragmentCheck',
   },
   featureEnvy: {
     smell: 'feature-envy',
     ruleName: '@extrulesproject/feature-envy-check',
+    checkerName: 'FeatureEnvyCheck',
   },
   longMethod: {
     smell: 'long-method',
     ruleName: '@extrulesproject/long-method-check',
+    checkerName: 'LongMethodCheck',
   },
   switchStatement: {
     smell: 'switch-statement',
     ruleName: '@extrulesproject/switch-statement-check',
+    checkerName: 'SwitchStatementCheck',
   },
 };
 
@@ -233,6 +237,15 @@ function computeThroughput(lines, durationMs) {
   return Math.round((lines / (durationMs / 1000)) * 100) / 100;
 }
 
+function getRuleDurationMs(perf, rule) {
+  const totalMs = perf && perf.checkers && perf.checkers[rule.checkerName]
+    ? perf.checkers[rule.checkerName].totalMs
+    : undefined;
+  return typeof totalMs === 'number' && Number.isFinite(totalMs) && totalMs >= 0
+    ? totalMs
+    : null;
+}
+
 function copyIfExists(fromPath, toPath) {
   if (!fs.existsSync(fromPath)) {
     return false;
@@ -315,7 +328,7 @@ function runRuleScan(context) {
       },
     },
   );
-  const durationMs = Date.now() - started;
+  const processDurationMs = Date.now() - started;
   const timedOut = Boolean(result.error && result.error.code === 'ETIMEDOUT');
 
   const copiedIssues =
@@ -325,19 +338,21 @@ function runRuleScan(context) {
   const issues = readJson(savedIssuesPath, []);
   const issueCounts = countIssues(issues);
   const perf = readJson(savedPerfPath, {});
+  const ruleDurationMs = getRuleDurationMs(perf, rule);
   const peakHeapMB = Number(perf.peakHeapUsedMB) || 0;
 
   return {
     smell: rule.smell,
     ruleName: rule.ruleName,
-    success: result.status === 0 && copiedIssues && copiedPerf && !timedOut,
+    success: result.status === 0 && copiedIssues && copiedPerf && ruleDurationMs !== null && !timedOut,
     exitCode: result.status,
     signal: result.signal,
     timedOut,
-    durationMs,
+    durationMs: ruleDurationMs ?? 0,
+    processDurationMs,
     issueObjects: issueCounts.issueObjects,
     issueMessages: issueCounts.issueMessages,
-    throughputLinesPerSecond: computeThroughput(etsLines, durationMs),
+    throughputLinesPerSecond: computeThroughput(etsLines, ruleDurationMs),
     peakHeapMB,
     issuesReportPath: savedIssuesPath,
     perfReportPath: savedPerfPath,
@@ -352,7 +367,7 @@ function buildMarkdown(report) {
   lines.push(`- 结束时间: ${report.finishedAt}`);
   lines.push(`- 输出目录: ${report.outputDir}`);
   lines.push('');
-  lines.push('| 仓库 | .ets 代码行数 | 异味类型 | 外层脚本耗时 (s) | 告警对象数 | 告警指标数 | 端到端吞吐 (行/s) | peakHeapMB |');
+  lines.push('| 仓库 | .ets 代码行数 | 异味类型 | 规则执行耗时 (s) | 告警对象数 | 告警指标数 | 规则吞吐 (行/s) | peakHeapMB |');
   lines.push('| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |');
   for (const repo of report.repositories) {
     for (const run of repo.runs) {
@@ -386,7 +401,7 @@ function buildAggregatePerfReport(report) {
       checkers[`${repo.name}/${run.smell}`] = {
         totalMs: run.durationMs,
         stages: {
-          endToEnd: {
+          ruleExecution: {
             count: 1,
             totalMs: run.durationMs,
             avgMs: run.durationMs,
@@ -564,6 +579,7 @@ module.exports = {
   buildSingleRuleConfig,
   computeThroughput,
   countIssues,
+  getRuleDurationMs,
   main,
   parseArgs,
 };

@@ -144,7 +144,7 @@ npm run perf:gitcode
 
 输出目录默认为 `report/.perftest/gitcode_arkts_smell_perf`，主要产物包括：
 
-- `perfReport.md`：中文 Markdown 汇总，包含 `.ets` 行数、外层脚本耗时、告警对象数、告警指标数、端到端吞吐和 `peakHeapMB`
+- `perfReport.md`：中文 Markdown 汇总，包含 `.ets` 行数、规则执行耗时、告警对象数、告警指标数、规则吞吐和 `peakHeapMB`
 - `summary.json`：结构化汇总数据
 - `perfReport.json`：类似 `report/.perftest/tier2_cases/perfReport.json` 的性能报告
 - `runs/<repo>/<smell>/issuesReport.json`：单仓库单异味的告警报告

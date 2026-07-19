@@ -4,6 +4,7 @@ const {
     buildSingleRuleConfig,
     computeThroughput,
     countIssues,
+    getRuleDurationMs,
     main,
     RULES,
 } = require('../../scripts/gitcodeArktsPerfTest.js');
@@ -24,9 +25,20 @@ describe('gitcodeArktsPerfTest helpers', () => {
         expect(result.issueMessages).toBe(3);
     });
 
-    it('computes end-to-end throughput in lines per second', () => {
+    it('computes rule throughput in lines per second', () => {
         expect(computeThroughput(2500, 5000)).toBe(500);
         expect(computeThroughput(2500, 0)).toBe(0);
+    });
+
+    it('reads the requested rule execution time from its checker report', () => {
+        const perf = {
+            checkers: {
+                CodeCloneFragmentCheck: { totalMs: 1234.56 },
+            },
+        };
+
+        expect(getRuleDurationMs(perf, RULES.codeCloneFragment)).toBe(1234.56);
+        expect(getRuleDurationMs(perf, RULES.longMethod)).toBeNull();
     });
 
     it('builds a rule config containing only the requested smell rule', () => {
@@ -74,6 +86,7 @@ describe('gitcodeArktsPerfTest helpers', () => {
                     ruleName: '@extrulesproject/long-method-check',
                     success: true,
                     durationMs: 2000,
+                    processDurationMs: 3000,
                     issueObjects: 2,
                     issueMessages: 5,
                     throughputLinesPerSecond: 500,
@@ -88,7 +101,7 @@ describe('gitcodeArktsPerfTest helpers', () => {
         expect(markdown).toContain('- 开始时间: 2026-07-08T00:00:00.000Z');
         expect(markdown).toContain('- 结束时间: 2026-07-08T00:01:00.000Z');
         expect(markdown).toContain('- 输出目录: /tmp/report');
-        expect(markdown).toContain('| 仓库 | .ets 代码行数 | 异味类型 | 外层脚本耗时 (s) | 告警对象数 | 告警指标数 | 端到端吞吐 (行/s) | peakHeapMB |');
+        expect(markdown).toContain('| 仓库 | .ets 代码行数 | 异味类型 | 规则执行耗时 (s) | 告警对象数 | 告警指标数 | 规则吞吐 (行/s) | peakHeapMB |');
         expect(markdown).toContain('| cases | 1000 | long-method | 2.00 | 2 | 5 | 500.00 | 128.12 |');
         expect(markdown).toContain('## 输入仓库');
         expect(markdown).toContain('| 仓库 | URL | 本地路径 | 克隆/更新时间 (s) |');
