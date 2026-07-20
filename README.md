@@ -86,79 +86,26 @@ node ./node_modules/homecheck/lib/run.js --projectConfigPath=./config/projectCon
 
 ### 性能测试脚本
 
-config 目录下新建 `ruleConfig.perfAll.json`
-
-```json
-{
-  "files": [
-    "**/*.ets"
-  ],
-  "ignore": [
-    "**/ohosTest/**/*",
-    "**/node_modules/**/*",
-    "**/build/**/*",
-    "**/hvigorfile/**/*",
-    "**/oh_modules/**/*",
-    "**/.preview/**/*"
-  ],
-  "rules": {},
-  "ruleSet": [],
-  "overrides": [],
-  "extRuleSet": [
-    {
-      "ruleSetName": "extrulesproject",
-      "packagePath": "path/to/extrulesproject-1.0.0.tgz",
-      "extRules": {
-        "@extrulesproject/long-method-check": 2,
-        "@extrulesproject/feature-envy-check": 2,
-        "@extrulesproject/switch-statement-check": 2,
-        "@extrulesproject/foreach-args-check": 2,
-        "@extrulesproject/code-clone-fragment-check": 2
-      }
-    }
-  ]
-}
-
-```
-
-使用 `perf:gitcode` 可对固定的 4 个 GitCode 仓库执行端到端性能测试：
+一键运行（性能测试 + 数据集 F1 评估）：
 
 ```bash
 npm run perf:gitcode
 ```
 
-脚本基于 `projectConfig.json` 生成临时配置文件
-
-- 覆盖 projectName
-- 覆盖 projectPath 为当前被测仓库路径
-- 覆盖 reportDir 为当前仓库/异味的独立输出目录
-
-脚本会克隆或复用以下仓库，使用 `cloc` 统计 `.ets` 代码行数，并分别运行
-`code-clone-fragment`、`feature-envy`、`long-method`、`switch-statement`
-四种异味检测：
-
-- `https://gitcode.com/HarmonyOS-Cases/cases.git`
-- `https://gitcode.com/openharmony-sig/ostest_integration_test`
-- `https://gitcode.com/openharmony/arkui_ace_engine.git`
-- `https://gitcode.com/appgallery_connect/agc-template-market-harmonyos-demos.git`
-
-输出目录默认为 `report/.perftest/gitcode_arkts_smell_perf`，主要产物包括：
-
-- `perfReport.md`：中文 Markdown 汇总，包含 `.ets` 行数、规则执行耗时、告警对象数、告警指标数、规则吞吐和 `peakHeapMB`
-- `summary.json`：结构化汇总数据
-- `perfReport.json`：类似 `report/.perftest/tier2_cases/perfReport.json` 的性能报告
-- `runs/<repo>/<smell>/issuesReport.json`：单仓库单异味的告警报告
-- `runs/<repo>/<smell>/perfReport.json`：单仓库单异味的原始性能报告
+- 首次运行会克隆测试仓库（gitcode 基准仓库 + `../arkts-code-smell/dataset` 标注涉及的数据集仓库）到 `report/.perftest/gitcode_arkts_repos/`，之后自动复用，加 `--updateExisting=true` 可更新
+- 每个仓库只启动一次 HomeCheck，`code-clone-fragment`、`feature-envy`、`long-method`、`switch-statement` 四种异味检测共享同一份 Scene 预处理
+- 运行中打开终端打印的 `Live dashboard` 地址可看实时面板；结束后结果保存在 `report/.perftest/gitcode_arkts_smell_perf/`：
+  - `perfDashboard.html`：性能面板，浏览器直接打开
+  - `perfReport.md`：性能汇总（检测耗时、吞吐、峰值内存）
+  - `f1Report.md`：F1 汇总（TP/FP/FN、Precision/Recall/F1 及漏报/误报清单）
 
 常用参数：
 
 ```bash
-# 只跑指定仓库或异味
-npm run perf:gitcode -- --includeRepos=cases --includeRules=long-method
-
-# 复用已有仓库时执行 git pull --ff-only
-npm run perf:gitcode -- --updateExisting=true
-
-# 调整单次检测超时和 homecheck 子进程堆内存
-npm run perf:gitcode -- --timeoutMs=1800000 --nodeMaxOldSpaceMB=8192
+npm run perf:gitcode -- --f1=false                      # 只测性能，不做 F1 评估
+npm run perf:gitcode -- --includeRepos=cases            # 只跑指定基准仓库
+npm run perf:gitcode -- --f1Repos=applications_photos   # 只跑指定数据集仓库
+npm run perf:gitcode -- --dashboard=false               # 关闭实时面板（CI 适用）
 ```
+
+规则配置见 `config/ruleConfig.perfAll.json`，完整参数列表见 `node ./scripts/gitcodeArktsPerfTest.js --help`。

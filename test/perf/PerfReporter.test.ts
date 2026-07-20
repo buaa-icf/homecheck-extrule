@@ -158,6 +158,31 @@ describe('PerfReporter (enabled)', () => {
         expect(big.length).toBe(2_000_000);
     });
 
+    it('实时模式写出可解析的内存时序，dispose 后停止写入', () => {
+        jest.useFakeTimers();
+        const tmp = path.join(os.tmpdir(), `perf-timeline-${Date.now()}.ndjson`);
+        const reporter = createPerfReporter(true, tmp);
+        created.push(reporter);
+
+        jest.advanceTimersByTime(1_100);
+        const beforeDispose = fs.readFileSync(tmp, 'utf8').trim().split('\n');
+        expect(beforeDispose.length).toBeGreaterThanOrEqual(2);
+        const sample = JSON.parse(beforeDispose[0]);
+        expect(sample).toEqual(expect.objectContaining({
+            timestamp: expect.any(String),
+            elapsedMs: expect.any(Number),
+            heapUsedMB: expect.any(Number),
+            rssMB: expect.any(Number),
+        }));
+
+        reporter.dispose();
+        const sizeAfterDispose = fs.statSync(tmp).size;
+        jest.advanceTimersByTime(2_000);
+        expect(fs.statSync(tmp).size).toBe(sizeAfterDispose);
+        jest.useRealTimers();
+        fs.unlinkSync(tmp);
+    });
+
     it('reset() 清空内存峰值', () => {
         const reporter = make();
         reporter.sampleMemory();
@@ -175,5 +200,12 @@ describe('PerfReporter (disabled, memory)', () => {
         const json = reporter.toJSON();
         expect(json.peakHeapUsedMB).toBe(0);
         expect(json.peakRssMB).toBe(0);
+    });
+
+    it('disabled 时不创建实时内存文件', () => {
+        const tmp = path.join(os.tmpdir(), `perf-timeline-disabled-${Date.now()}.ndjson`);
+        const reporter = createPerfReporter(false, tmp);
+        reporter.sampleMemory();
+        expect(fs.existsSync(tmp)).toBe(false);
     });
 });

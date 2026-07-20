@@ -6,13 +6,17 @@ import {
     StageHandle,
     StageRecord,
     StageRecordJson,
-    CheckerReportJson
+    CheckerReportJson,
+    MemoryTimelineSample
 } from './types';
 
 const NOOP_HANDLE: StageHandle = { end: () => {} };
 
 /** 内存采样间隔（毫秒）。采样器 unref，不会阻止进程退出。 */
 const MEM_SAMPLE_INTERVAL_MS = 200;
+
+/** 实时曲线按 1 秒降采样，峰值统计仍保持 200ms。 */
+const TIMELINE_SAMPLE_INTERVAL_MS = 1000;
 
 function roundMs(ns: bigint): number {
     return Math.round(Number(ns) / 1e4) / 1e2; // ns -> 0.01ms 精度
@@ -32,12 +36,16 @@ export class PerfReporterImpl {
     private peakHeapUsedBytes = 0;
     private peakRssBytes = 0;
     private memSampler: ReturnType<typeof setInterval> | null = null;
+    private timelinePath: string | null;
+    private lastTimelineElapsedMs = Number.NEGATIVE_INFINITY;
 
-    constructor(enabled: boolean) {
+    constructor(enabled: boolean, timelinePath?: string) {
         this.enabled = enabled;
+        this.timelinePath = timelinePath || null;
         this.wallStartNs = process.hrtime.bigint();
         this.wallStartIso = new Date().toISOString();
         if (enabled) {
+            this.prepareTimeline();
             this.registerExitHook();
             this.startMemorySampler();
             this.sampleMemory();
@@ -55,6 +63,44 @@ export class PerfReporterImpl {
         }
         if (usage.rss > this.peakRssBytes) {
             this.peakRssBytes = usage.rss;
+        }
+        this.appendTimelineSample(usage);
+    }
+
+    private prepareTimeline(): void {
+        if (!this.timelinePath) {
+            return;
+        }
+        try {
+            fs.mkdirSync(path.dirname(this.timelinePath), { recursive: true });
+            fs.writeFileSync(this.timelinePath, '');
+            this.lastTimelineElapsedMs = Number.NEGATIVE_INFINITY;
+        } catch {
+            // 实时面板不可写时不能影响检测器正常执行和最终性能报告。
+            this.timelinePath = null;
+        }
+    }
+
+    private appendTimelineSample(usage: NodeJS.MemoryUsage): void {
+        if (!this.timelinePath) {
+            return;
+        }
+        const elapsedMs = Math.round(Number(process.hrtime.bigint() - this.wallStartNs) / 1e6);
+        if (elapsedMs - this.lastTimelineElapsedMs < TIMELINE_SAMPLE_INTERVAL_MS) {
+            return;
+        }
+        const sample: MemoryTimelineSample = {
+            timestamp: new Date().toISOString(),
+            elapsedMs,
+            heapUsedMB: bytesToMB(usage.heapUsed),
+            rssMB: bytesToMB(usage.rss)
+        };
+        try {
+            fs.appendFileSync(this.timelinePath, `${JSON.stringify(sample)}\n`);
+            this.lastTimelineElapsedMs = elapsedMs;
+        } catch {
+            // 只停用实时曲线，峰值和阶段统计继续工作。
+            this.timelinePath = null;
         }
     }
 
@@ -186,6 +232,7 @@ export class PerfReporterImpl {
         this.wallStartIso = new Date().toISOString();
         this.peakHeapUsedBytes = 0;
         this.peakRssBytes = 0;
+        this.prepareTimeline();
     }
 
     /** 测试 / 长驻进程清理：移除 exit 钩子、停止采样器并清空累计。 */
@@ -204,9 +251,10 @@ export class PerfReporterImpl {
 }
 
 export function createPerfReporter(
-    enabled: boolean = process.env.EXTRULES_PERF === '1'
+    enabled: boolean = process.env.EXTRULES_PERF === '1',
+    timelinePath: string | undefined = process.env.EXTRULES_PERF_TIMELINE_PATH
 ): PerfReporterImpl {
-    return new PerfReporterImpl(enabled);
+    return new PerfReporterImpl(enabled, timelinePath);
 }
 
 /** 进程单例：检测器代码统一从这里 import。 */

@@ -29,6 +29,14 @@ export interface CheckerReportJson {
     stages: Record<string, StageRecordJson>;
 }
 
+/** 实时内存曲线中的单个采样点。 */
+export interface MemoryTimelineSample {
+    timestamp: string;
+    elapsedMs: number;
+    heapUsedMB: number;
+    rssMB: number;
+}
+
 /** 完整 perfReport.json 形态。 */
 export interface PerfReportShape {
     runId: string;
