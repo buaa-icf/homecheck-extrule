@@ -5,5 +5,6 @@ export type {
     StageRecord,
     StageRecordJson,
     CheckerReportJson,
+    MemoryTimelineSample,
     PerfReportShape
 } from './types';
