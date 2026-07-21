@@ -14,25 +14,6 @@ const {
   summarizeF1,
 } = require('./datasetF1');
 
-const REPOSITORIES = [
-  {
-    name: 'cases',
-    url: 'https://gitcode.com/HarmonyOS-Cases/cases.git',
-  },
-  {
-    name: 'ostest_integration_test',
-    url: 'https://gitcode.com/openharmony-sig/ostest_integration_test',
-  },
-  {
-    name: 'arkui_ace_engine',
-    url: 'https://gitcode.com/openharmony/arkui_ace_engine.git',
-  },
-  {
-    name: 'agc-template-market-harmonyos-demos',
-    url: 'https://gitcode.com/appgallery_connect/agc-template-market-harmonyos-demos.git',
-  },
-];
-
 const RULES = {
   codeCloneFragment: {
     smell: 'code-clone-fragment',
@@ -624,7 +605,6 @@ function printUsage() {
   console.log('  --baseRuleConfig=<path>        Base ruleConfig JSON used for files/ignore/packagePath');
   console.log('  --runnerPath=<path>            homecheck runner JS path');
   console.log('  --npmCacheDir=<path>           npm cache dir for homecheck');
-  console.log('  --includeRepos=a,b             Only run selected repository names');
   console.log('  --includeRules=a,b             Only run selected smell names');
   console.log('  --updateExisting=true          Run git pull --ff-only when a repo already exists');
   console.log('  --cloneDepth=1                 git clone depth, use 0 for full clone');
@@ -713,7 +693,6 @@ async function main() {
   const npmCacheDir = path.resolve(cwd, args.npmCacheDir || './report/.npm-cache');
   const timeoutMs = args.timeoutMs ? Number(args.timeoutMs) : 30 * 60 * 1000;
   const nodeMaxOldSpaceMB = args.nodeMaxOldSpaceMB ? Number(args.nodeMaxOldSpaceMB) : 8192;
-  const includeRepos = args.includeRepos ? new Set(args.includeRepos.split(',').filter(Boolean)) : null;
   const includeRules = args.includeRules ? new Set(args.includeRules.split(',').filter(Boolean)) : null;
   const updateExisting = args.updateExisting === 'true';
   const dashboardEnabled = args.dashboard !== 'false';
@@ -742,40 +721,35 @@ async function main() {
   const baseRuleConfig = readJson(baseRuleConfigPath, {});
   const repositories = [];
   const f1RepoResults = [];
-  const selectedRepos = REPOSITORIES.filter((repo) => !includeRepos || includeRepos.has(repo.name));
   const selectedRules = RULE_ORDER.filter((rule) => !includeRules || includeRules.has(rule.smell));
 
-  // F1 评估默认开启：加载 arkts-code-smell 数据集标注，扫描数据集仓库后与标注对比。
+  // 只扫描 arkts-code-smell 数据集标注涉及的仓库：性能数据与 F1 评估（默认开启）都基于这批仓库。
   const f1Requested = args.f1 !== 'false';
   const datasetDir = path.resolve(cwd, args.datasetDir || '../arkts-code-smell/dataset');
   const f1ReposFilter = args.f1Repos ? new Set(args.f1Repos.split(',').filter(Boolean)) : null;
   let groundTruth = null;
   let datasetRepos = [];
-  if (f1Requested && selectedRules.length > 0) {
+  if (selectedRules.length > 0) {
     if (!fs.existsSync(datasetDir)) {
-      console.log(`[f1] 数据集目录不存在，跳过 F1 评估: ${datasetDir}`);
+      console.log(`[dataset] 数据集目录不存在，没有可扫描的仓库: ${datasetDir}`);
     } else {
       try {
         groundTruth = loadGroundTruth(datasetDir, selectedRules.map((rule) => rule.ruleName));
         datasetRepos = buildDatasetRepos(groundTruth.repoNames)
           .filter((repo) => !f1ReposFilter || f1ReposFilter.has(repo.name));
         console.log(
-          `[f1] 加载标注: ${groundTruth.positives.length} 正例 / ${groundTruth.negatives.length} 负例, ` +
+          `[dataset] 加载标注: ${groundTruth.positives.length} 正例 / ${groundTruth.negatives.length} 负例, ` +
           `${datasetRepos.length} 个数据集仓库`,
         );
       } catch (error) {
-        console.log(`[f1] 加载数据集标注失败，跳过 F1 评估: ${error instanceof Error ? error.message : error}`);
+        console.log(`[dataset] 加载数据集标注失败，没有可扫描的仓库: ${error instanceof Error ? error.message : error}`);
         groundTruth = null;
         datasetRepos = [];
       }
     }
   }
-  // 数据集仓库与基准仓库可能同名不同源（如 cases），隔离到 reposRoot/dataset 下。
   const datasetReposRoot = path.join(reposRoot, 'dataset');
-  const repoWorkItems = [
-    ...selectedRepos.map((repo) => ({ repo, group: 'benchmark', cloneRoot: reposRoot })),
-    ...datasetRepos.map((repo) => ({ repo, group: 'dataset', cloneRoot: datasetReposRoot })),
-  ];
+  const repoWorkItems = datasetRepos.map((repo) => ({ repo, group: 'dataset', cloneRoot: datasetReposRoot }));
   const dashboardState = {
     status: 'running',
     startedAt,
@@ -855,7 +829,7 @@ async function main() {
         repoResult.runs.push(...result.runs);
         dashboardState.runs.push(...result.runs.map((run) => toDashboardRun(repo.name, run)));
         dashboardState.repositoryRuns.push(toDashboardRepositoryRun(repo.name, result.sharedRun));
-        if (group === 'dataset' && groundTruth && result.sharedRun.success) {
+        if (f1Requested && groundTruth && result.sharedRun.success) {
           const issues = readJson(result.sharedRun.issuesReportPath, []);
           const ruleComparison = compareRepo({
             issues,
@@ -909,7 +883,7 @@ async function main() {
     writeJson(summaryPath, report);
     fs.writeFileSync(markdownPath, buildMarkdown(report));
     fs.writeFileSync(dashboardPath, buildDashboardHtml(snapshotDashboardState(dashboardState)));
-    if (groundTruth && f1RepoResults.length > 0) {
+    if (f1Requested && groundTruth && f1RepoResults.length > 0) {
       const f1Report = {
         generatedAt: dashboardState.finishedAt,
         datasetDir,
@@ -937,7 +911,7 @@ async function main() {
   console.log(`Summary: ${summaryPath}`);
   console.log(`Markdown: ${markdownPath}`);
   console.log(`Dashboard: ${dashboardPath}`);
-  if (groundTruth && f1RepoResults.length > 0) {
+  if (f1Requested && groundTruth && f1RepoResults.length > 0) {
     console.log(`F1 report: ${f1ReportPath}`);
     console.log(`F1 markdown: ${f1MarkdownPath}`);
   }
@@ -954,7 +928,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  REPOSITORIES,
   RULES,
   RULE_ORDER,
   buildAggregatePerfReport,
