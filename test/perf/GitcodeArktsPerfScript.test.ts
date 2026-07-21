@@ -134,7 +134,17 @@ describe('gitcodeArktsPerfTest helpers', () => {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gitcode-perf-'));
         const reposRoot = path.join(root, 'repos');
         const outputDir = path.join(root, 'out');
-        const casesRoot = path.join(reposRoot, 'cases');
+        const datasetDir = path.join(root, 'dataset');
+
+        // 迷你数据集：1 条正例，属于仓库 cases（扫描目标只来自数据集标注）
+        fs.mkdirSync(path.join(datasetDir, 'positive', 'local-test'), { recursive: true });
+        fs.mkdirSync(path.join(datasetDir, 'negative'), { recursive: true });
+        fs.writeFileSync(path.join(datasetDir, 'positive', 'local-test', 'long-method.json'), JSON.stringify([{
+            filePath: 'cases/Index.ets',
+            messages: [{ line: 2, rule: RULES.longMethod.ruleName, rangeStart: 1, rangeEnd: 4 }],
+        }]));
+
+        const casesRoot = path.join(reposRoot, 'dataset', 'cases');
         fs.mkdirSync(casesRoot, { recursive: true });
         fs.writeFileSync(
             path.join(casesRoot, 'Index.ets'),
@@ -147,14 +157,27 @@ describe('gitcodeArktsPerfTest helpers', () => {
             ].join('\n'),
         );
 
+        const runnerPath = path.join(root, 'fake-runner.js');
+        fs.writeFileSync(runnerPath, [
+            "const fs = require('node:fs');",
+            "const path = require('node:path');",
+            "const args = Object.fromEntries(process.argv.slice(2).map((item) => { const i=item.indexOf('='); return [item.slice(2,i), item.slice(i+1)]; }));",
+            "const project = JSON.parse(fs.readFileSync(args.projectConfigPath, 'utf8'));",
+            "fs.mkdirSync(project.reportDir, { recursive: true });",
+            "fs.writeFileSync(path.join(project.reportDir, 'issuesReport.json'), JSON.stringify([]));",
+            "fs.mkdirSync(path.join(process.cwd(), 'report'), { recursive: true });",
+            "fs.writeFileSync(path.join(process.cwd(), 'report', 'perfReport.json'), JSON.stringify({ runId: 'shared', totalWallMs: 100, peakHeapUsedMB: 50, peakRssMB: 80, checkers: { LongMethodCheck: { totalMs: 10, stages: {} } } }));",
+        ].join('\n'));
+
         const previousArgv = process.argv;
         process.argv = [
             previousArgv[0],
             previousArgv[1],
             `--reposRoot=${reposRoot}`,
             `--outputDir=${outputDir}`,
-            '--includeRepos=cases',
-            '--includeRules=__none__',
+            `--runnerPath=${runnerPath}`,
+            `--datasetDir=${datasetDir}`,
+            '--includeRules=long-method',
             '--dashboard=false',
             '--f1=false',
         ];
@@ -168,8 +191,13 @@ describe('gitcodeArktsPerfTest helpers', () => {
         const summary = JSON.parse(
             fs.readFileSync(path.join(outputDir, 'summary.json'), 'utf8'),
         );
+        // 即使关闭 F1 评估（--f1=false），数据集仓库仍然会被扫描
+        expect(summary.repositories).toHaveLength(1);
+        expect(summary.repositories[0].name).toBe('cases');
+        expect(summary.repositories[0].group).toBe('dataset');
         expect(summary.repositories[0].etsLines).toBe(4);
         expect(fs.existsSync(path.join(outputDir, 'perfDashboard.html'))).toBe(true);
+        expect(fs.existsSync(path.join(outputDir, 'f1Report.json'))).toBe(false);
     });
 
     it('runs multiple rules in one repository process and writes compatible split artifacts', async () => {
@@ -223,13 +251,12 @@ describe('gitcodeArktsPerfTest helpers', () => {
         const datasetDir = path.join(root, 'dataset');
 
         // 迷你数据集：1 条正例 + 1 条负例，均属于仓库 fakerepo
-        fs.mkdirSync(path.join(datasetDir, 'positive'), { recursive: true });
+        fs.mkdirSync(path.join(datasetDir, 'positive', 'local-test'), { recursive: true });
         fs.mkdirSync(path.join(datasetDir, 'negative'), { recursive: true });
-        fs.writeFileSync(path.join(datasetDir, 'positive', 'merged_coverage_all.csv'), [
-            'record_index,message_index,fragment_role,rule,source_file,commit_id,range_start,range_end',
-            `1,1,original,${RULES.longMethod.ruleName},fakerepo/src/A.ets,abc123,10,30`,
-            '',
-        ].join('\n'));
+        fs.writeFileSync(path.join(datasetDir, 'positive', 'local-test', 'long-method.json'), JSON.stringify([{
+            filePath: 'fakerepo/src/A.ets',
+            messages: [{ line: 15, rule: RULES.longMethod.ruleName, rangeStart: 10, rangeEnd: 30 }],
+        }]));
         fs.writeFileSync(path.join(datasetDir, 'negative', 'negative-long-method.json'), JSON.stringify([{
             filePath: 'fakerepo/src/Neg.ets',
             messages: [{ line: 60, rule: RULES.longMethod.ruleName, rangeStart: 55, rangeEnd: 90 }],
@@ -267,7 +294,6 @@ describe('gitcodeArktsPerfTest helpers', () => {
             `--outputDir=${outputDir}`,
             `--runnerPath=${runnerPath}`,
             `--datasetDir=${datasetDir}`,
-            '--includeRepos=__none__',
             '--includeRules=long-method',
             '--dashboard=false',
         ];

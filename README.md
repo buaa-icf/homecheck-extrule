@@ -92,7 +92,7 @@ node ./node_modules/homecheck/lib/run.js --projectConfigPath=./config/projectCon
 npm run perf:gitcode
 ```
 
-- 首次运行会克隆测试仓库（gitcode 基准仓库 + `../arkts-code-smell/dataset` 标注涉及的数据集仓库）到 `report/.perftest/gitcode_arkts_repos/`，之后自动复用，加 `--updateExisting=true` 可更新
+- 首次运行会克隆 `../arkts-code-smell/dataset` 标注涉及的数据集仓库到 `report/.perftest/gitcode_arkts_repos/`，之后自动复用，加 `--updateExisting=true` 可更新
 - 每个仓库只启动一次 HomeCheck，`code-clone-fragment`、`feature-envy`、`long-method`、`switch-statement` 四种异味检测共享同一份 Scene 预处理
 - 运行中打开终端打印的 `Live dashboard` 地址可看实时面板；结束后结果保存在 `report/.perftest/gitcode_arkts_smell_perf/`：
   - `perfDashboard.html`：性能面板，浏览器直接打开
@@ -103,7 +103,6 @@ npm run perf:gitcode
 
 ```bash
 npm run perf:gitcode -- --f1=false                      # 只测性能，不做 F1 评估
-npm run perf:gitcode -- --includeRepos=cases            # 只跑指定基准仓库
 npm run perf:gitcode -- --f1Repos=applications_photos   # 只跑指定数据集仓库
 npm run perf:gitcode -- --dashboard=false               # 关闭实时面板（CI 适用）
 ```
