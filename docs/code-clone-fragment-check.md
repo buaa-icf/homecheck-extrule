@@ -8,7 +8,7 @@
 
 - `minimumTokens`: `100`
 - `normalizeIdentifiers`: `true`
-- `normalizeLiterals`: `false`
+- `normalizeLiterals`: `true`
 - `ignoreLogs`: `true`
 - `ignoreTypes`: `false`
 - `ignoreDecorators`: `false`

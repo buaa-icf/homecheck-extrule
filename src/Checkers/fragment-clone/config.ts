@@ -5,7 +5,7 @@ import { FragmentCloneRuleOptions } from "../config/types";
 export const DEFAULT_FRAGMENT_CLONE_OPTIONS: FragmentCloneRuleOptions = {
     minimumTokens: 100,
     normalizeIdentifiers: true,
-    normalizeLiterals: false,
+    normalizeLiterals: true,
     ignoreTypes: false,
     ignoreDecorators: false,
     ignoreLogs: true,

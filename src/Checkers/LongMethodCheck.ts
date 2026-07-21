@@ -146,11 +146,7 @@ export class LongMethodCheck extends BaseRuleChecker<LongMethodRuleOptions> {
     private countMethodCodeLines(method: ArkMethod): number {
         const code = method.getCode();
         if (code) {
-            return code
-                .split(/\r?\n/)
-                .map(line => line.trim())
-                .filter(line => line.length > 0 && line !== '{' && line !== '}')
-                .length;
+            return countNonCommentCodeLines(code);
         }
 
         const body = method.getBody();
@@ -179,4 +175,75 @@ export class LongMethodCheck extends BaseRuleChecker<LongMethodRuleOptions> {
             severity: severityOverride !== undefined ? severityOverride : undefined,
         });
     }
+}
+
+function countNonCommentCodeLines(code: string): number {
+    return stripComments(code)
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(line => line.length > 0 && line !== '{' && line !== '}')
+        .length;
+}
+
+function stripComments(code: string): string {
+    let result = "";
+    let inBlockComment = false;
+    let inString: "'" | '"' | "`" | "" = "";
+    let escaped = false;
+
+    for (let i = 0; i < code.length; i++) {
+        const current = code[i];
+        const next = code[i + 1] ?? "";
+
+        if (inBlockComment) {
+            if (current === "*" && next === "/") {
+                inBlockComment = false;
+                i++;
+                continue;
+            }
+            if (current === "\n" || current === "\r") {
+                result += current;
+            }
+            continue;
+        }
+
+        if (inString) {
+            result += current;
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (current === "\\") {
+                escaped = true;
+                continue;
+            }
+            if (current === inString) {
+                inString = "";
+            }
+            continue;
+        }
+
+        if (current === "/" && next === "/") {
+            while (i < code.length && code[i] !== "\n" && code[i] !== "\r") {
+                i++;
+            }
+            if (i < code.length) {
+                result += code[i];
+            }
+            continue;
+        }
+
+        if (current === "/" && next === "*") {
+            inBlockComment = true;
+            i++;
+            continue;
+        }
+
+        if (current === "'" || current === '"' || current === "`") {
+            inString = current;
+        }
+        result += current;
+    }
+
+    return result;
 }

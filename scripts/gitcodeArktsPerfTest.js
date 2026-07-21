@@ -215,7 +215,7 @@ async function cloneOrUpdateRepository(repo, reposRoot, options = {}) {
 }
 
 async function countEtsLinesWithCloc(repoPath) {
-  const output = await runCommand('cloc', [
+  const output = await runCommand(process.env.CLOC_PATH || 'cloc', [
     repoPath,
     '--json',
     '--quiet',
@@ -771,7 +771,9 @@ async function main() {
     }
   }
   // 数据集仓库与基准仓库可能同名不同源（如 cases），隔离到 reposRoot/dataset 下。
-  const datasetReposRoot = path.join(reposRoot, 'dataset');
+  const datasetReposRoot = process.env.DATASET_REPOS_ROOT
+    ? path.resolve(process.env.DATASET_REPOS_ROOT)
+    : path.join(reposRoot, 'dataset');
   const repoWorkItems = [
     ...selectedRepos.map((repo) => ({ repo, group: 'benchmark', cloneRoot: reposRoot })),
     ...datasetRepos.map((repo) => ({ repo, group: 'dataset', cloneRoot: datasetReposRoot })),
