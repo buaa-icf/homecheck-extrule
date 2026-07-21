@@ -16,9 +16,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const DATASET_REPO_URL_TEMPLATE = 'https://github.com/buaa-icf/{name}.git';
+const KNOWN_DATASET_REPOS = [
+  'agc-template-market-harmonyos-demos',
+  'applications_photos',
+  'applications_settings',
+  'cases',
+  'model-evaluation-testsuite',
+  'openharmony_tpc_samples',
+  'ostest_integration_test',
+];
 
 /** code-clone message 形如：...: File.ets:21-39 is similar to /abs/path/File.ets:21-39. (...) */
-const CLONE_FRAGMENT_PATTERN = /([^\s]+\.ets):(\d+)-(\d+)\s+is similar to\s+([^\s]+\.ets):(\d+)-(\d+)/;
+const CLONE_FRAGMENT_PATTERN = /([^\s]+\.ets)(?:\s*>\s*[^:]+)?:(\d+)-(\d+)\s+is similar to\s+([^\s]+\.ets)(?:\s*>\s*[^:]+)?:(\d+)-(\d+)/;
 
 /** 引号感知的最小 CSV 解析，返回字符串二维数组（含表头行）。 */
 function parseCsvRows(text) {
@@ -68,6 +77,19 @@ function parseCsvRows(text) {
 /** 'repoName/dir/file.ets' → { repo, relFile }；无法拆分时返回 null。 */
 function splitRepoRelFile(sourceFile) {
   const normalized = String(sourceFile || '').replace(/\\/g, '/');
+  for (const repo of KNOWN_DATASET_REPOS) {
+    if (normalized === repo) {
+      return null;
+    }
+    const repoPrefix = `${repo}/`;
+    const index = normalized.indexOf(repoPrefix);
+    if (index !== -1) {
+      return {
+        repo,
+        relFile: normalized.slice(index + repoPrefix.length),
+      };
+    }
+  }
   const separatorIndex = normalized.indexOf('/');
   if (separatorIndex <= 0 || separatorIndex === normalized.length - 1) {
     return null;
@@ -92,6 +114,42 @@ function readJsonArray(filePath) {
   }
 }
 
+function loadJsonTargetsFromDir(targets, baseDir, wantedRules, kind) {
+  if (!fs.existsSync(baseDir)) {
+    return;
+  }
+  for (const fileName of fs.readdirSync(baseDir).sort()) {
+    if (!/\.json$/.test(fileName)) {
+      continue;
+    }
+    for (const item of readJsonArray(path.join(baseDir, fileName))) {
+      const split = splitRepoRelFile(item && item.filePath);
+      if (!split || !item || !Array.isArray(item.messages)) {
+        continue;
+      }
+      for (const message of item.messages) {
+        if (!message || !wantedRules.has(message.rule)) {
+          continue;
+        }
+        const rangeStart = toFiniteLine(message.rangeStart ?? message.line);
+        const rangeEnd = toFiniteLine(message.rangeEnd ?? message.line);
+        if (rangeStart === null || rangeEnd === null) {
+          continue;
+        }
+        targets.push({
+          kind,
+          rule: message.rule,
+          repo: split.repo,
+          relFile: split.relFile,
+          rangeStart,
+          rangeEnd,
+          commitId: null,
+        });
+      }
+    }
+  }
+}
+
 /**
  * 加载数据集标注。
  * @param {string} datasetDir arkts-code-smell/dataset 目录
@@ -103,39 +161,18 @@ function loadGroundTruth(datasetDir, ruleNames) {
   const positives = [];
   const negatives = [];
 
-  const csvPath = path.join(datasetDir, 'positive', 'merged_coverage_all.csv');
-  if (fs.existsSync(csvPath)) {
-    const rows = parseCsvRows(fs.readFileSync(csvPath, 'utf8'));
-    const header = rows.shift() || [];
-    const columnIndex = {
-      rule: header.indexOf('rule'),
-      sourceFile: header.indexOf('source_file'),
-      commitId: header.indexOf('commit_id'),
-      rangeStart: header.indexOf('range_start'),
-      rangeEnd: header.indexOf('range_end'),
-    };
-    for (const row of rows) {
-      const rule = row[columnIndex.rule];
-      if (!wantedRules.has(rule)) {
-        continue;
-      }
-      const split = splitRepoRelFile(row[columnIndex.sourceFile]);
-      const rangeStart = toFiniteLine(row[columnIndex.rangeStart]);
-      const rangeEnd = toFiniteLine(row[columnIndex.rangeEnd]);
-      if (!split || rangeStart === null || rangeEnd === null) {
-        continue;
-      }
-      positives.push({
-        kind: 'positive',
-        rule,
-        repo: split.repo,
-        relFile: split.relFile,
-        rangeStart,
-        rangeEnd,
-        commitId: row[columnIndex.commitId] || null,
-      });
-    }
-  }
+  loadJsonTargetsFromDir(
+    positives,
+    path.join(datasetDir, 'positive', 'local-test'),
+    wantedRules,
+    'positive',
+  );
+  loadJsonTargetsFromDir(
+    positives,
+    path.join(datasetDir, 'positive', 'instrument-test'),
+    wantedRules,
+    'positive',
+  );
 
   const negativeDir = path.join(datasetDir, 'negative');
   if (fs.existsSync(negativeDir)) {
@@ -270,6 +307,9 @@ function compareRepo(options) {
     const positiveTargets = repoTargets.filter(
       (target) => target.rule === ruleName && target.kind === 'positive',
     );
+    const negativeTargets = repoTargets.filter(
+      (target) => target.rule === ruleName && target.kind === 'negative',
+    );
     const detections = [];
     for (const issue of Array.isArray(issues) ? issues : []) {
       if (!issue || !Array.isArray(issue.messages)) {
@@ -298,11 +338,18 @@ function compareRepo(options) {
         detection.locations.some((location) => locationMatches(location, target)),
       );
       if (matchedIndex === -1) {
-        fpList.push({
-          file: detection.relFile,
-          line: detection.message.line,
-          message: detection.message.message,
-        });
+        const matchedNegative = negativeTargets.find((target) =>
+          detection.locations.some((location) => locationMatches(location, target)),
+        );
+        if (matchedNegative) {
+          fpList.push({
+            file: detection.relFile,
+            line: detection.message.line,
+            rangeStart: matchedNegative.rangeStart,
+            rangeEnd: matchedNegative.rangeEnd,
+            message: detection.message.message,
+          });
+        }
       } else if (!matchedTargetIndexes.has(matchedIndex)) {
         matchedTargetIndexes.add(matchedIndex);
         tpList.push({

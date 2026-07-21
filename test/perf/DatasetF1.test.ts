@@ -46,15 +46,20 @@ describe('datasetF1 helpers', () => {
 
     it('loads ground truth, filters non-linter rules and collects labeled files', () => {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dataset-f1-gt-'));
-        fs.mkdirSync(path.join(root, 'positive'), { recursive: true });
+        fs.mkdirSync(path.join(root, 'positive', 'local-test'), { recursive: true });
+        fs.mkdirSync(path.join(root, 'positive', 'instrument-test'), { recursive: true });
         fs.mkdirSync(path.join(root, 'negative'), { recursive: true });
-        fs.writeFileSync(path.join(root, 'positive', 'merged_coverage_all.csv'), [
-            'record_index,message_index,fragment_role,rule,source_file,commit_id,range_start,range_end,note',
-            `1,1,original,${LONG_METHOD},repoA/src/A.ets,abc123,10,30,"note, with comma"`,
-            '2,1,original,Data Clumps,repoA/src/B.ets,abc123,5,8,',
-            `3,1,original,${FEATURE_ENVY},repoB/src/C.ets,,40,50,`,
-            '',
-        ].join('\n'));
+        fs.writeFileSync(path.join(root, 'positive', 'local-test', 'long-method.json'), JSON.stringify([{
+            filePath: 'repoA/src/A.ets',
+            messages: [{ line: 10, rule: LONG_METHOD, rangeStart: 10, rangeEnd: 30 }],
+        }, {
+            filePath: 'repoA/src/B.ets',
+            messages: [{ line: 5, rule: 'Data Clumps', rangeStart: 5, rangeEnd: 8 }],
+        }]));
+        fs.writeFileSync(path.join(root, 'positive', 'instrument-test', 'feature-envy.json'), JSON.stringify([{
+            filePath: 'repoB/src/C.ets',
+            messages: [{ line: 40, rule: FEATURE_ENVY, rangeStart: 40, rangeEnd: 50 }],
+        }]));
         fs.writeFileSync(path.join(root, 'negative', 'negative-long-method.json'), JSON.stringify([{
             filePath: 'repoA/src/Neg.ets',
             messages: [{ line: 60, rule: LONG_METHOD, rangeStart: 55, rangeEnd: 90 }],
@@ -70,7 +75,7 @@ describe('datasetF1 helpers', () => {
             relFile: 'src/A.ets',
             rangeStart: 10,
             rangeEnd: 30,
-            commitId: 'abc123',
+            commitId: null,
         }));
         expect(groundTruth.negatives).toHaveLength(1);
         expect(groundTruth.negatives[0]).toEqual(expect.objectContaining({
@@ -140,7 +145,7 @@ describe('datasetF1 helpers', () => {
         });
 
         expect(rules[LONG_METHOD].tp).toBe(1);
-        expect(rules[LONG_METHOD].fp).toBe(2);
+        expect(rules[LONG_METHOD].fp).toBe(1);
         expect(rules[LONG_METHOD].fn).toBe(1);
         expect(rules[LONG_METHOD].tpList).toHaveLength(1);
         expect(rules[LONG_METHOD].fnList).toEqual([{ file: 'src/A.ets', rangeStart: 100, rangeEnd: 120 }]);
@@ -172,6 +177,24 @@ describe('datasetF1 helpers', () => {
         expect(rules[CODE_CLONE].tp).toBe(1);
         expect(rules[CODE_CLONE].fp).toBe(0);
         expect(rules[CODE_CLONE].fn).toBe(0);
+    });
+
+    it('extracts method-qualified clone fragment ranges', () => {
+        const issue = { filePath: '/repos/repoA/src/Profile.ets' };
+        const message = {
+            rule: CODE_CLONE,
+            line: 34,
+            message: 'Code Clone Type-2 (same method): Profile.ets > Profile.build():34-53 is similar to ' +
+                '/repos/repoA/src/Profile.ets > Profile.build():63-82. (100 tokens, 20 lines)',
+        };
+
+        const locations = extractDetectionLocations(issue, message, '/repos/repoA');
+
+        expect(locations).toEqual([
+            { relFile: 'src/Profile.ets', line: 34, rangeStart: 34, rangeEnd: 34 },
+            { relFile: 'src/Profile.ets', line: 34, rangeStart: 34, rangeEnd: 53 },
+            { relFile: 'src/Profile.ets', line: 63, rangeStart: 63, rangeEnd: 82 },
+        ]);
     });
 
     it('computes precision/recall/F1 and handles zero denominators', () => {

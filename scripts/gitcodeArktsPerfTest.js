@@ -196,7 +196,7 @@ async function cloneOrUpdateRepository(repo, reposRoot, options = {}) {
 }
 
 async function countEtsLinesWithCloc(repoPath) {
-  const output = await runCommand('cloc', [
+  const output = await runCommand(process.env.CLOC_PATH || 'cloc', [
     repoPath,
     '--json',
     '--quiet',
@@ -748,7 +748,9 @@ async function main() {
       }
     }
   }
-  const datasetReposRoot = path.join(reposRoot, 'dataset');
+  const datasetReposRoot = process.env.DATASET_REPOS_ROOT
+    ? path.resolve(process.env.DATASET_REPOS_ROOT)
+    : path.join(reposRoot, 'dataset');
   const repoWorkItems = datasetRepos.map((repo) => ({ repo, group: 'dataset', cloneRoot: datasetReposRoot }));
   const dashboardState = {
     status: 'running',

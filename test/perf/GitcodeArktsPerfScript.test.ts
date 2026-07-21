@@ -137,13 +137,12 @@ describe('gitcodeArktsPerfTest helpers', () => {
         const datasetDir = path.join(root, 'dataset');
 
         // 迷你数据集：1 条正例，属于仓库 cases（扫描目标只来自数据集标注）
-        fs.mkdirSync(path.join(datasetDir, 'positive'), { recursive: true });
+        fs.mkdirSync(path.join(datasetDir, 'positive', 'local-test'), { recursive: true });
         fs.mkdirSync(path.join(datasetDir, 'negative'), { recursive: true });
-        fs.writeFileSync(path.join(datasetDir, 'positive', 'merged_coverage_all.csv'), [
-            'record_index,message_index,fragment_role,rule,source_file,commit_id,range_start,range_end',
-            `1,1,original,${RULES.longMethod.ruleName},cases/Index.ets,abc123,1,4`,
-            '',
-        ].join('\n'));
+        fs.writeFileSync(path.join(datasetDir, 'positive', 'local-test', 'long-method.json'), JSON.stringify([{
+            filePath: 'cases/Index.ets',
+            messages: [{ line: 2, rule: RULES.longMethod.ruleName, rangeStart: 1, rangeEnd: 4 }],
+        }]));
 
         const casesRoot = path.join(reposRoot, 'dataset', 'cases');
         fs.mkdirSync(casesRoot, { recursive: true });
@@ -252,13 +251,12 @@ describe('gitcodeArktsPerfTest helpers', () => {
         const datasetDir = path.join(root, 'dataset');
 
         // 迷你数据集：1 条正例 + 1 条负例，均属于仓库 fakerepo
-        fs.mkdirSync(path.join(datasetDir, 'positive'), { recursive: true });
+        fs.mkdirSync(path.join(datasetDir, 'positive', 'local-test'), { recursive: true });
         fs.mkdirSync(path.join(datasetDir, 'negative'), { recursive: true });
-        fs.writeFileSync(path.join(datasetDir, 'positive', 'merged_coverage_all.csv'), [
-            'record_index,message_index,fragment_role,rule,source_file,commit_id,range_start,range_end',
-            `1,1,original,${RULES.longMethod.ruleName},fakerepo/src/A.ets,abc123,10,30`,
-            '',
-        ].join('\n'));
+        fs.writeFileSync(path.join(datasetDir, 'positive', 'local-test', 'long-method.json'), JSON.stringify([{
+            filePath: 'fakerepo/src/A.ets',
+            messages: [{ line: 15, rule: RULES.longMethod.ruleName, rangeStart: 10, rangeEnd: 30 }],
+        }]));
         fs.writeFileSync(path.join(datasetDir, 'negative', 'negative-long-method.json'), JSON.stringify([{
             filePath: 'fakerepo/src/Neg.ets',
             messages: [{ line: 60, rule: RULES.longMethod.ruleName, rangeStart: 55, rangeEnd: 90 }],

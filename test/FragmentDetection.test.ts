@@ -1554,15 +1554,15 @@ describe('CodeCloneFragmentCheck - 配置读取', () => {
     
     test('默认 normalizeLiterals', () => {
         const value = parseFragmentCloneOptions(undefined as any).normalizeLiterals;
-        expect(value).toBe(false);
+        expect(value).toBe(true);
     });
     
     test('自定义 normalizeLiterals', () => {
         const rule: any = {
-            option: [{ normalizeLiterals: true }]
+            option: [{ normalizeLiterals: false }]
         };
         const value = parseFragmentCloneOptions(rule).normalizeLiterals;
-        expect(value).toBe(true);
+        expect(value).toBe(false);
     });
 
     test('自定义 maxPairsPerFingerprint', () => {

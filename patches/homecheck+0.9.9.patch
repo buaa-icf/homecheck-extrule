@@ -110,6 +110,30 @@ index 861ed8b..f13a3f3 100644
              var _a;
              this.issues.push(...((_a = v.issues) === null || _a === void 0 ? void 0 : _a.reduce((acc, cur) => {
                  if (acc.some((item) => item.defect.mergeKey === cur.defect.mergeKey)) {
+diff --git a/node_modules/homecheck/lib/utils/common/CheckEntry.js b/node_modules/homecheck/lib/utils/common/CheckEntry.js
+index 1240143..d0dfa82 100644
+--- a/node_modules/homecheck/lib/utils/common/CheckEntry.js
++++ b/node_modules/homecheck/lib/utils/common/CheckEntry.js
+@@ -283,12 +283,17 @@ function buildScene(fileList, checkEntry) {
+         checkEntry.scene = new arkanalyzer_1.Scene();
+         checkEntry.scene.buildSceneFromFiles(sceneConfig);
+         logger.info("Build scene completed.");
++    }
++    catch (error) {
++        logger.error("Build scene error: ", error);
++        return false;
++    }
++    try {
+         checkEntry.scene.inferTypes();
+         logger.info("Infer types completed.");
+     }
+     catch (error) {
+-        logger.error("Build scene or infer types error: ", error);
+-        return false;
++        logger.error("Infer types error, continue with partial scene: ", error);
+     }
+     // 构建Scope信息
+     checkEntry.buildScope();
 diff --git a/node_modules/homecheck/lib/utils/common/ConfigUtils.js b/node_modules/homecheck/lib/utils/common/ConfigUtils.js
 index 89e8bec..7ed546c 100644
 --- a/node_modules/homecheck/lib/utils/common/ConfigUtils.js

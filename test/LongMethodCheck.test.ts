@@ -265,6 +265,27 @@ describe('普通方法阈值检测', () => {
         // maxLines=40 生效, 35 <= 40
         expect(checker.issues.length).toBe(0);
     });
+
+    test('代码行数不应统计空行和注释行', () => {
+        const checker = createChecker({ maxLines: 6 });
+        const method = createMockMethod({
+            code: [
+                'function testMethod() {',
+                '  // single line comment',
+                '  const url = "https://example.com/path"; // trailing comment',
+                '  /* block comment start',
+                '     block comment body',
+                '  */',
+                '  const value = 1;',
+                '  const text = `// not a comment`;',
+                '  /* inline block */ const afterBlock = 2;',
+                '  const done = true;',
+                '}',
+            ].join('\n')
+        });
+        (checker as any).check(method);
+        expect(checker.issues.length).toBe(0);
+    });
 });
 
 // ============================================================
