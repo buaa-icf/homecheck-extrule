@@ -124,7 +124,7 @@ describe('gitcodeArktsPerfTest helpers', () => {
         expect(markdown).toContain('## 检测器性能（不含共享预处理）');
         expect(markdown).toContain('| cases | 1000 | long-method | 0.20 | 2 | 5 | 5000.00 | 0.5000 | 否 |');
         expect(markdown).toContain('## 仓库共享资源（Scene + 全部选中规则）');
-        expect(markdown).toContain('| cases | long-method | 3.00 | 2.50 | 128.12 | 256.24 |');
+        expect(markdown).toContain('| cases | long-method | 2.30 | 0.20 | 128.12 | 256.24 |');
         expect(markdown).toContain('## 输入仓库');
         expect(markdown).toContain('| 仓库 | 组别 | URL | 本地路径 | 克隆/更新时间 (s) |');
         expect(markdown).toContain('| cases | benchmark | https://gitcode.com/HarmonyOS-Cases/cases.git | /tmp/repos/cases | 0.10 |');
@@ -177,6 +177,7 @@ describe('gitcodeArktsPerfTest helpers', () => {
             `--outputDir=${outputDir}`,
             `--runnerPath=${runnerPath}`,
             `--datasetDir=${datasetDir}`,
+            '--includeRepos=__none__',
             '--includeRules=long-method',
             '--dashboard=false',
             '--f1=false',
@@ -294,6 +295,7 @@ describe('gitcodeArktsPerfTest helpers', () => {
             `--outputDir=${outputDir}`,
             `--runnerPath=${runnerPath}`,
             `--datasetDir=${datasetDir}`,
+            '--includeRepos=__none__',
             '--includeRules=long-method',
             '--dashboard=false',
         ];
@@ -323,5 +325,73 @@ describe('gitcodeArktsPerfTest helpers', () => {
             fs.readFileSync(path.join(outputDir, 'summary.json'), 'utf8'),
         );
         expect(summary.repositories[0].group).toBe('dataset');
+    });
+
+    it('scans benchmark repositories for performance only, without F1 evaluation', async () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gitcode-benchmark-'));
+        const reposRoot = path.join(root, 'repos');
+        const outputDir = path.join(root, 'out');
+        const datasetDir = path.join(root, 'dataset');
+
+        // 迷你数据集：1 条正例，属于仓库 fakerepo（F1 只应覆盖它）
+        fs.mkdirSync(path.join(datasetDir, 'positive', 'local-test'), { recursive: true });
+        fs.mkdirSync(path.join(datasetDir, 'negative'), { recursive: true });
+        fs.writeFileSync(path.join(datasetDir, 'positive', 'local-test', 'long-method.json'), JSON.stringify([{
+            filePath: 'fakerepo/src/A.ets',
+            messages: [{ line: 15, rule: RULES.longMethod.ruleName, rangeStart: 10, rangeEnd: 30 }],
+        }]));
+
+        // 预置基准仓库（gitcode cases）与数据集仓库目录，触发 reused 分支，避免网络克隆
+        fs.mkdirSync(path.join(reposRoot, 'cases'), { recursive: true });
+        fs.writeFileSync(path.join(reposRoot, 'cases', 'Index.ets'), 'function main() {\n}\n');
+        fs.mkdirSync(path.join(reposRoot, 'dataset', 'fakerepo', 'src'), { recursive: true });
+        fs.writeFileSync(path.join(reposRoot, 'dataset', 'fakerepo', 'src', 'Index.ets'), 'function main() {\n}\n');
+
+        const runnerPath = path.join(root, 'fake-runner.js');
+        fs.writeFileSync(runnerPath, [
+            "const fs = require('node:fs');",
+            "const path = require('node:path');",
+            "const args = Object.fromEntries(process.argv.slice(2).map((item) => { const i=item.indexOf('='); return [item.slice(2,i), item.slice(i+1)]; }));",
+            "const project = JSON.parse(fs.readFileSync(args.projectConfigPath, 'utf8'));",
+            "fs.mkdirSync(project.reportDir, { recursive: true });",
+            "fs.writeFileSync(path.join(project.reportDir, 'issuesReport.json'), JSON.stringify([{ filePath: project.projectPath + 'src/A.ets', messages: [{ rule: '@extrulesproject/long-method-check', line: 15 }] }]));",
+            "fs.mkdirSync(path.join(process.cwd(), 'report'), { recursive: true });",
+            "fs.writeFileSync(path.join(process.cwd(), 'report', 'perfReport.json'), JSON.stringify({ runId: 'shared', totalWallMs: 100, peakHeapUsedMB: 50, peakRssMB: 80, checkers: { LongMethodCheck: { totalMs: 10, stages: {} } } }));",
+        ].join('\n'));
+
+        const previousArgv = process.argv;
+        process.argv = [
+            previousArgv[0],
+            previousArgv[1],
+            `--reposRoot=${reposRoot}`,
+            `--outputDir=${outputDir}`,
+            `--runnerPath=${runnerPath}`,
+            `--datasetDir=${datasetDir}`,
+            '--includeRepos=cases',
+            '--includeRules=long-method',
+            '--dashboard=false',
+        ];
+
+        try {
+            await expect(main()).resolves.toBe(0);
+        } finally {
+            process.argv = previousArgv;
+        }
+
+        const summary = JSON.parse(
+            fs.readFileSync(path.join(outputDir, 'summary.json'), 'utf8'),
+        );
+        // 基准仓库（只测性能）与数据集仓库（性能 + F1）都被扫描
+        expect(summary.repositories.map((repo: { name: string }) => repo.name)).toEqual(['cases', 'fakerepo']);
+        expect(summary.repositories[0].group).toBe('benchmark');
+        expect(summary.repositories[1].group).toBe('dataset');
+        expect(summary.repositories[0].runs).toHaveLength(1);
+        expect(summary.repositories[1].runs).toHaveLength(1);
+
+        // F1 只覆盖数据集仓库
+        const f1Report = JSON.parse(
+            fs.readFileSync(path.join(outputDir, 'f1Report.json'), 'utf8'),
+        );
+        expect(f1Report.repoResults.map((repo: { repoName: string }) => repo.repoName)).toEqual(['fakerepo']);
     });
 });

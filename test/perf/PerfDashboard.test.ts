@@ -15,7 +15,10 @@ describe('performance dashboard', () => {
             timedOut: false,
             durationMs: 3000,
             homecheckWallMs: 2500,
+            preprocessingMs: 2300,
+            analysisMs: 200,
             peakRssMB: 128,
+            etsLines: 1000,
             rules: ['long-method'],
             memorySamples: [],
         }],
@@ -30,6 +33,7 @@ describe('performance dashboard', () => {
             detectorDurationMs: 2000,
             issueMessages: 3,
             throughputWanLinesPerSecond: 5,
+            peakRssMB: 128,
             memorySamples: [{
                 timestamp: '2026-07-16T00:00:01.000Z',
                 elapsedMs: 1000,
@@ -79,8 +83,14 @@ describe('performance dashboard', () => {
         expect(html).toContain("throughput>=throughputTarget?'已达到':'待提升'");
         expect(html).not.toContain('硬性指标');
         expect(html).toContain("state.runs.forEach(function(run){ var row=document.createElement('tr');");
+        expect(html).toContain('峰值 RSS (MB)');
+        expect(html).toContain('peakRss.toFixed(2)');
+        expect(html).toContain('.ets 代码行数');
         expect(html).toContain('cases/long-method');
         expect(html).toContain('F1 评估（数据集仓库）');
+        expect(html).toContain('TP/(TP+FP)');
+        expect(html).toContain('TP/(TP+FN)');
+        expect(html).toContain('2PR/(P+R)');
         expect(html).toContain('id="f1Panel"');
         expect(html).toContain('id="f1Body"');
         expect(html).not.toContain('id="runSelect"');

@@ -14,6 +14,27 @@ const {
   summarizeF1,
 } = require('./datasetF1');
 
+// 纯性能基准仓库：只采集性能数据，不参与 F1 评估（F1 只针对数据集仓库）。
+// 数据集仓库与基准仓库同名时，以数据集版本为准，基准组自动跳过。
+const REPOSITORIES = [
+  {
+    name: 'cases',
+    url: 'https://gitcode.com/HarmonyOS-Cases/cases.git',
+  },
+  {
+    name: 'ostest_integration_test',
+    url: 'https://gitcode.com/openharmony-sig/ostest_integration_test',
+  },
+  {
+    name: 'arkui_ace_engine',
+    url: 'https://gitcode.com/openharmony/arkui_ace_engine.git',
+  },
+  {
+    name: 'agc-template-market-harmonyos-demos',
+    url: 'https://gitcode.com/appgallery_connect/agc-template-market-harmonyos-demos.git',
+  },
+];
+
 const RULES = {
   codeCloneFragment: {
     smell: 'code-clone-fragment',
@@ -511,7 +532,7 @@ function buildMarkdown(report) {
   lines.push('');
   lines.push('## 检测器性能（不含共享预处理）');
   lines.push('');
-  lines.push('| 仓库 | .ets 代码行数 | 异味类型 | 检测耗时 (s) | 告警对象数 | 告警指标数 | 检测吞吐 (行/s) | 检测吞吐 (万行/s) | ≥2万行/s |');
+  lines.push('| 仓库 | .ets 代码行数 | 异味类型 | 检测耗时（不含预处理）(s) | 告警对象数 | 告警指标数 | 检测吞吐 (行/s) | 检测吞吐 (万行/s) | ≥2万行/s |');
   lines.push('| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |');
   for (const repo of report.repositories) {
     for (const run of repo.runs) {
@@ -531,17 +552,26 @@ function buildMarkdown(report) {
   lines.push('');
   lines.push('## 仓库共享资源（Scene + 全部选中规则）');
   lines.push('');
-  lines.push('| 仓库 | 规则 | 外层总耗时 (s) | HomeCheck 分析耗时 (s) | 共享 peakHeapMB | 共享 peakRssMB |');
+  lines.push('- 预处理耗时 = HomeCheck 进程内耗时 − 各规则检测耗时合计（Scene 构建等共享开销）；分析耗时 = 全部选中规则的检测耗时合计');
+  lines.push('');
+  lines.push('| 仓库 | 规则 | 预处理耗时 (s) | 分析耗时 (s) | 共享 peakHeapMB | 共享 peakRssMB |');
   lines.push('| --- | --- | ---: | ---: | ---: | ---: |');
   for (const repo of report.repositories) {
     if (!repo.sharedRun) {
       continue;
     }
+    const analysisMs = repo.runs.reduce(
+      (sum, run) => sum + (Number(run.detectorDurationMs) || 0),
+      0,
+    );
+    const preprocessingMs = repo.sharedRun.homecheckWallMs > 0
+      ? Math.max(0, repo.sharedRun.homecheckWallMs - analysisMs)
+      : null;
     lines.push([
       `| ${repo.name}`,
       repo.sharedRun.rules.join(', '),
-      formatNumber(repo.sharedRun.durationMs / 1000),
-      formatNumber(repo.sharedRun.homecheckWallMs / 1000),
+      preprocessingMs === null ? '—' : formatNumber(preprocessingMs / 1000),
+      formatNumber(analysisMs / 1000),
       formatNumber(repo.sharedRun.peakHeapMB),
       `${formatNumber(repo.sharedRun.peakRssMB)} |`,
     ].join(' | '));
@@ -605,6 +635,7 @@ function printUsage() {
   console.log('  --baseRuleConfig=<path>        Base ruleConfig JSON used for files/ignore/packagePath');
   console.log('  --runnerPath=<path>            homecheck runner JS path');
   console.log('  --npmCacheDir=<path>           npm cache dir for homecheck');
+  console.log('  --includeRepos=a,b             Only run selected benchmark repository names');
   console.log('  --includeRules=a,b             Only run selected smell names');
   console.log('  --updateExisting=true          Run git pull --ff-only when a repo already exists');
   console.log('  --cloneDepth=1                 git clone depth, use 0 for full clone');
@@ -629,10 +660,12 @@ function toDashboardRun(repoName, run) {
     detectorDurationMs: run.detectorDurationMs,
     issueMessages: run.issueMessages,
     throughputWanLinesPerSecond: run.throughputWanLinesPerSecond,
+    // 峰值内存为仓库级共享（同一仓库的全部规则在同一进程内检测）
+    peakRssMB: run.peakRssMB,
   };
 }
 
-function toDashboardRepositoryRun(repoName, sharedRun) {
+function toDashboardRepositoryRun(repoName, sharedRun, etsLines, timing = {}) {
   const memorySamples = readMemoryTimeline(sharedRun.memoryTimelinePath);
   const sampledPeakRssMB = Math.max(0, ...memorySamples.map((sample) => Number(sample.rssMB) || 0));
   return {
@@ -643,7 +676,12 @@ function toDashboardRepositoryRun(repoName, sharedRun) {
     timedOut: sharedRun.timedOut,
     durationMs: sharedRun.durationMs,
     homecheckWallMs: sharedRun.homecheckWallMs,
+    // 预处理耗时 = HomeCheck 进程内耗时 - 各规则检测耗时合计（Scene 构建等共享开销）
+    preprocessingMs: timing.preprocessingMs ?? null,
+    // 分析耗时 = 全部选中规则的检测耗时合计
+    analysisMs: timing.analysisMs ?? null,
     peakRssMB: Math.max(sharedRun.peakRssMB, sampledPeakRssMB),
+    etsLines,
     rules: sharedRun.rules,
     memorySamples,
   };
@@ -693,6 +731,7 @@ async function main() {
   const npmCacheDir = path.resolve(cwd, args.npmCacheDir || './report/.npm-cache');
   const timeoutMs = args.timeoutMs ? Number(args.timeoutMs) : 30 * 60 * 1000;
   const nodeMaxOldSpaceMB = args.nodeMaxOldSpaceMB ? Number(args.nodeMaxOldSpaceMB) : 8192;
+  const includeRepos = args.includeRepos ? new Set(args.includeRepos.split(',').filter(Boolean)) : null;
   const includeRules = args.includeRules ? new Set(args.includeRules.split(',').filter(Boolean)) : null;
   const updateExisting = args.updateExisting === 'true';
   const dashboardEnabled = args.dashboard !== 'false';
@@ -722,8 +761,9 @@ async function main() {
   const repositories = [];
   const f1RepoResults = [];
   const selectedRules = RULE_ORDER.filter((rule) => !includeRules || includeRules.has(rule.smell));
+  const selectedRepos = REPOSITORIES.filter((repo) => !includeRepos || includeRepos.has(repo.name));
 
-  // 只扫描 arkts-code-smell 数据集标注涉及的仓库：性能数据与 F1 评估（默认开启）都基于这批仓库。
+  // 基准仓库只采集性能数据；数据集仓库（arkts-code-smell 标注涉及的仓库）在此基础上参与 F1 评估（默认开启）。
   const f1Requested = args.f1 !== 'false';
   const datasetDir = path.resolve(cwd, args.datasetDir || '../arkts-code-smell/dataset');
   const f1ReposFilter = args.f1Repos ? new Set(args.f1Repos.split(',').filter(Boolean)) : null;
@@ -731,7 +771,7 @@ async function main() {
   let datasetRepos = [];
   if (selectedRules.length > 0) {
     if (!fs.existsSync(datasetDir)) {
-      console.log(`[dataset] 数据集目录不存在，没有可扫描的仓库: ${datasetDir}`);
+      console.log(`[dataset] 数据集目录不存在，跳过数据集仓库与 F1 评估: ${datasetDir}`);
     } else {
       try {
         groundTruth = loadGroundTruth(datasetDir, selectedRules.map((rule) => rule.ruleName));
@@ -742,16 +782,30 @@ async function main() {
           `${datasetRepos.length} 个数据集仓库`,
         );
       } catch (error) {
-        console.log(`[dataset] 加载数据集标注失败，没有可扫描的仓库: ${error instanceof Error ? error.message : error}`);
+        console.log(`[dataset] 加载数据集标注失败，跳过数据集仓库与 F1 评估: ${error instanceof Error ? error.message : error}`);
         groundTruth = null;
         datasetRepos = [];
       }
     }
   }
+  // 数据集仓库与基准仓库可能同名不同源（如 agc-template-market-harmonyos-demos），
+  // 隔离到 reposRoot/dataset 下；同名时以数据集版本为准（F1 标注基于它），
+  // 基准组自动跳过，避免同一仓库被扫描两遍、性能面板出现重复条目。
   const datasetReposRoot = process.env.DATASET_REPOS_ROOT
     ? path.resolve(process.env.DATASET_REPOS_ROOT)
     : path.join(reposRoot, 'dataset');
-  const repoWorkItems = datasetRepos.map((repo) => ({ repo, group: 'dataset', cloneRoot: datasetReposRoot }));
+  const datasetRepoNames = new Set(datasetRepos.map((repo) => repo.name));
+  const benchmarkRepos = selectedRepos.filter((repo) => {
+    if (!datasetRepoNames.has(repo.name)) {
+      return true;
+    }
+    console.log(`[repo] ${repo.name} 与数据集仓库同名，跳过基准组，仅扫描数据集版本`);
+    return false;
+  });
+  const repoWorkItems = [
+    ...benchmarkRepos.map((repo) => ({ repo, group: 'benchmark', cloneRoot: reposRoot })),
+    ...datasetRepos.map((repo) => ({ repo, group: 'dataset', cloneRoot: datasetReposRoot })),
+  ];
   const dashboardState = {
     status: 'running',
     startedAt,
@@ -829,9 +883,18 @@ async function main() {
         });
         repoResult.sharedRun = result.sharedRun;
         repoResult.runs.push(...result.runs);
+        const analysisMs = result.runs.reduce(
+          (sum, run) => sum + (Number(run.detectorDurationMs) || 0),
+          0,
+        );
+        const preprocessingMs = result.sharedRun.homecheckWallMs > 0
+          ? Math.max(0, result.sharedRun.homecheckWallMs - analysisMs)
+          : null;
         dashboardState.runs.push(...result.runs.map((run) => toDashboardRun(repo.name, run)));
-        dashboardState.repositoryRuns.push(toDashboardRepositoryRun(repo.name, result.sharedRun));
-        if (f1Requested && groundTruth && result.sharedRun.success) {
+        dashboardState.repositoryRuns.push(
+          toDashboardRepositoryRun(repo.name, result.sharedRun, etsLines, { preprocessingMs, analysisMs }),
+        );
+        if (group === 'dataset' && f1Requested && groundTruth && result.sharedRun.success) {
           const issues = readJson(result.sharedRun.issuesReportPath, []);
           const ruleComparison = compareRepo({
             issues,
@@ -847,7 +910,7 @@ async function main() {
             const counts = ruleComparison[rule.ruleName];
             const metrics = computeMetrics(counts);
             console.log(
-              `      [f1] ${rule.smell}: tp=${counts.tp} fp=${counts.fp} fn=${counts.fn}, ` +
+              `      [f1] ${rule.smell}: tp=${counts.tp} fp=${counts.fp} fn=${counts.fn} tn=${counts.tn}, ` +
               `P=${formatPercent(metrics.precision)} R=${formatPercent(metrics.recall)} ` +
               `F1=${formatPercent(metrics.f1)}`,
             );
@@ -930,6 +993,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  REPOSITORIES,
   RULES,
   RULE_ORDER,
   buildAggregatePerfReport,

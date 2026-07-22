@@ -92,17 +92,19 @@ node ./node_modules/homecheck/lib/run.js --projectConfigPath=./config/projectCon
 npm run perf:gitcode
 ```
 
-- 首次运行会克隆 `../arkts-code-smell/dataset` 标注涉及的数据集仓库到 `report/.perftest/gitcode_arkts_repos/`，之后自动复用，加 `--updateExisting=true` 可更新
+- 首次运行会克隆测试仓库（gitcode 基准仓库 + `../arkts-code-smell/dataset` 标注涉及的数据集仓库）到 `report/.perftest/gitcode_arkts_repos/`，之后自动复用，加 `--updateExisting=true` 可更新
+- 基准仓库（含 arkui_ace_engine 等大仓库）只采集性能数据；数据集仓库额外参与 F1 评估；两者同名时以数据集版本为准，基准组自动跳过
 - 每个仓库只启动一次 HomeCheck，`code-clone-fragment`、`feature-envy`、`long-method`、`switch-statement` 四种异味检测共享同一份 Scene 预处理
 - 运行中打开终端打印的 `Live dashboard` 地址可看实时面板；结束后结果保存在 `report/.perftest/gitcode_arkts_smell_perf/`：
   - `perfDashboard.html`：性能面板，浏览器直接打开
   - `perfReport.md`：性能汇总（检测耗时、吞吐、峰值内存）
-  - `f1Report.md`：F1 汇总（TP/FP/FN、Precision/Recall/F1 及漏报/误报清单）
+  - `f1Report.md`：F1 汇总（TP/FP/FN/TN、Precision/Recall/F1 及漏报/误报清单，含计算公式）
 
 常用参数：
 
 ```bash
 npm run perf:gitcode -- --f1=false                      # 只测性能，不做 F1 评估
+npm run perf:gitcode -- --includeRepos=arkui_ace_engine # 只跑指定基准仓库
 npm run perf:gitcode -- --f1Repos=applications_photos   # 只跑指定数据集仓库
 npm run perf:gitcode -- --dashboard=false               # 关闭实时面板（CI 适用）
 ```

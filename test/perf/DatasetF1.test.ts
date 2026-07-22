@@ -123,6 +123,8 @@ describe('datasetF1 helpers', () => {
             { kind: 'positive', rule: LONG_METHOD, repo: 'repoA', relFile: 'src/A.ets', rangeStart: 10, rangeEnd: 30 },
             { kind: 'positive', rule: LONG_METHOD, repo: 'repoA', relFile: 'src/A.ets', rangeStart: 100, rangeEnd: 120 },
             { kind: 'negative', rule: LONG_METHOD, repo: 'repoA', relFile: 'src/Neg.ets', rangeStart: 55, rangeEnd: 90 },
+            // 未被任何告警命中的负例 → TN
+            { kind: 'negative', rule: LONG_METHOD, repo: 'repoA', relFile: 'src/Neg.ets', rangeStart: 200, rangeEnd: 220 },
         ];
         const issues = [
             // 两条命中同一正例 → TP 去重为 1
@@ -147,6 +149,7 @@ describe('datasetF1 helpers', () => {
         expect(rules[LONG_METHOD].tp).toBe(1);
         expect(rules[LONG_METHOD].fp).toBe(1);
         expect(rules[LONG_METHOD].fn).toBe(1);
+        expect(rules[LONG_METHOD].tn).toBe(1);
         expect(rules[LONG_METHOD].tpList).toHaveLength(1);
         expect(rules[LONG_METHOD].fnList).toEqual([{ file: 'src/A.ets', rangeStart: 100, rangeEnd: 120 }]);
     });
@@ -218,20 +221,20 @@ describe('datasetF1 helpers', () => {
         ];
         const repoResults = [
             { repoName: 'repoA', rules: {
-                [LONG_METHOD]: { tp: 3, fp: 1, fn: 1, tpList: [], fpList: [], fnList: [] },
-                [FEATURE_ENVY]: { tp: 1, fp: 1, fn: 0, tpList: [], fpList: [], fnList: [] },
+                [LONG_METHOD]: { tp: 3, fp: 1, fn: 1, tn: 5, tpList: [], fpList: [], fnList: [] },
+                [FEATURE_ENVY]: { tp: 1, fp: 1, fn: 0, tn: 2, tpList: [], fpList: [], fnList: [] },
             } },
             { repoName: 'repoB', rules: {
-                [LONG_METHOD]: { tp: 1, fp: 0, fn: 3, tpList: [], fpList: [], fnList: [] },
+                [LONG_METHOD]: { tp: 1, fp: 0, fn: 3, tn: 3, tpList: [], fpList: [], fnList: [] },
             } },
         ];
 
         const summary = summarizeF1(repoResults, rules);
 
         expect(summary.perRule[0]).toEqual(expect.objectContaining({
-            smell: 'long-method', tp: 4, fp: 1, fn: 4, precision: 0.8, recall: 0.5,
+            smell: 'long-method', tp: 4, fp: 1, fn: 4, tn: 8, precision: 0.8, recall: 0.5,
         }));
-        expect(summary.overall).toEqual(expect.objectContaining({ tp: 5, fp: 2, fn: 4 }));
+        expect(summary.overall).toEqual(expect.objectContaining({ tp: 5, fp: 2, fn: 4, tn: 10 }));
 
         const markdown = buildF1Markdown({
             generatedAt: '2026-07-20T00:00:00.000Z',
@@ -242,7 +245,9 @@ describe('datasetF1 helpers', () => {
             repoResults,
         });
         expect(markdown).toContain('## 规则汇总');
-        expect(markdown).toContain('| long-method | 4 | 1 | 4 | 80.00% | 50.00% | 61.54% |');
+        expect(markdown).toContain('| long-method | 4 | 1 | 4 | 8 | 80.00% | 50.00% | 61.54% |');
+        expect(markdown).toContain('## 计算公式');
+        expect(markdown).toContain('Precision = TP / (TP + FP)');
         expect(markdown).toContain('## 漏报清单（FN）');
         expect(markdown).toContain('## 误报清单（FP）');
     });
