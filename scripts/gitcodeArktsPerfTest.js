@@ -115,6 +115,29 @@ function toSafeName(value) {
   return value.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
+const GIT_URL_PATTERN = /^(https?:\/\/|git@|ssh:\/\/)/;
+
+/**
+ * 解析 --extraRepos=name=target[,name2=target2]，target 为本地目录或 git 地址。
+ * 额外仓库按基准仓库处理：只采集性能数据，不参与 F1 评估。
+ */
+function parseExtraRepos(value) {
+  if (!value) {
+    return [];
+  }
+  return value.split(',').map((item) => item.trim()).filter(Boolean).map((item) => {
+    const eqIndex = item.indexOf('=');
+    if (eqIndex <= 0 || eqIndex === item.length - 1) {
+      throw new Error(`--extraRepos 条目格式应为 name=本地路径或git地址: ${item}`);
+    }
+    const name = item.slice(0, eqIndex);
+    const target = item.slice(eqIndex + 1);
+    return GIT_URL_PATTERN.test(target)
+      ? { name, url: target }
+      : { name, localPath: target };
+  });
+}
+
 function formatNumber(value, digits = 2) {
   if (!Number.isFinite(value)) {
     return '0.00';
@@ -552,7 +575,7 @@ function buildMarkdown(report) {
   lines.push('');
   lines.push('## 仓库共享资源（Scene + 全部选中规则）');
   lines.push('');
-  lines.push('- 预处理耗时 = HomeCheck 进程内耗时 − 各规则检测耗时合计（Scene 构建等共享开销）；分析耗时 = 全部选中规则的检测耗时合计');
+  lines.push('- 预处理耗时 = 端到端总耗时 − 各规则检测耗时合计（进程启动、Scene 构建等共享开销）；分析耗时 = 全部选中规则的检测耗时合计');
   lines.push('');
   lines.push('| 仓库 | 规则 | 预处理耗时 (s) | 分析耗时 (s) | 共享 peakHeapMB | 共享 peakRssMB |');
   lines.push('| --- | --- | ---: | ---: | ---: | ---: |');
@@ -564,13 +587,11 @@ function buildMarkdown(report) {
       (sum, run) => sum + (Number(run.detectorDurationMs) || 0),
       0,
     );
-    const preprocessingMs = repo.sharedRun.homecheckWallMs > 0
-      ? Math.max(0, repo.sharedRun.homecheckWallMs - analysisMs)
-      : null;
+    const preprocessingMs = Math.max(0, repo.sharedRun.durationMs - analysisMs);
     lines.push([
       `| ${repo.name}`,
       repo.sharedRun.rules.join(', '),
-      preprocessingMs === null ? '—' : formatNumber(preprocessingMs / 1000),
+      formatNumber(preprocessingMs / 1000),
       formatNumber(analysisMs / 1000),
       formatNumber(repo.sharedRun.peakHeapMB),
       `${formatNumber(repo.sharedRun.peakRssMB)} |`,
@@ -636,6 +657,7 @@ function printUsage() {
   console.log('  --runnerPath=<path>            homecheck runner JS path');
   console.log('  --npmCacheDir=<path>           npm cache dir for homecheck');
   console.log('  --includeRepos=a,b             Only run selected benchmark repository names');
+  console.log('  --extraRepos=name=target,...   Extra perf-only repos; target = local dir or git URL');
   console.log('  --includeRules=a,b             Only run selected smell names');
   console.log('  --updateExisting=true          Run git pull --ff-only when a repo already exists');
   console.log('  --cloneDepth=1                 git clone depth, use 0 for full clone');
@@ -676,7 +698,7 @@ function toDashboardRepositoryRun(repoName, sharedRun, etsLines, timing = {}) {
     timedOut: sharedRun.timedOut,
     durationMs: sharedRun.durationMs,
     homecheckWallMs: sharedRun.homecheckWallMs,
-    // 预处理耗时 = HomeCheck 进程内耗时 - 各规则检测耗时合计（Scene 构建等共享开销）
+    // 预处理耗时 = 端到端总耗时 - 各规则检测耗时合计（进程启动、Scene 构建等共享开销）
     preprocessingMs: timing.preprocessingMs ?? null,
     // 分析耗时 = 全部选中规则的检测耗时合计
     analysisMs: timing.analysisMs ?? null,
@@ -762,6 +784,12 @@ async function main() {
   const f1RepoResults = [];
   const selectedRules = RULE_ORDER.filter((rule) => !includeRules || includeRules.has(rule.smell));
   const selectedRepos = REPOSITORIES.filter((repo) => !includeRepos || includeRepos.has(repo.name));
+  const extraRepos = parseExtraRepos(args.extraRepos);
+  for (const extra of extraRepos) {
+    if (extra.localPath && !fs.existsSync(path.resolve(cwd, extra.localPath))) {
+      throw new Error(`--extraRepos 本地路径不存在: ${extra.localPath}`);
+    }
+  }
 
   // 基准仓库只采集性能数据；数据集仓库（arkts-code-smell 标注涉及的仓库）在此基础上参与 F1 评估（默认开启）。
   const f1Requested = args.f1 !== 'false';
@@ -802,8 +830,23 @@ async function main() {
     console.log(`[repo] ${repo.name} 与数据集仓库同名，跳过基准组，仅扫描数据集版本`);
     return false;
   });
+  // 额外仓库（--extraRepos）按基准组处理，与已有仓库同名时跳过，避免重复扫描
+  const extraWorkItems = [];
+  for (const extra of extraRepos) {
+    if (datasetRepoNames.has(extra.name) || benchmarkRepos.some((repo) => repo.name === extra.name)) {
+      console.log(`[repo] ${extra.name} 已在扫描列表中，跳过 --extraRepos 重复项`);
+      continue;
+    }
+    extraWorkItems.push({
+      repo: { name: extra.name, url: extra.url || path.resolve(cwd, extra.localPath) },
+      group: 'benchmark',
+      cloneRoot: reposRoot,
+      localPath: extra.localPath ? path.resolve(cwd, extra.localPath) : null,
+    });
+  }
   const repoWorkItems = [
     ...benchmarkRepos.map((repo) => ({ repo, group: 'benchmark', cloneRoot: reposRoot })),
+    ...extraWorkItems,
     ...datasetRepos.map((repo) => ({ repo, group: 'dataset', cloneRoot: datasetReposRoot })),
   ];
   const dashboardState = {
@@ -835,13 +878,15 @@ async function main() {
 
   try {
     for (const workItem of repoWorkItems) {
-      const { repo, group, cloneRoot } = workItem;
+      const { repo, group, cloneRoot, localPath } = workItem;
       dashboardState.current = { kind: 'setup', label: `准备仓库 ${repo.name}` };
       console.log(`[repo] ${repo.name} (${group})`);
-      const cloneResult = await cloneOrUpdateRepository(repo, cloneRoot, {
-        updateExisting,
-        cloneDepth: args.cloneDepth || '1',
-      });
+      const cloneResult = localPath
+        ? { path: localPath, durationMs: 0, action: 'local' }
+        : await cloneOrUpdateRepository(repo, cloneRoot, {
+          updateExisting,
+          cloneDepth: args.cloneDepth || '1',
+        });
       const etsLines = await countEtsLinesWithCloc(cloneResult.path);
       const repoResult = {
         name: repo.name,
@@ -887,9 +932,10 @@ async function main() {
           (sum, run) => sum + (Number(run.detectorDurationMs) || 0),
           0,
         );
-        const preprocessingMs = result.sharedRun.homecheckWallMs > 0
-          ? Math.max(0, result.sharedRun.homecheckWallMs - analysisMs)
-          : null;
+        // 预处理耗时 = 端到端总耗时 − 各规则检测耗时合计。
+        // PerfReporter 随规则包加载才启动计时，其 totalWallMs 不含 Scene 构建，
+        // 因此预处理必须用最外层进程墙钟时间倒推（含进程启动、Scene 构建等共享开销）。
+        const preprocessingMs = Math.max(0, result.sharedRun.durationMs - analysisMs);
         dashboardState.runs.push(...result.runs.map((run) => toDashboardRun(repo.name, run)));
         dashboardState.repositoryRuns.push(
           toDashboardRepositoryRun(repo.name, result.sharedRun, etsLines, { preprocessingMs, analysisMs }),
@@ -1006,6 +1052,7 @@ module.exports = {
   filterIssuesByRule,
   main,
   parseArgs,
+  parseExtraRepos,
   readMemoryTimeline,
   runRepositoryScan,
   snapshotDashboardState,
