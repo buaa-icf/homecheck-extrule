@@ -844,10 +844,11 @@ async function main() {
       localPath: extra.localPath ? path.resolve(cwd, extra.localPath) : null,
     });
   }
+  // 数据集仓库优先（F1 结果尽早产出），纯性能基准仓库（含大仓库与 --extraRepos）排到最后
   const repoWorkItems = [
+    ...datasetRepos.map((repo) => ({ repo, group: 'dataset', cloneRoot: datasetReposRoot })),
     ...benchmarkRepos.map((repo) => ({ repo, group: 'benchmark', cloneRoot: reposRoot })),
     ...extraWorkItems,
-    ...datasetRepos.map((repo) => ({ repo, group: 'dataset', cloneRoot: datasetReposRoot })),
   ];
   const dashboardState = {
     status: 'running',

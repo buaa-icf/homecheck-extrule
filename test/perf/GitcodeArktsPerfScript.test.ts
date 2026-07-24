@@ -392,10 +392,10 @@ describe('gitcodeArktsPerfTest helpers', () => {
         const summary = JSON.parse(
             fs.readFileSync(path.join(outputDir, 'summary.json'), 'utf8'),
         );
-        // 基准仓库（只测性能）与数据集仓库（性能 + F1）都被扫描
-        expect(summary.repositories.map((repo: { name: string }) => repo.name)).toEqual(['cases', 'fakerepo']);
-        expect(summary.repositories[0].group).toBe('benchmark');
-        expect(summary.repositories[1].group).toBe('dataset');
+        // 数据集仓库（性能 + F1）在前，基准仓库（只测性能）排最后
+        expect(summary.repositories.map((repo: { name: string }) => repo.name)).toEqual(['fakerepo', 'cases']);
+        expect(summary.repositories[0].group).toBe('dataset');
+        expect(summary.repositories[1].group).toBe('benchmark');
         expect(summary.repositories[0].runs).toHaveLength(1);
         expect(summary.repositories[1].runs).toHaveLength(1);
 
@@ -464,12 +464,12 @@ describe('gitcodeArktsPerfTest helpers', () => {
         const summary = JSON.parse(
             fs.readFileSync(path.join(outputDir, 'summary.json'), 'utf8'),
         );
-        // 额外本地仓库按基准组扫描（本地路径直接使用，不克隆），数据集仓库照常
+        // 额外本地仓库按基准组扫描（本地路径直接使用，不克隆），排在数据集仓库之后
         expect(summary.repositories.map((repo: { name: string }) => repo.name))
-            .toEqual(['my-big-repo', 'fakerepo']);
-        expect(summary.repositories[0].group).toBe('benchmark');
-        expect(summary.repositories[0].path).toBe(localRepoPath);
-        expect(summary.repositories[0].cloneAction).toBe('local');
+            .toEqual(['fakerepo', 'my-big-repo']);
+        expect(summary.repositories[1].group).toBe('benchmark');
+        expect(summary.repositories[1].path).toBe(localRepoPath);
+        expect(summary.repositories[1].cloneAction).toBe('local');
 
         const f1Report = JSON.parse(
             fs.readFileSync(path.join(outputDir, 'f1Report.json'), 'utf8'),
