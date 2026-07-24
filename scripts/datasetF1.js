@@ -297,7 +297,7 @@ function locationMatches(location, target) {
 
 /**
  * 单仓库对比。
- * @returns {{ [ruleName: string]: { tp: number, fp: number, fn: number, tpList: object[], fpList: object[], fnList: object[] } }}
+ * @returns {{ [ruleName: string]: { tp: number, fp: number, fn: number, tn: number, tpList: object[], fpList: object[], fnList: object[] } }}
  */
 function compareRepo(options) {
   const { issues, repoName, repoPath, targets, labeledFiles, ruleNames } = options;
@@ -331,6 +331,7 @@ function compareRepo(options) {
     }
 
     const matchedTargetIndexes = new Set();
+    const matchedNegativeIndexes = new Set();
     const tpList = [];
     const fpList = [];
     for (const detection of detections) {
@@ -338,10 +339,12 @@ function compareRepo(options) {
         detection.locations.some((location) => locationMatches(location, target)),
       );
       if (matchedIndex === -1) {
-        const matchedNegative = negativeTargets.find((target) =>
+        const matchedNegativeIndex = negativeTargets.findIndex((target) =>
           detection.locations.some((location) => locationMatches(location, target)),
         );
-        if (matchedNegative) {
+        if (matchedNegativeIndex !== -1) {
+          matchedNegativeIndexes.add(matchedNegativeIndex);
+          const matchedNegative = negativeTargets[matchedNegativeIndex];
           fpList.push({
             file: detection.relFile,
             line: detection.message.line,
@@ -367,10 +370,13 @@ function compareRepo(options) {
         rangeStart: target.rangeStart,
         rangeEnd: target.rangeEnd,
       }));
+    // TN：负例标注中未产生任何告警的条数（按标注条数统计；FP 按告警条数统计）
+    const tn = negativeTargets.length - matchedNegativeIndexes.size;
     rules[ruleName] = {
       tp: tpList.length,
       fp: fpList.length,
       fn: fnList.length,
+      tn,
       tpList,
       fpList,
       fnList,
@@ -396,22 +402,24 @@ function computeMetrics(counts) {
  */
 function summarizeF1(repoResults, rules) {
   const perRule = rules.map(({ ruleName, smell }) => {
-    const totals = { tp: 0, fp: 0, fn: 0 };
+    const totals = { tp: 0, fp: 0, fn: 0, tn: 0 };
     for (const repoResult of repoResults) {
       const ruleResult = repoResult.rules && repoResult.rules[ruleName];
       if (ruleResult) {
         totals.tp += ruleResult.tp;
         totals.fp += ruleResult.fp;
         totals.fn += ruleResult.fn;
+        totals.tn += ruleResult.tn || 0;
       }
     }
     return { rule: ruleName, smell, ...totals, ...computeMetrics(totals) };
   });
-  const overallTotals = { tp: 0, fp: 0, fn: 0 };
+  const overallTotals = { tp: 0, fp: 0, fn: 0, tn: 0 };
   for (const rule of perRule) {
     overallTotals.tp += rule.tp;
     overallTotals.fp += rule.fp;
     overallTotals.fn += rule.fn;
+    overallTotals.tn += rule.tn;
   }
   return {
     perRule,
@@ -434,18 +442,27 @@ function buildF1Markdown(report) {
   lines.push('');
   lines.push('- 各仓库按 HEAD 克隆扫描，未逐 commit 固定，行号漂移可能带来少量误差');
   lines.push('- FP 仅统计正负例标注覆盖的文件，未标注文件中的告警不参与');
+  lines.push('- TN：负例标注中未产生告警的条数（按标注条数统计；FP 按告警条数统计，同一条负例被多条告警命中时 FP 可大于负例数）');
   lines.push('- 匹配规则：检测行落在标注行范围内，或两者范围重叠；code-clone 额外匹配 message 中的第二个片段');
+  lines.push('');
+  lines.push('## 计算公式');
+  lines.push('');
+  lines.push('- Precision = TP / (TP + FP)');
+  lines.push('- Recall = TP / (TP + FN)');
+  lines.push('- F1 = 2 × Precision × Recall / (Precision + Recall)');
+  lines.push('- 规则行与 TOTAL 行均为计数加总后再计算（micro/加权平均）：规则行 = 该规则各仓库 TP/FP/FN/TN 加总，TOTAL 行 = 全部规则计数加总，非各行 F1 的算术平均');
   lines.push('');
   lines.push('## 规则汇总');
   lines.push('');
-  lines.push('| 规则 | TP | FP | FN | Precision | Recall | F1 |');
-  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: |');
+  lines.push('| 规则 | TP | FP | FN | TN | Precision | Recall | F1 |');
+  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
   for (const rule of [...report.summary.perRule, report.summary.overall]) {
     lines.push([
       `| ${rule.smell}`,
       String(rule.tp),
       String(rule.fp),
       String(rule.fn),
+      String(rule.tn ?? 0),
       formatPercent(rule.precision),
       formatPercent(rule.recall),
       `${formatPercent(rule.f1)} |`,
@@ -454,8 +471,8 @@ function buildF1Markdown(report) {
   lines.push('');
   lines.push('## 仓库明细');
   lines.push('');
-  lines.push('| 仓库 | 规则 | TP | FP | FN | Precision | Recall | F1 |');
-  lines.push('| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |');
+  lines.push('| 仓库 | 规则 | TP | FP | FN | TN | Precision | Recall | F1 |');
+  lines.push('| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |');
   for (const repoResult of report.repoResults) {
     for (const { ruleName, smell } of report.rules) {
       const ruleResult = repoResult.rules && repoResult.rules[ruleName];
@@ -469,6 +486,7 @@ function buildF1Markdown(report) {
         String(ruleResult.tp),
         String(ruleResult.fp),
         String(ruleResult.fn),
+        String(ruleResult.tn ?? 0),
         formatPercent(metrics.precision),
         formatPercent(metrics.recall),
         `${formatPercent(metrics.f1)} |`,
