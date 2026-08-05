@@ -239,8 +239,35 @@ async function cloneOrUpdateRepository(repo, reposRoot, options = {}) {
   return { path: repoPath, durationMs: Date.now() - started, action: 'reused' };
 }
 
+function resolveClocInvocation() {
+  const toolsDir = path.resolve(__dirname, '..', 'tools');
+  if (process.platform === 'win32') {
+    const bundledExe = path.join(toolsDir, 'cloc-2.10.exe');
+    if (fs.existsSync(bundledExe)) {
+      return { command: bundledExe, prefixArgs: [], source: 'bundled' };
+    }
+  } else {
+    const bundledPerlScript = path.join(toolsDir, 'cloc-2.10.pl');
+    if (fs.existsSync(bundledPerlScript)) {
+      const perlCommand = fs.existsSync('/usr/bin/perl') ? '/usr/bin/perl' : 'perl';
+      return {
+        command: perlCommand,
+        prefixArgs: [bundledPerlScript],
+        source: 'bundled',
+      };
+    }
+  }
+
+  if (process.env.CLOC_PATH) {
+    return { command: process.env.CLOC_PATH, prefixArgs: [], source: 'environment' };
+  }
+  return { command: 'cloc', prefixArgs: [], source: 'system' };
+}
+
 async function countEtsLinesWithCloc(repoPath) {
-  const output = await runCommand(process.env.CLOC_PATH || 'cloc', [
+  const clocInvocation = resolveClocInvocation();
+  const output = await runCommand(clocInvocation.command, [
+    ...clocInvocation.prefixArgs,
     repoPath,
     '--json',
     '--quiet',
@@ -1055,6 +1082,7 @@ module.exports = {
   parseArgs,
   parseExtraRepos,
   readMemoryTimeline,
+  resolveClocInvocation,
   runRepositoryScan,
   snapshotDashboardState,
 };
