@@ -61,6 +61,19 @@ describe("SwitchStatementCheck integration", () => {
 
         expect(checker.issues.some(issue => issue.defect.methodName === "renderShortChain")).toBe(false);
         expect(checker.issues.some(issue => issue.defect.methodName === "renderNestedElseIf")).toBe(false);
+
+        const fileASwitch = checker.issues.find(issue =>
+            issue.defect.methodName === "render" &&
+            (issue.defect.description ?? "").includes("Switch statement with 7 cases") &&
+            (issue.defect.mergeKey ?? "").includes("FileA.ets"),
+        );
+        expect(fileASwitch?.defect.reportLine).toBe(3);
+
+        const fileAChain = checker.issues.find(issue =>
+            (issue.defect.description ?? "").includes("if-else chain with 6 branches") &&
+            (issue.defect.mergeKey ?? "").includes("FileA.ets"),
+        );
+        expect(fileAChain?.defect.reportLine).toBe(39);
     });
 
     test("应检测 FileA 样例中的长 if-else 链", () => {

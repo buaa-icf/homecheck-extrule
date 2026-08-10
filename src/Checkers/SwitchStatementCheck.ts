@@ -168,7 +168,8 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
                 continue;
             }
 
-            const key = buildSwitchKey(block.startLineIndex + 1, caseCount);
+            const absoluteLine = this.toAbsoluteSourceLine(method, block.startLineIndex + 1);
+            const key = buildSwitchKey(absoluteLine, caseCount);
             if (reported.has(key)) {
                 continue;
             }
@@ -177,7 +178,7 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
                 method,
                 caseCount,
                 caseLineCounts: calculateCaseLineCounts(block.text),
-                line: block.startLineIndex + 1,
+                line: absoluteLine,
                 startCol: block.switchColumn,
                 endCol: block.switchColumn + 1,
                 filePath: method.getDeclaringArkFile()?.getFilePath() ?? "",
@@ -217,12 +218,18 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             this.addIfElseChainIssueReport({
                 method,
                 branchCount,
-                line: token.line,
+                line: this.toAbsoluteSourceLine(method, token.line),
                 startCol: token.column,
                 endCol: token.column + 2,
                 filePath: method.getDeclaringArkFile()?.getFilePath() ?? "",
             });
         }
+    }
+
+    /** ArkMethod.getCode() uses method-relative lines; reports must use source-file lines. */
+    private toAbsoluteSourceLine(method: ArkMethod, relativeLine: number): number {
+        const methodStartLine = method.getLine() ?? 1;
+        return Math.max(1, methodStartLine) + Math.max(1, relativeLine) - 1;
     }
 
     /**
