@@ -294,9 +294,22 @@ export class Tokenizer {
         }
         
         // 扫描所有 Token
+        // Each entry tracks ordinary braces inside one active ${...}.
+        // A template-closing brace must be rescanned explicitly.
+        const templateExpressionBraceDepth: number[] = [];
         let kind = scanner.scan();
         
         while (kind !== ts.SyntaxKind.EndOfFileToken) {
+            if (kind === ts.SyntaxKind.CloseBraceToken &&
+                templateExpressionBraceDepth.length > 0) {
+                const templateIndex = templateExpressionBraceDepth.length - 1;
+                if (templateExpressionBraceDepth[templateIndex] === 0) {
+                    kind = scanner.reScanTemplateToken(false);
+                } else {
+                    templateExpressionBraceDepth[templateIndex]--;
+                }
+            }
+
             const tokenType = mapSyntaxKindToTokenType(kind);
             
             // 跳过注释（如果配置了）
@@ -334,6 +347,17 @@ export class Tokenizer {
             });
             
             // 继续扫描
+            if (kind === ts.SyntaxKind.TemplateHead) {
+                templateExpressionBraceDepth.push(0);
+            } else if (kind === ts.SyntaxKind.TemplateMiddle) {
+                templateExpressionBraceDepth[templateExpressionBraceDepth.length - 1] = 0;
+            } else if (kind === ts.SyntaxKind.TemplateTail) {
+                templateExpressionBraceDepth.pop();
+            } else if (kind === ts.SyntaxKind.OpenBraceToken &&
+                templateExpressionBraceDepth.length > 0) {
+                templateExpressionBraceDepth[templateExpressionBraceDepth.length - 1]++;
+            }
+
             kind = scanner.scan();
         }
         
