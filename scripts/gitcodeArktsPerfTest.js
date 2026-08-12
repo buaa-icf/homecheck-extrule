@@ -268,14 +268,14 @@ async function countEtsLinesWithCloc(repoPath) {
   const clocInvocation = resolveClocInvocation();
   const output = await runCommand(clocInvocation.command, [
     ...clocInvocation.prefixArgs,
-    repoPath,
+    '.',
     '--json',
     '--quiet',
     '--include-lang=ArkTs',
     // '--include-ext=ets',
     // '--force-lang=TypeScript,ets',
     `--exclude-dir=${CLOC_EXCLUDE_DIRS}`,
-  ]);
+  ], { cwd: repoPath });
   const start = output.indexOf('{');
   const end = output.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) {
