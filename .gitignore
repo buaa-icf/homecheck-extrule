@@ -3,7 +3,9 @@ node_modules/
 .github/
 .vscode/
 lib/
-/config/
+/config/*
+!/config/projectConfig.json
+!/config/ruleConfig.json
 report/
 
 .DS_Store

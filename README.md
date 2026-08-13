@@ -78,22 +78,119 @@ ruleConfig.json 示例：
 
 ## 运行
 
-```bash
-npm pack
+完成配置后，日常扫描和评测直接运行：
 
-node ./node_modules/homecheck/lib/run.js --projectConfigPath=./config/projectConfig.json --configPath=./config/ruleConfig.json
-```
-
-### 性能测试脚本
-
-一键运行（性能测试 + 数据集 F1 评估）：
-
-```bash
+```powershell
 npm run perf:gitcode
 ```
 
-- 首次运行会克隆测试仓库（gitcode 基准仓库 + `../arkts-code-smell/dataset` 标注涉及的数据集仓库）到 `report/.perftest/gitcode_arkts_repos/`，之后自动复用，加 `--updateExisting=true` 可更新
-- 基准仓库（含 arkui_ace_engine 等大仓库）只采集性能数据；数据集仓库额外参与 F1 评估；两者同名时以数据集版本为准，基准组自动跳过
+该命令可以批量扫描仓库，统计告警数量和性能数据；配置了 `datasetDir` 时还会计算 F1。运行时默认启动实时面板，并在结束后生成 HTML 报告。
+
+### 打包扩展规则
+
+修改规则源码后，需要重新生成供 HomeCheck 加载的规则包：
+
+```powershell
+npm pack
+```
+
+该命令会把当前扩展规则项目打包为根目录下的 `extrulesproject-1.0.0.tgz`。只修改扫描仓库、数据集或配置文件时不需要重复执行。
+
+批量脚本内部仍会调用 HomeCheck 的 `lib/run.js` 完成每个仓库的实际扫描，但使用者无需手动执行 `node ./node_modules/homecheck/lib/run.js ...`。手动调用只适用于调试 HomeCheck 单项目原始输出，不包含多仓库调度、性能统计、F1 和可视化面板。
+
+### 批量评测配置
+
+脚本固定读取仓库内的 `config/projectConfig.json` 和 `config/ruleConfig.json`，无需在命令中重复指定。规则包和 HomeCheck 路径也会按当前 `homecheck-extrule` 目录自动解析。
+
+仓库位置、扫描范围和数据集可以直接写在 `config/projectConfig.json`：`projectPath` 指向包含各源码仓库的根目录，`includeRepos` 是要扫描的仓库名数组，`datasetDir` 指向 F1 标注数据集。将 `datasetDir` 设为 `""` 时不加载数据集，只统计指定仓库的性能和检出的异味数量。
+
+#### 批量评测配置示例
+
+```json
+{
+  "projectName": "",
+  "projectPath": "..",
+  "includeRepos": [
+    "agc-template-market-harmonyos-demos",
+    "applications_photos",
+    "applications_settings",
+    "cases",
+    "model-evaluation-testsuite",
+    "openharmony_tpc_samples",
+    "ostest_integration_test"
+  ],
+  "datasetDir": "../arkts-code-smell/dataset",
+  "logPath": "./HomeCheck.log",
+  "ohosSdkPath": "E:/DevEco Studio/sdk/default/openharmony/ets",
+  "hmsSdkPath": "E:/DevEco Studio/sdk/default/hms/ets",
+  "checkPath": "",
+  "sdkVersion": 20,
+  "fix": "false",
+  "npmPath": "",
+  "npmInstallDir": "./",
+  "reportDir": "./report",
+  "arkCheckPath": "",
+  "product": "default",
+  "sdksThirdParty": []
+}
+```
+
+相对路径均以执行 `npm run perf:gitcode` 时的当前目录为基准；绝对路径直接使用。配置字段说明如下：
+
+| 字段 | 示例/建议值 | 作用 |
+| --- | --- | --- |
+| `projectName` | `""` | 单项目运行时的项目名；批量评测时自动替换为当前仓库名，可以留空 |
+| `projectPath` | `".."` | 批量评测的仓库根目录。脚本在其下查找 `includeRepos` 中的仓库，例如 `../cases`；命令行 `--reposRoot` 可覆盖 |
+| `includeRepos` | `["cases", "applications_photos"]` | 本次要扫描的仓库名。为空或省略时使用脚本内置仓库集合；命令行 `--includeRepos` 可覆盖 |
+| `datasetDir` | `"../arkts-code-smell/dataset"` | 数据集的 `dataset` 目录，内部应直接包含 `positive` 和 `negative`。非空时运行 F1；设为 `""` 时只统计性能与告警数量 |
+| `logPath` | `"./HomeCheck.log"` | HomeCheck 日志文件路径。留空时写到当前仓库的自动报告目录；批量扫描时建议留空，避免多个仓库共用一个日志文件 |
+| `ohosSdkPath` | DevEco SDK 的绝对路径 | OpenHarmony ETS SDK 目录，必须按本机 DevEco Studio 安装位置设置 |
+| `hmsSdkPath` | DevEco SDK 的绝对路径 | HMS ETS SDK 目录，必须按本机 DevEco Studio 安装位置设置 |
+| `checkPath` | `""` | 可选的“指定检查文件列表”配置文件路径，不是源码目录；留空表示按 `ruleConfig.json` 的 `files/ignore` 扫描 |
+| `sdkVersion` | `20` | HomeCheck 构建分析场景时使用的 SDK API 版本，应与待测工程兼容 |
+| `fix` | `"false"` | 是否启用规则自动修复；本项目的性能/F1 评测建议保持关闭 |
+| `npmPath` | `""` | npm 可执行程序；留空时 HomeCheck 使用系统 PATH 中的 `npm` |
+| `npmInstallDir` | `"./"` | HomeCheck 安装扩展规则包时使用的 npm 目录，一般保持默认 |
+| `reportDir` | `"./report"` | HomeCheck 原始报告根目录。批量评测会在其下增加仓库名，例如 `./report/cases`；留空时使用脚本自己的运行报告目录 |
+| `arkCheckPath` | `""` 或 `"./node_modules/homecheck"` | HomeCheck 安装目录，目录中必须存在 `lib/run.js`；留空时自动使用当前项目的 `node_modules/homecheck` |
+| `product` | `"default"` | HarmonyOS 工程的产品名，应与待测工程构建配置一致，通常为 `default` |
+| `sdksThirdParty` | `[]` | 可选的第三方 SDK 配置；没有额外 SDK 时保持空数组 |
+
+命令行、配置文件与默认值的优先级为：命令行参数 > `projectConfig.json` > 脚本默认值。命令行只覆盖明确传入的字段。
+
+### 运行方式
+
+扫描指定仓库并同时生成性能与 F1 结果：
+
+```powershell
+npm run perf:gitcode -- `
+  --reposRoot='D:\ROG\Documents\harmonyos\tests' `
+  --includeRepos='cases'
+```
+
+只生成性能结果，不加载数据集或计算 F1：
+
+```powershell
+npm run perf:gitcode -- `
+  --reposRoot='D:\ROG\Documents\harmonyos\tests' `
+  --includeRepos='cases' `
+  --f1=false
+```
+
+只生成 F1 结果，不运行 CLOC、不采集吞吐量和内存：
+
+```powershell
+npm run perf:gitcode -- `
+  --reposRoot='D:\ROG\Documents\harmonyos\tests' `
+  --includeRepos='cases' `
+  --perf=false
+```
+
+以上命令默认都会启动实时面板，并在结束后生成 `perfDashboard.html`。`--perf=false` 时面板只显示进度和可用的 F1 信息。如果同时关闭性能且没有启用数据集 F1，脚本会提示没有可执行任务。
+
+- `reposRoot` 是源码仓库根目录；例如 `reposRoot=D:\...\tests` 且 `includeRepos=cases` 时，实际扫描 `D:\...\tests\cases`
+- 本地已有仓库会直接复用；缺少的已知仓库会下载到 `reposRoot`，加 `--updateExisting=true` 才会更新已有 Git 仓库
+- 数据集默认从 `../arkts-code-smell/dataset` 加载，只提供 F1 标签；参与评测的源码仓库仍从 `reposRoot` 获取
 - `--extraRepos` 可追加任意仓库（本地目录或 git 地址）做纯性能测试，与基准仓库同流程、不参与 F1
 - 每个仓库只启动一次 HomeCheck，`code-clone-fragment`、`feature-envy`、`long-method`、`switch-statement` 四种异味检测共享同一份 Scene 预处理
 - 运行中打开终端打印的 `Live dashboard` 地址可看实时面板；结束后结果保存在 `report/.perftest/gitcode_arkts_smell_perf/`：
@@ -101,15 +198,25 @@ npm run perf:gitcode
   - `perfReport.md`：性能汇总（检测耗时、吞吐、峰值内存）
   - `f1Report.md`：F1 汇总（TP/FP/FN/TN、Precision/Recall/F1 及漏报/误报清单，含计算公式）
 
-常用参数：
+### 常用参数
 
-```bash
-npm run perf:gitcode -- --f1=false                      # 只测性能，不做 F1 评估
-npm run perf:gitcode -- --includeRepos=arkui_ace_engine # 只跑指定基准仓库
-npm run perf:gitcode -- --extraRepos=MyRepo=/path/to/repo            # 追加任意本地仓库
-npm run perf:gitcode -- --extraRepos=MyRepo=https://github.com/x/y.git  # 追加任意 git 仓库
-npm run perf:gitcode -- --f1Repos=applications_photos   # 只跑指定数据集仓库
-npm run perf:gitcode -- --dashboard=false               # 关闭实时面板（CI 适用）
-```
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `--reposRoot=<path>` | `projectConfig.projectPath`，再回退到 `report/.perftest/gitcode_arkts_repos` | 覆盖仓库根目录，目标路径为 `reposRoot/仓库名` |
+| `--includeRepos=a,b` | `projectConfig.includeRepos`，再回退到默认仓库集合 | 覆盖要扫描的仓库；同时限制参与 F1 的数据集仓库 |
+| `--perf=false` | `true` | 不生成性能统计；仍执行 HomeCheck 以供 F1 比对 |
+| `--f1=false` | 数据集路径非空时启用 | 即使配置了数据集，也强制不加载、不计算 F1 |
+| `--datasetDir=<path>` | `projectConfig.datasetDir` | 覆盖 F1 标签数据集目录；配置为空时不运行 F1 |
+| `--outputDir=<path>` | `report/.perftest/gitcode_arkts_smell_perf` | JSON、Markdown 和面板输出目录 |
+| `--includeRules=a,b` | 四条规则 | 只启用指定异味，可用值为 `code-clone-fragment`、`feature-envy`、`long-method`、`switch-statement` |
+| `--dashboard=false` | `true` | 关闭实时 HTTP 面板；最终 HTML 仍会生成 |
+| `--dashboardPort=<n>` | 自动选择 | 固定实时面板端口，例如 `3000` |
+| `--updateExisting=true` | `false` | 对已有 Git 仓库执行快进更新 |
+| `--nodeMaxOldSpaceMB=<n>` | `8192` | HomeCheck 子进程最大堆内存（MB） |
+| `--timeoutMs=<n>` | `1800000` | 单仓库超时时间（毫秒） |
+| `--extraRepos=name=target` | 无 | 添加本地路径或 Git URL，作为纯性能仓库 |
 
-规则配置见 `config/ruleConfig.perfAll.json`，完整参数列表见 `node ./scripts/gitcodeArktsPerfTest.js --help`。
+`--baseProjectConfig`、`--baseRuleConfig` 和 `--runnerPath` 仅作为高级覆盖参数保留，普通运行无需填写。SDK 路径仍需在 `config/projectConfig.json` 中按本机 DevEco Studio 安装位置填写绝对路径。
+`projectConfig.json` 中的 `reportDir`、`logPath`、`arkCheckPath` 也会生效：非空时使用配置值，相对路径以运行命令的目录为基准；留空时脚本才自动生成报告/日志位置或定位当前项目的 `node_modules/homecheck`。批量扫描时会在 `reportDir` 下按仓库名建立子目录，避免多个仓库互相覆盖。
+
+规则配置见 `config/ruleConfig.json`，完整参数列表见 `node ./scripts/gitcodeArktsPerfTest.js --help`。

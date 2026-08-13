@@ -91,6 +91,16 @@ function parseArgs(argv) {
   return args;
 }
 
+function parseRepoFilter(value) {
+  const items = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(',')
+      : [];
+  const names = items.map((item) => String(item).trim()).filter(Boolean);
+  return names.length > 0 ? new Set(names) : null;
+}
+
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
@@ -285,14 +295,15 @@ async function countEtsLinesWithCloc(repoPath) {
   return Number(parsed.SUM && parsed.SUM.code) || 0;
 }
 
-function buildMultiRuleConfig(baseConfig, rules) {
+function buildMultiRuleConfig(baseConfig, rules, packagePath) {
   const baseExtRuleSet = Array.isArray(baseConfig.extRuleSet)
     ? baseConfig.extRuleSet
     : [];
   const baseRuleSet = baseExtRuleSet[0] || {
     ruleSetName: 'extrulesproject',
-    packagePath: path.resolve(process.cwd(), 'extrulesproject-1.0.0.tgz'),
+    packagePath: packagePath || path.resolve(process.cwd(), 'extrulesproject-1.0.0.tgz'),
   };
+  const resolvedPackagePath = packagePath || baseRuleSet.packagePath;
   const extRules = {};
   for (const rule of rules) {
     extRules[rule.ruleName] = 2;
@@ -301,18 +312,20 @@ function buildMultiRuleConfig(baseConfig, rules) {
     ...baseConfig,
     extRuleSet: [{
       ...baseRuleSet,
+      packagePath: resolvedPackagePath,
       extRules,
     }],
   };
 }
 
-function buildProjectConfig(baseProjectConfig, repoName, repoPath, reportDir) {
+function buildProjectConfig(baseProjectConfig, repoName, repoPath, reportDir, logPath, arkCheckPath) {
   return {
     ...baseProjectConfig,
     projectName: repoName,
     projectPath: ensureTrailingSeparator(path.resolve(repoPath)),
     reportDir,
-    logPath: path.join(reportDir, 'HomeCheck.log'),
+    logPath,
+    arkCheckPath,
   };
 }
 
@@ -416,10 +429,27 @@ async function runRepositoryScan(context) {
     npmCacheDir,
     timeoutMs,
     nodeMaxOldSpaceMB,
+    packagePath,
+    arkCheckPath,
+    perfEnabled,
   } = context;
+  const resolvedPackagePath = packagePath || path.resolve(cwd, 'extrulesproject-1.0.0.tgz');
+  const resolvedArkCheckPath = arkCheckPath || path.dirname(path.dirname(runnerPath));
+  const shouldCollectPerf = perfEnabled !== false;
 
   const runDir = path.join(outputDir, 'runs', repo.name);
-  const reportDir = path.join(runDir, 'homecheck-report');
+  const configuredReportDir = typeof baseProjectConfig.reportDir === 'string'
+    ? baseProjectConfig.reportDir.trim()
+    : '';
+  const reportDir = configuredReportDir
+    ? path.resolve(cwd, configuredReportDir, repo.name)
+    : path.join(runDir, 'homecheck-report');
+  const configuredLogPath = typeof baseProjectConfig.logPath === 'string'
+    ? baseProjectConfig.logPath.trim()
+    : '';
+  const logPath = configuredLogPath
+    ? path.resolve(cwd, configuredLogPath)
+    : path.join(reportDir, 'HomeCheck.log');
   const tempProjectConfigPath = path.join(
     tmpConfigDir,
     `projectConfig.${toSafeName(repo.name)}.json`,
@@ -434,15 +464,15 @@ async function runRepositoryScan(context) {
   const savedIssuesPath = path.join(runDir, 'issuesReport.json');
   const savedPerfPath = path.join(runDir, 'perfReport.json');
   const memoryTimelinePath = path.join(runDir, 'memoryTimeline.ndjson');
-  const homecheckLogPath = path.join(reportDir, 'HomeCheck.log');
+  const homecheckLogPath = logPath;
 
   ensureDir(runDir);
   ensureDir(reportDir);
   writeJson(
     tempProjectConfigPath,
-    buildProjectConfig(baseProjectConfig, repo.name, repoPath, reportDir),
+    buildProjectConfig(baseProjectConfig, repo.name, repoPath, reportDir, logPath, resolvedArkCheckPath),
   );
-  writeJson(tempRuleConfigPath, buildMultiRuleConfig(baseRuleConfig, rules));
+  writeJson(tempRuleConfigPath, buildMultiRuleConfig(baseRuleConfig, rules, resolvedPackagePath));
 
   removeIfExists(generatedIssuesPath);
   removeIfExists(fallbackIssuesPath);
@@ -474,8 +504,8 @@ async function runRepositoryScan(context) {
       killSignal: 'SIGKILL',
       env: {
         ...process.env,
-        EXTRULES_PERF: '1',
-        EXTRULES_PERF_TIMELINE_PATH: memoryTimelinePath,
+        EXTRULES_PERF: shouldCollectPerf ? '1' : '0',
+        ...(shouldCollectPerf ? { EXTRULES_PERF_TIMELINE_PATH: memoryTimelinePath } : {}),
         NODE_OPTIONS: buildNodeOptions(process.env.NODE_OPTIONS, nodeMaxOldSpaceMB),
         npm_config_cache: npmCacheDir,
         NPM_CONFIG_CACHE: npmCacheDir,
@@ -488,7 +518,7 @@ async function runRepositoryScan(context) {
   const copiedIssues =
     copyIfExists(generatedIssuesPath, savedIssuesPath) ||
     copyIfExists(fallbackIssuesPath, savedIssuesPath);
-  const copiedPerf = copyIfExists(generatedPerfPath, savedPerfPath);
+  const copiedPerf = shouldCollectPerf && copyIfExists(generatedPerfPath, savedPerfPath);
   const issues = readJson(savedIssuesPath, []);
   const issueCounts = countIssues(issues);
   const perf = readJson(savedPerfPath, {});
@@ -501,7 +531,7 @@ async function runRepositoryScan(context) {
     0,
     ...timeline.map((sample) => Number(sample.rssMB) || 0),
   );
-  const sharedSuccess = result.status === 0 && copiedIssues && copiedPerf && !timedOut;
+  const sharedSuccess = result.status === 0 && copiedIssues && (!shouldCollectPerf || copiedPerf) && !timedOut;
   const repositoryRunId = repo.name;
   const sharedRun = {
     repositoryRunId,
@@ -510,7 +540,7 @@ async function runRepositoryScan(context) {
     signal: result.signal,
     timedOut,
     durationMs,
-    homecheckWallMs: Number(perf.totalWallMs) || 0,
+    homecheckWallMs: shouldCollectPerf ? Number(perf.totalWallMs) || 0 : durationMs,
     issueObjects: issueCounts.issueObjects,
     issueMessages: issueCounts.issueMessages,
     peakHeapMB,
@@ -531,7 +561,7 @@ async function runRepositoryScan(context) {
     const compatibilityDir = path.join(runDir, rule.smell);
     const issuesReportPath = path.join(compatibilityDir, 'issuesReport.json');
     const perfReportPath = path.join(compatibilityDir, 'perfReport.json');
-    const success = sharedSuccess && Boolean(checkerPerf);
+    const success = sharedSuccess && (!shouldCollectPerf || Boolean(checkerPerf));
     const throughputLinesPerSecond = success
       ? computeThroughput(etsLines, detectorDurationMs)
       : 0;
@@ -550,14 +580,14 @@ async function runRepositoryScan(context) {
       signal: result.signal,
       timedOut,
       durationMs: detectorDurationMs,
-      detectorDurationMs,
+      detectorDurationMs: shouldCollectPerf ? detectorDurationMs : 0,
       durationScope: 'detector-only',
       repositoryWallMs: durationMs,
       homecheckWallMs: sharedRun.homecheckWallMs,
       issueObjects: ruleIssueCounts.issueObjects,
       issueMessages: ruleIssueCounts.issueMessages,
-      throughputLinesPerSecond,
-      throughputWanLinesPerSecond: success
+      throughputLinesPerSecond: shouldCollectPerf ? throughputLinesPerSecond : 0,
+      throughputWanLinesPerSecond: shouldCollectPerf && success
         ? computeThroughputWan(etsLines, detectorDurationMs)
         : null,
       peakHeapMB,
@@ -677,13 +707,13 @@ function printUsage() {
   console.log('Usage: node ./scripts/gitcodeArktsPerfTest.js [options]');
   console.log('');
   console.log('Options:');
-  console.log('  --reposRoot=<path>             Clone/reuse repositories here');
+  console.log('  --reposRoot=<path>             Override projectConfig.projectPath');
   console.log('  --outputDir=<path>             Output report root');
   console.log('  --baseProjectConfig=<path>     Base projectConfig.json');
   console.log('  --baseRuleConfig=<path>        Base ruleConfig JSON used for files/ignore/packagePath');
   console.log('  --runnerPath=<path>            homecheck runner JS path');
   console.log('  --npmCacheDir=<path>           npm cache dir for homecheck');
-  console.log('  --includeRepos=a,b             Only run selected benchmark repository names');
+  console.log('  --includeRepos=a,b             Override projectConfig.includeRepos');
   console.log('  --extraRepos=name=target,...   Extra perf-only repos; target = local dir or git URL');
   console.log('  --includeRules=a,b             Only run selected smell names');
   console.log('  --updateExisting=true          Run git pull --ff-only when a repo already exists');
@@ -692,8 +722,9 @@ function printUsage() {
   console.log('  --nodeMaxOldSpaceMB=<n>        Child homecheck Node heap limit (default 8192)');
   console.log('  --dashboard=false              Disable live HTTP dashboard (final HTML is still written)');
   console.log('  --dashboardPort=<n>            Dashboard port, default 0 selects a free local port');
-  console.log('  --f1=false                     Disable dataset F1 evaluation (enabled by default)');
-  console.log('  --datasetDir=<path>            arkts-code-smell dataset dir (default ../arkts-code-smell/dataset)');
+  console.log('  --perf=false                   Disable CLOC and performance collection (enabled by default)');
+  console.log('  --f1=false                     Disable dataset F1 evaluation');
+  console.log('  --datasetDir=<path>            Override projectConfig.datasetDir; empty config disables F1');
   console.log('  --f1Repos=a,b                  Only run selected dataset repository names');
 }
 
@@ -769,22 +800,26 @@ async function main() {
   }
 
   const cwd = process.cwd();
+  const projectRoot = path.resolve(__dirname, '..');
   const startedAt = new Date().toISOString();
   const wallStart = Date.now();
-  const reposRoot = path.resolve(cwd, args.reposRoot || './report/.perftest/gitcode_arkts_repos');
   const outputDir = path.resolve(cwd, args.outputDir || './report/.perftest/gitcode_arkts_smell_perf');
   const tmpConfigDir = path.join(outputDir, '.tmp');
-  const baseProjectConfigPath = path.resolve(cwd, args.baseProjectConfig || './config/projectConfig.json');
-  const baseRuleConfigPath = path.resolve(cwd, args.baseRuleConfig || './config/ruleConfig.perfAll.json');
-  const runnerPath = path.resolve(cwd, args.runnerPath || './node_modules/homecheck/lib/run.js');
+  const baseProjectConfigPath = args.baseProjectConfig
+    ? path.resolve(cwd, args.baseProjectConfig)
+    : path.join(projectRoot, 'config', 'projectConfig.json');
+  const baseRuleConfigPath = args.baseRuleConfig
+    ? path.resolve(cwd, args.baseRuleConfig)
+    : path.join(projectRoot, 'config', 'ruleConfig.json');
+  const packagePath = path.join(projectRoot, 'extrulesproject-1.0.0.tgz');
   const npmCacheDir = path.resolve(cwd, args.npmCacheDir || './report/.npm-cache');
   const timeoutMs = args.timeoutMs ? Number(args.timeoutMs) : 30 * 60 * 1000;
   const nodeMaxOldSpaceMB = args.nodeMaxOldSpaceMB ? Number(args.nodeMaxOldSpaceMB) : 8192;
-  const includeRepos = args.includeRepos ? new Set(args.includeRepos.split(',').filter(Boolean)) : null;
   const includeRules = args.includeRules ? new Set(args.includeRules.split(',').filter(Boolean)) : null;
   const updateExisting = args.updateExisting === 'true';
   const dashboardEnabled = args.dashboard !== 'false';
   const dashboardPort = args.dashboardPort ? Number(args.dashboardPort) : 0;
+  const perfEnabled = args.perf !== 'false';
 
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new Error(`timeoutMs should be a positive number, got: ${args.timeoutMs}`);
@@ -795,18 +830,56 @@ async function main() {
   if (!Number.isInteger(dashboardPort) || dashboardPort < 0 || dashboardPort > 65535) {
     throw new Error(`dashboardPort should be an integer from 0 to 65535, got: ${args.dashboardPort}`);
   }
-  for (const requiredPath of [baseProjectConfigPath, baseRuleConfigPath, runnerPath]) {
+  for (const requiredPath of [baseProjectConfigPath, baseRuleConfigPath, packagePath]) {
     if (!fs.existsSync(requiredPath)) {
       throw new Error(`Required path does not exist: ${requiredPath}`);
     }
+  }
+
+  const baseProjectConfig = readJson(baseProjectConfigPath, {});
+  const baseRuleConfig = readJson(baseRuleConfigPath, {});
+  const configuredArkCheckPath = typeof baseProjectConfig.arkCheckPath === 'string'
+    ? baseProjectConfig.arkCheckPath.trim()
+    : '';
+  const arkCheckPath = path.resolve(
+    cwd,
+    configuredArkCheckPath || path.join(projectRoot, 'node_modules', 'homecheck'),
+  );
+  const runnerPath = args.runnerPath
+    ? path.resolve(cwd, args.runnerPath)
+    : path.join(arkCheckPath, 'lib', 'run.js');
+  if (!fs.existsSync(arkCheckPath)) {
+    throw new Error(`Required path does not exist: ${arkCheckPath}`);
+  }
+  if (!fs.existsSync(runnerPath)) {
+    throw new Error(`Required path does not exist: ${runnerPath}`);
+  }
+  const configuredProjectPath = typeof baseProjectConfig.projectPath === 'string'
+    ? baseProjectConfig.projectPath.trim()
+    : '';
+  const reposRoot = path.resolve(
+    cwd,
+    args.reposRoot || configuredProjectPath || './report/.perftest/gitcode_arkts_repos',
+  );
+  const includeRepos = args.includeRepos !== undefined
+    ? parseRepoFilter(args.includeRepos)
+    : parseRepoFilter(baseProjectConfig.includeRepos);
+  const configuredDatasetDir = typeof baseProjectConfig.datasetDir === 'string'
+    ? baseProjectConfig.datasetDir.trim()
+    : '';
+  const datasetDirValue = args.datasetDir !== undefined
+    ? String(args.datasetDir).trim()
+    : configuredDatasetDir;
+  const f1Requested = args.f1 !== 'false' && datasetDirValue.length > 0;
+
+  if (!perfEnabled && !f1Requested) {
+    throw new Error('No task enabled: enable performance collection or configure a dataset for F1');
   }
 
   ensureDir(outputDir);
   ensureDir(tmpConfigDir);
   ensureDir(npmCacheDir);
 
-  const baseProjectConfig = readJson(baseProjectConfigPath, {});
-  const baseRuleConfig = readJson(baseRuleConfigPath, {});
   const repositories = [];
   const f1RepoResults = [];
   const selectedRules = RULE_ORDER.filter((rule) => !includeRules || includeRules.has(rule.smell));
@@ -819,18 +892,18 @@ async function main() {
   }
 
   // 基准仓库只采集性能数据；数据集仓库（arkts-code-smell 标注涉及的仓库）在此基础上参与 F1 评估（默认开启）。
-  const f1Requested = args.f1 !== 'false';
-  const datasetDir = path.resolve(cwd, args.datasetDir || '../arkts-code-smell/dataset');
+  const datasetDir = datasetDirValue ? path.resolve(cwd, datasetDirValue) : null;
   const f1ReposFilter = args.f1Repos ? new Set(args.f1Repos.split(',').filter(Boolean)) : null;
   let groundTruth = null;
   let datasetRepos = [];
-  if (selectedRules.length > 0) {
+  if (f1Requested && selectedRules.length > 0) {
     if (!fs.existsSync(datasetDir)) {
       console.log(`[dataset] 数据集目录不存在，跳过数据集仓库与 F1 评估: ${datasetDir}`);
     } else {
       try {
         groundTruth = loadGroundTruth(datasetDir, selectedRules.map((rule) => rule.ruleName));
         datasetRepos = buildDatasetRepos(groundTruth.repoNames)
+          .filter((repo) => !includeRepos || includeRepos.has(repo.name))
           .filter((repo) => !f1ReposFilter || f1ReposFilter.has(repo.name));
         console.log(
           `[dataset] 加载标注: ${groundTruth.positives.length} 正例 / ${groundTruth.negatives.length} 负例, ` +
@@ -846,9 +919,7 @@ async function main() {
   // 数据集仓库与基准仓库可能同名不同源（如 agc-template-market-harmonyos-demos），
   // 隔离到 reposRoot/dataset 下；同名时以数据集版本为准（F1 标注基于它），
   // 基准组自动跳过，避免同一仓库被扫描两遍、性能面板出现重复条目。
-  const datasetReposRoot = process.env.DATASET_REPOS_ROOT
-    ? path.resolve(process.env.DATASET_REPOS_ROOT)
-    : path.join(reposRoot, 'dataset');
+  const datasetReposRoot = reposRoot;
   const datasetRepoNames = new Set(datasetRepos.map((repo) => repo.name));
   const benchmarkRepos = selectedRepos.filter((repo) => {
     if (!datasetRepoNames.has(repo.name)) {
@@ -915,7 +986,7 @@ async function main() {
           updateExisting,
           cloneDepth: args.cloneDepth || '1',
         });
-      const etsLines = await countEtsLinesWithCloc(cloneResult.path);
+      const etsLines = perfEnabled ? await countEtsLinesWithCloc(cloneResult.path) : 0;
       const repoResult = {
         name: repo.name,
         url: repo.url,
@@ -953,17 +1024,22 @@ async function main() {
           npmCacheDir,
           timeoutMs,
           nodeMaxOldSpaceMB,
+          packagePath,
+          arkCheckPath,
+          perfEnabled,
         });
         repoResult.sharedRun = result.sharedRun;
         repoResult.runs.push(...result.runs);
-        const analysisMs = result.runs.reduce(
+        const analysisMs = perfEnabled ? result.runs.reduce(
           (sum, run) => sum + (Number(run.detectorDurationMs) || 0),
           0,
-        );
+        ) : 0;
         // 预处理耗时 = 端到端总耗时 − 各规则检测耗时合计。
         // PerfReporter 随规则包加载才启动计时，其 totalWallMs 不含 Scene 构建，
         // 因此预处理必须用最外层进程墙钟时间倒推（含进程启动、Scene 构建等共享开销）。
-        const preprocessingMs = Math.max(0, result.sharedRun.durationMs - analysisMs);
+        const preprocessingMs = perfEnabled
+          ? Math.max(0, result.sharedRun.durationMs - analysisMs)
+          : null;
         dashboardState.runs.push(...result.runs.map((run) => toDashboardRun(repo.name, run)));
         dashboardState.repositoryRuns.push(
           toDashboardRepositoryRun(repo.name, result.sharedRun, etsLines, { preprocessingMs, analysisMs }),
@@ -990,15 +1066,15 @@ async function main() {
             );
           }
         }
-        console.log(
-          `    ${result.sharedRun.success ? 'done' : 'failed'} ${result.sharedRun.durationMs}ms, ` +
-          `sceneShared=true, peakRssMB=${formatNumber(result.sharedRun.peakRssMB)}`,
-        );
-        for (const run of result.runs) {
-          console.log(
-            `      ${run.smell}: detector=${formatNumber(run.detectorDurationMs)}ms, ` +
-            `throughput=${formatNumber(run.throughputWanLinesPerSecond, 4)} wan lines/s`,
-          );
+        console.log(`    ${result.sharedRun.success ? 'done' : 'failed'} ${result.sharedRun.durationMs}ms`);
+        if (perfEnabled) {
+          console.log(`      sceneShared=true, peakRssMB=${formatNumber(result.sharedRun.peakRssMB)}`);
+          for (const run of result.runs) {
+            console.log(
+              `      ${run.smell}: detector=${formatNumber(run.detectorDurationMs)}ms, ` +
+              `throughput=${formatNumber(run.throughputWanLinesPerSecond, 4)} wan lines/s`,
+            );
+          }
         }
       }
       dashboardState.current = null;
@@ -1014,13 +1090,16 @@ async function main() {
       startedAt,
       finishedAt: dashboardState.finishedAt,
       totalWallMs: Date.now() - wallStart,
+      perfEnabled,
       reposRoot,
       outputDir,
       repositories,
     };
-    writeJson(perfReportPath, buildAggregatePerfReport(report));
     writeJson(summaryPath, report);
-    fs.writeFileSync(markdownPath, buildMarkdown(report));
+    if (perfEnabled) {
+      writeJson(perfReportPath, buildAggregatePerfReport(report));
+      fs.writeFileSync(markdownPath, buildMarkdown(report));
+    }
     fs.writeFileSync(dashboardPath, buildDashboardHtml(snapshotDashboardState(dashboardState)));
     if (f1Requested && groundTruth && f1RepoResults.length > 0) {
       const f1Report = {
@@ -1046,9 +1125,11 @@ async function main() {
   }
 
   console.log('');
-  console.log(`Perf report: ${perfReportPath}`);
   console.log(`Summary: ${summaryPath}`);
-  console.log(`Markdown: ${markdownPath}`);
+  if (perfEnabled) {
+    console.log(`Perf report: ${perfReportPath}`);
+    console.log(`Markdown: ${markdownPath}`);
+  }
   console.log(`Dashboard: ${dashboardPath}`);
   if (f1Requested && groundTruth && f1RepoResults.length > 0) {
     console.log(`F1 report: ${f1ReportPath}`);
@@ -1081,6 +1162,7 @@ module.exports = {
   main,
   parseArgs,
   parseExtraRepos,
+  parseRepoFilter,
   readMemoryTimeline,
   resolveClocInvocation,
   runRepositoryScan,
