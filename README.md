@@ -19,28 +19,37 @@ npm install
 
 根目录下新建 config 目录，并在其中创建 `projectConfig.json` 和 `ruleConfig.json` 两个配置文件。
 
-`ohosSdkPath` 和 `hmsSdkPath` 路径与 DevEco 安装路径有关，mac 中常为 `/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/ets` 与 `/Applications/DevEco-Studio.app/Contents/sdk/default/hms/ets`。
+`ohosSdkPath` 和 `hmsSdkPath` 位于 DevEco Studio 安装目录下的 `DevEco Studio/sdk/default/openharmony/ets` 和 `DevEco Studio/sdk/default/hms/ets`。
 
 projectConfig.json 示例：
 
 ```json
 {
-  "projectName": "TestProject",
-  "projectPath": "/path/to/project",
+  "projectName": "",
+  "projectPath": "..",
+  "includeRepos": [
+    "agc-template-market-harmonyos-demos",
+    "applications_photos",
+    "applications_settings",
+    "cases",
+    "model-evaluation-testsuite",
+    "openharmony_tpc_samples",
+    "ostest_integration_test"
+  ],
+  "datasetDir": "../arkts-code-smell/dataset",
   "logPath": "./HomeCheck.log",
-  "ohosSdkPath": "/path/to/ohosSdk",
-  "hmsSdkPath": "/path/to/hmsSdk",
+  "ohosSdkPath": "E:/DevEco Studio/sdk/default/openharmony/ets",
+  "hmsSdkPath": "E:/DevEco Studio/sdk/default/hms/ets",
   "checkPath": "",
   "sdkVersion": 20,
   "fix": "false",
   "npmPath": "",
   "npmInstallDir": "./",
-  "reportDir": "/path/to/reportDir",
-  "arkCheckPath": "./node_modules/homecheck",
+  "reportDir": "./report",
+  "arkCheckPath": "",
   "product": "default",
   "sdksThirdParty": []
 }
-
 ```
 
 ruleConfig.json 示例：
@@ -104,38 +113,7 @@ npm pack
 
 仓库位置、扫描范围和数据集可以直接写在 `config/projectConfig.json`：`projectPath` 指向包含各源码仓库的根目录，`includeRepos` 是要扫描的仓库名数组，`datasetDir` 指向 F1 标注数据集。将 `datasetDir` 设为 `""` 时不加载数据集，只统计指定仓库的性能和检出的异味数量。
 
-#### 批量评测配置示例
-
-```json
-{
-  "projectName": "",
-  "projectPath": "..",
-  "includeRepos": [
-    "agc-template-market-harmonyos-demos",
-    "applications_photos",
-    "applications_settings",
-    "cases",
-    "model-evaluation-testsuite",
-    "openharmony_tpc_samples",
-    "ostest_integration_test"
-  ],
-  "datasetDir": "../arkts-code-smell/dataset",
-  "logPath": "./HomeCheck.log",
-  "ohosSdkPath": "E:/DevEco Studio/sdk/default/openharmony/ets",
-  "hmsSdkPath": "E:/DevEco Studio/sdk/default/hms/ets",
-  "checkPath": "",
-  "sdkVersion": 20,
-  "fix": "false",
-  "npmPath": "",
-  "npmInstallDir": "./",
-  "reportDir": "./report",
-  "arkCheckPath": "",
-  "product": "default",
-  "sdksThirdParty": []
-}
-```
-
-相对路径均以执行 `npm run perf:gitcode` 时的当前目录为基准；绝对路径直接使用。配置字段说明如下：
+上面的示例同时适用于默认的批量评测命令。相对路径均以执行 `npm run perf:gitcode` 时的当前目录为基准；绝对路径直接使用。配置字段说明如下：
 
 | 字段 | 示例/建议值 | 作用 |
 | --- | --- | --- |
