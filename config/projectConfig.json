@@ -1,13 +1,11 @@
 {
   "projectName": "",
-  "projectPath": "...",
-  "includeRepos": [
-    "feature-envy_refactor"
+  "projectPath": "..",
+  "repos": [
+    "applications_settings",
+    "homecheck-extrule"
   ],
-  "extraRepos": {
-    "feature-envy": "D:/ROG/Documents/harmonyos/feature-envy_refactor"
-  },
-  "datasetDir": "",
+  "datasetDir": "../arkts-code-smell/dataset",
   "logPath": "./HomeCheck.log",
   "ohosSdkPath": "E:/DevEco Studio/sdk/default/openharmony/ets",
   "hmsSdkPath": "E:/DevEco Studio/sdk/default/hms/ets",

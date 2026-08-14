@@ -27,14 +27,15 @@ projectConfig.json 示例：
 {
   "projectName": "",
   "projectPath": "..",
-  "includeRepos": [
+  "repos": [
     "agc-template-market-harmonyos-demos",
     "applications_photos",
     "applications_settings",
     "cases",
     "model-evaluation-testsuite",
     "openharmony_tpc_samples",
-    "ostest_integration_test"
+    "ostest_integration_test",
+    "feature-envy=D:/ROG/Documents/harmonyos/feature-envy_refactor"
   ],
   "datasetDir": "../arkts-code-smell/dataset",
   "logPath": "./HomeCheck.log",
@@ -111,15 +112,15 @@ npm pack
 
 脚本固定读取仓库内的 `config/projectConfig.json` 和 `config/ruleConfig.json`，无需在命令中重复指定。规则包和 HomeCheck 路径也会按当前 `homecheck-extrule` 目录自动解析。
 
-仓库位置、扫描范围和数据集可以直接写在 `config/projectConfig.json`：`projectPath` 指向包含各源码仓库的根目录，`includeRepos` 是要扫描的仓库名数组，`datasetDir` 指向 F1 标注数据集。将 `datasetDir` 设为 `""` 时不加载数据集，只统计指定仓库的性能和检出的异味数量。
+仓库位置、扫描范围和数据集可以直接写在 `config/projectConfig.json`：`projectPath` 指向包含各源码仓库的根目录，`repos` 统一列出要扫描的仓库，`datasetDir` 指向 F1 标注数据集。将 `datasetDir` 设为 `""` 时不加载数据集，只统计指定仓库的性能和检出的异味数量。
 
 上面的示例同时适用于默认的批量评测命令。相对路径均以执行 `npm run perf:gitcode` 时的当前目录为基准；绝对路径直接使用。配置字段说明如下：
 
 | 字段 | 示例/建议值 | 作用 |
 | --- | --- | --- |
 | `projectName` | `""` | 单项目运行时的项目名；批量评测时自动替换为当前仓库名，可以留空 |
-| `projectPath` | `".."` | 批量评测的仓库根目录。脚本在其下查找 `includeRepos` 中的仓库，例如 `../cases`；命令行 `--reposRoot` 可覆盖 |
-| `includeRepos` | `["cases", "applications_photos"]` | 本次要扫描的仓库名。为空或省略时使用脚本内置仓库集合；命令行 `--includeRepos` 可覆盖 |
+| `projectPath` | `".."` | 批量评测的仓库根目录。`repos` 中只有名称的条目从该目录下查找，例如 `../cases`；命令行 `--reposRoot` 可覆盖 |
+| `repos` | `["cases", "custom=D:/projects/custom"]` | 统一的仓库列表。`名称` 使用 `projectPath/名称`；`名称=路径或Git地址` 使用显式目标 |
 | `datasetDir` | `"../arkts-code-smell/dataset"` | 数据集的 `dataset` 目录，内部应直接包含 `positive` 和 `negative`。非空时运行 F1；设为 `""` 时只统计性能与告警数量 |
 | `logPath` | `"./HomeCheck.log"` | HomeCheck 日志文件路径。留空时写到当前仓库的自动报告目录；批量扫描时建议留空，避免多个仓库共用一个日志文件 |
 | `ohosSdkPath` | DevEco SDK 的绝对路径 | OpenHarmony ETS SDK 目录，必须按本机 DevEco Studio 安装位置设置 |
@@ -138,20 +139,16 @@ npm pack
 
 ### 运行方式
 
-扫描指定仓库并同时生成性能与 F1 结果：
+按 `projectConfig.json` 的 `repos` 扫描，并在配置有效数据集时同时生成 F1：
 
 ```powershell
-npm run perf:gitcode -- `
-  --reposRoot='D:\ROG\Documents\harmonyos\tests' `
-  --includeRepos='cases'
+npm run perf:gitcode
 ```
 
 只生成性能结果，不加载数据集或计算 F1：
 
 ```powershell
 npm run perf:gitcode -- `
-  --reposRoot='D:\ROG\Documents\harmonyos\tests' `
-  --includeRepos='cases' `
   --f1=false
 ```
 
@@ -159,17 +156,16 @@ npm run perf:gitcode -- `
 
 ```powershell
 npm run perf:gitcode -- `
-  --reposRoot='D:\ROG\Documents\harmonyos\tests' `
-  --includeRepos='cases' `
   --perf=false
 ```
 
 以上命令默认都会启动实时面板，并在结束后生成 `perfDashboard.html`。`--perf=false` 时面板只显示进度和可用的 F1 信息。如果同时关闭性能且没有启用数据集 F1，脚本会提示没有可执行任务。
 
-- `reposRoot` 是源码仓库根目录；例如 `reposRoot=D:\...\tests` 且 `includeRepos=cases` 时，实际扫描 `D:\...\tests\cases`
+- `projectPath`（命令行覆盖名为 `reposRoot`）是源码仓库根目录；例如 `projectPath=..` 且 `repos` 中有 `cases` 时，实际扫描 `../cases`
 - 本地已有仓库会直接复用；缺少的已知仓库会下载到 `reposRoot`，加 `--updateExisting=true` 才会更新已有 Git 仓库
-- 数据集默认从 `../arkts-code-smell/dataset` 加载，只提供 F1 标签；参与评测的源码仓库仍从 `reposRoot` 获取
-- `extraRepos` 可在 `projectConfig.json` 中追加任意仓库（本地目录或 git 地址）做纯性能测试，与基准仓库同流程、不参与 F1；命令行 `--extraRepos` 仍可继续追加
+- `datasetDir` 只提供 F1 标签；是否计算 F1 仅按 `repos` 条目左侧的仓库名精确匹配，不检查显式目录内部是否还包含其他数据集仓库
+- `projectConfig.json` 使用统一的 `repos` 选择仓库：`仓库名` 扫描 `projectPath/仓库名`，`仓库名=路径或Git地址` 使用显式目标
+- 启用 `datasetDir` 后，`repos` 中有数据集标注的仓库会在性能扫描后继续计算 F1；没有标注的仓库只生成性能结果
 - 每个仓库只启动一次 HomeCheck，`code-clone-fragment`、`feature-envy`、`long-method`、`switch-statement` 四种异味检测共享同一份 Scene 预处理
 - 运行中打开终端打印的 `Live dashboard` 地址可看实时面板；结束后结果保存在 `report/.perftest/gitcode_arkts_smell_perf/`：
   - `perfDashboard.html`：性能面板，浏览器直接打开
@@ -181,7 +177,7 @@ npm run perf:gitcode -- `
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
 | `--reposRoot=<path>` | `projectConfig.projectPath`，再回退到 `report/.perftest/gitcode_arkts_repos` | 覆盖仓库根目录，目标路径为 `reposRoot/仓库名` |
-| `--includeRepos=a,b` | `projectConfig.includeRepos`，再回退到默认仓库集合 | 覆盖要扫描的仓库；同时限制参与 F1 的数据集仓库 |
+| `projectConfig.repos` | 无 | 统一选择仓库；`名称` 使用 `projectPath/名称`，`名称=路径或Git地址` 使用显式目标 |
 | `--perf=false` | `true` | 不生成性能统计；仍执行 HomeCheck 以供 F1 比对 |
 | `--f1=false` | 数据集路径非空时启用 | 即使配置了数据集，也强制不加载、不计算 F1 |
 | `--datasetDir=<path>` | `projectConfig.datasetDir` | 覆盖 F1 标签数据集目录；配置为空时不运行 F1 |
@@ -192,7 +188,6 @@ npm run perf:gitcode -- `
 | `--updateExisting=true` | `false` | 对已有 Git 仓库执行快进更新 |
 | `--nodeMaxOldSpaceMB=<n>` | `8192` | HomeCheck 子进程最大堆内存（MB） |
 | `--timeoutMs=<n>` | `1800000` | 单仓库超时时间（毫秒） |
-| `--extraRepos=name=target` | 无 | 添加本地路径或 Git URL，作为纯性能仓库 |
 
 `--baseProjectConfig`、`--baseRuleConfig` 和 `--runnerPath` 仅作为高级覆盖参数保留，普通运行无需填写。SDK 路径仍需在 `config/projectConfig.json` 中按本机 DevEco Studio 安装位置填写绝对路径。
 `projectConfig.json` 中的 `reportDir`、`logPath`、`arkCheckPath` 也会生效：非空时使用配置值，相对路径以运行命令的目录为基准；留空时脚本才自动生成报告/日志位置或定位当前项目的 `node_modules/homecheck`。批量扫描时会在 `reportDir` 下按仓库名建立子目录，避免多个仓库互相覆盖。

@@ -154,6 +154,51 @@ function parseExtraRepos(value) {
   });
 }
 
+/**
+ * 统一仓库配置：name 表示 reposRoot/name，name=target 表示显式本地路径或 Git URL。
+ * 同时兼容 { name: target } 对象格式。
+ */
+function parseRepos(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const repos = [];
+  for (const item of value) {
+    if (typeof item === 'string' && item.trim()) {
+      const text = item.trim();
+      const eqIndex = text.indexOf('=');
+      if (eqIndex === -1) {
+        repos.push({ name: text });
+        continue;
+      }
+      const name = text.slice(0, eqIndex).trim();
+      const target = text.slice(eqIndex + 1).trim();
+      if (!name || !target) {
+        throw new Error(`repos 路径条目必须使用 仓库名=本地路径或git地址 格式: ${text}`);
+      }
+      repos.push(GIT_URL_PATTERN.test(target)
+        ? { name, url: target }
+        : { name, localPath: target });
+      continue;
+    }
+    if (item && typeof item === 'object' && !Array.isArray(item)) {
+      for (const [rawName, rawTarget] of Object.entries(item)) {
+        const name = String(rawName).trim();
+        const target = String(rawTarget || '').trim();
+        if (!name || !target) {
+          throw new Error(`repos 对象必须使用 { "仓库名": "本地路径或git地址" } 格式`);
+        }
+        repos.push(GIT_URL_PATTERN.test(target)
+          ? { name, url: target }
+          : { name, localPath: target });
+      }
+      continue;
+    }
+    throw new Error(`repos 条目必须是 仓库名、仓库名=路径，或 { "仓库名": "路径" }`);
+  }
+  return repos;
+}
+
 function formatNumber(value, digits = 2) {
   if (!Number.isFinite(value)) {
     return '0.00';
@@ -870,6 +915,7 @@ async function main() {
   const includeRepos = args.includeRepos !== undefined
     ? parseRepoFilter(args.includeRepos)
     : parseRepoFilter(baseProjectConfig.includeRepos);
+  const configuredRepos = parseRepos(baseProjectConfig.repos);
   const configuredDatasetDir = typeof baseProjectConfig.datasetDir === 'string'
     ? baseProjectConfig.datasetDir.trim()
     : '';
@@ -925,38 +971,66 @@ async function main() {
       }
     }
   }
-  // 数据集仓库与基准仓库可能同名不同源（如 agc-template-market-harmonyos-demos），
-  // 隔离到 reposRoot/dataset 下；同名时以数据集版本为准（F1 标注基于它），
-  // 基准组自动跳过，避免同一仓库被扫描两遍、性能面板出现重复条目。
-  const datasetReposRoot = reposRoot;
-  const datasetRepoNames = new Set(datasetRepos.map((repo) => repo.name));
-  const benchmarkRepos = selectedRepos.filter((repo) => {
-    if (!datasetRepoNames.has(repo.name)) {
-      return true;
-    }
-    console.log(`[repo] ${repo.name} 与数据集仓库同名，跳过基准组，仅扫描数据集版本`);
-    return false;
-  });
-  // 额外仓库（--extraRepos）按基准组处理，与已有仓库同名时跳过，避免重复扫描
-  const extraWorkItems = [];
-  for (const extra of extraRepos) {
-    if (datasetRepoNames.has(extra.name) || benchmarkRepos.some((repo) => repo.name === extra.name)) {
-      console.log(`[repo] ${extra.name} 已在扫描列表中，跳过 --extraRepos 重复项`);
-      continue;
-    }
-    extraWorkItems.push({
-      repo: { name: extra.name, url: extra.url || path.resolve(cwd, extra.localPath) },
-      group: 'benchmark',
-      cloneRoot: reposRoot,
-      localPath: extra.localPath ? path.resolve(cwd, extra.localPath) : null,
+  const labeledRepoNames = new Set(groundTruth ? groundTruth.repoNames : []);
+  let repoWorkItems;
+  if (configuredRepos.length > 0) {
+    const knownRepoUrls = new Map([
+      ...REPOSITORIES.map((repo) => [repo.name, repo.url]),
+      ...buildDatasetRepos([...labeledRepoNames]).map((repo) => [repo.name, repo.url]),
+    ]);
+    const seenNames = new Set();
+    repoWorkItems = configuredRepos.map((configuredRepo) => {
+      if (seenNames.has(configuredRepo.name)) {
+        throw new Error(`repos 中存在重复仓库名: ${configuredRepo.name}`);
+      }
+      seenNames.add(configuredRepo.name);
+      const defaultLocalPath = path.join(reposRoot, configuredRepo.name);
+      const explicitLocalPath = configuredRepo.localPath
+        ? path.resolve(cwd, configuredRepo.localPath)
+        : null;
+      const localPath = explicitLocalPath || (fs.existsSync(defaultLocalPath) ? defaultLocalPath : null);
+      const url = configuredRepo.url || knownRepoUrls.get(configuredRepo.name);
+      if (!localPath && !url) {
+        throw new Error(
+          `仓库不存在: ${defaultLocalPath}；请创建该目录或在 repos 中为 ${configuredRepo.name} 指定路径/地址`,
+        );
+      }
+      if (explicitLocalPath && !fs.existsSync(explicitLocalPath)) {
+        throw new Error(`repos 本地路径不存在: ${explicitLocalPath}`);
+      }
+      return {
+        repo: { name: configuredRepo.name, url: url || explicitLocalPath },
+        group: f1Requested && labeledRepoNames.has(configuredRepo.name) ? 'dataset' : 'benchmark',
+        cloneRoot: reposRoot,
+        localPath,
+      };
     });
+    datasetRepos = repoWorkItems
+      .filter((item) => item.group === 'dataset')
+      .map((item) => item.repo);
+  } else {
+    // 兼容旧配置与命令行：includeRepos 筛选内置/数据集仓库，extraRepos 追加仓库。
+    const datasetRepoNames = new Set(datasetRepos.map((repo) => repo.name));
+    const benchmarkRepos = selectedRepos.filter((repo) => !datasetRepoNames.has(repo.name));
+    const extraWorkItems = [];
+    for (const extra of extraRepos) {
+      if (datasetRepoNames.has(extra.name) || benchmarkRepos.some((repo) => repo.name === extra.name)) {
+        console.log(`[repo] ${extra.name} 已在扫描列表中，跳过重复项`);
+        continue;
+      }
+      extraWorkItems.push({
+        repo: { name: extra.name, url: extra.url || path.resolve(cwd, extra.localPath) },
+        group: 'benchmark',
+        cloneRoot: reposRoot,
+        localPath: extra.localPath ? path.resolve(cwd, extra.localPath) : null,
+      });
+    }
+    repoWorkItems = [
+      ...datasetRepos.map((repo) => ({ repo, group: 'dataset', cloneRoot: reposRoot })),
+      ...benchmarkRepos.map((repo) => ({ repo, group: 'benchmark', cloneRoot: reposRoot })),
+      ...extraWorkItems,
+    ];
   }
-  // 数据集仓库优先（F1 结果尽早产出），纯性能基准仓库（含大仓库与 --extraRepos）排到最后
-  const repoWorkItems = [
-    ...datasetRepos.map((repo) => ({ repo, group: 'dataset', cloneRoot: datasetReposRoot })),
-    ...benchmarkRepos.map((repo) => ({ repo, group: 'benchmark', cloneRoot: reposRoot })),
-    ...extraWorkItems,
-  ];
   const dashboardState = {
     status: 'running',
     startedAt,
@@ -1171,6 +1245,7 @@ module.exports = {
   main,
   parseArgs,
   parseExtraRepos,
+  parseRepos,
   parseRepoFilter,
   readMemoryTimeline,
   resolveClocInvocation,
