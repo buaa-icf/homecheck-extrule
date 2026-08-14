@@ -169,7 +169,7 @@ npm run perf:gitcode -- `
 - `reposRoot` 是源码仓库根目录；例如 `reposRoot=D:\...\tests` 且 `includeRepos=cases` 时，实际扫描 `D:\...\tests\cases`
 - 本地已有仓库会直接复用；缺少的已知仓库会下载到 `reposRoot`，加 `--updateExisting=true` 才会更新已有 Git 仓库
 - 数据集默认从 `../arkts-code-smell/dataset` 加载，只提供 F1 标签；参与评测的源码仓库仍从 `reposRoot` 获取
-- `--extraRepos` 可追加任意仓库（本地目录或 git 地址）做纯性能测试，与基准仓库同流程、不参与 F1
+- `extraRepos` 可在 `projectConfig.json` 中追加任意仓库（本地目录或 git 地址）做纯性能测试，与基准仓库同流程、不参与 F1；命令行 `--extraRepos` 仍可继续追加
 - 每个仓库只启动一次 HomeCheck，`code-clone-fragment`、`feature-envy`、`long-method`、`switch-statement` 四种异味检测共享同一份 Scene 预处理
 - 运行中打开终端打印的 `Live dashboard` 地址可看实时面板；结束后结果保存在 `report/.perftest/gitcode_arkts_smell_perf/`：
   - `perfDashboard.html`：性能面板，浏览器直接打开

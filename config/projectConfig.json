@@ -1,16 +1,13 @@
 {
   "projectName": "",
-  "projectPath": "..",
+  "projectPath": "...",
   "includeRepos": [
-    "agc-template-market-harmonyos-demos",
-    "applications_photos",
-    "applications_settings",
-    "cases",
-    "model-evaluation-testsuite",
-    "openharmony_tpc_samples",
-    "ostest_integration_test"
+    "feature-envy_refactor"
   ],
-  "datasetDir": "../arkts-code-smell/dataset",
+  "extraRepos": {
+    "feature-envy": "D:/ROG/Documents/harmonyos/feature-envy_refactor"
+  },
+  "datasetDir": "",
   "logPath": "./HomeCheck.log",
   "ohosSdkPath": "E:/DevEco Studio/sdk/default/openharmony/ets",
   "hmsSdkPath": "E:/DevEco Studio/sdk/default/hms/ets",

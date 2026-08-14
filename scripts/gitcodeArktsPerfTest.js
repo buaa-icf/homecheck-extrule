@@ -128,17 +128,23 @@ function toSafeName(value) {
 const GIT_URL_PATTERN = /^(https?:\/\/|git@|ssh:\/\/)/;
 
 /**
- * 解析 --extraRepos=name=target[,name2=target2]，target 为本地目录或 git 地址。
+ * 解析额外仓库。命令行支持 name=target[,name2=target2]，配置文件支持
+ * { "name": "target" }；target 为本地目录或 git 地址。
  * 额外仓库按基准仓库处理：只采集性能数据，不参与 F1 评估。
  */
 function parseExtraRepos(value) {
   if (!value) {
     return [];
   }
-  return value.split(',').map((item) => item.trim()).filter(Boolean).map((item) => {
+  const items = typeof value === 'string'
+    ? value.split(',').map((item) => item.trim()).filter(Boolean)
+    : !Array.isArray(value) && typeof value === 'object'
+      ? Object.entries(value).map(([name, target]) => `${name}=${target}`)
+      : [];
+  return items.map((item) => {
     const eqIndex = item.indexOf('=');
     if (eqIndex <= 0 || eqIndex === item.length - 1) {
-      throw new Error(`--extraRepos 条目格式应为 name=本地路径或git地址: ${item}`);
+      throw new Error(`extraRepos 条目格式应为 name=本地路径或git地址: ${item}`);
     }
     const name = item.slice(0, eqIndex);
     const target = item.slice(eqIndex + 1);
@@ -884,10 +890,13 @@ async function main() {
   const f1RepoResults = [];
   const selectedRules = RULE_ORDER.filter((rule) => !includeRules || includeRules.has(rule.smell));
   const selectedRepos = REPOSITORIES.filter((repo) => !includeRepos || includeRepos.has(repo.name));
-  const extraRepos = parseExtraRepos(args.extraRepos);
+  const extraRepos = [
+    ...parseExtraRepos(baseProjectConfig.extraRepos),
+    ...parseExtraRepos(args.extraRepos),
+  ];
   for (const extra of extraRepos) {
     if (extra.localPath && !fs.existsSync(path.resolve(cwd, extra.localPath))) {
-      throw new Error(`--extraRepos 本地路径不存在: ${extra.localPath}`);
+      throw new Error(`extraRepos 本地路径不存在: ${extra.localPath}`);
     }
   }
 
