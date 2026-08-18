@@ -19,7 +19,7 @@ import { RuleOptionSchema } from "./config/parseRuleOptions";
 import { FeatureEnvyRuleOptions } from "./config/types";
 import { BaseRuleChecker } from "./BaseRuleChecker";
 import { buildFeatureEnvyFieldTypeMap, FeatureEnvyAnalyzer, FeatureEnvyMetrics } from "./feature-envy/analysis";
-import { shouldSkipMethod } from "./shared/ark";
+import { isArkUiMethod, shouldSkipMethod } from "./shared/ark";
 import { PerfReporter } from "./perf";
 
 // Heuristic detection for "Feature Envy" code smell: a method that tends to
@@ -69,7 +69,7 @@ export class FeatureEnvyCheck extends BaseRuleChecker<FeatureEnvyRuleOptions> {
     public check = (targetMtd: ArkMethod) => {
         PerfReporter.time(this.constructor.name, 'check', () => {
             const methodName = targetMtd.getName() ?? "";
-            if (shouldSkipMethod(methodName)) {
+            if (shouldSkipMethod(methodName) || isArkUiMethod(targetMtd)) {
                 return;
             }
 

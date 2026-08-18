@@ -35,7 +35,8 @@ projectConfig.json 示例：
     "model-evaluation-testsuite",
     "openharmony_tpc_samples",
     "ostest_integration_test",
-    "feature-envy=D:/ROG/Documents/harmonyos/feature-envy_refactor"
+    "feature-envy=D:/ROG/Documents/harmonyos/feature-envy_refactor",
+    "my-repo=https://example.com/my-repo.git"
   ],
   "datasetDir": "../arkts-code-smell/dataset",
   "logPath": "./HomeCheck.log",
@@ -120,13 +121,14 @@ npm pack
 | --- | --- | --- |
 | `projectName` | `""` | 单项目运行时的项目名；批量评测时自动替换为当前仓库名，可以留空 |
 | `projectPath` | `".."` | 批量评测的仓库根目录。`repos` 中只有名称的条目从该目录下查找，例如 `../cases`；命令行 `--reposRoot` 可覆盖 |
-| `repos` | `["cases", "custom=D:/projects/custom"]` | 统一的仓库列表。`名称` 使用 `projectPath/名称`；`名称=路径或Git地址` 使用显式目标 |
+| `repos` | `["cases", "custom=D:/projects/custom", "my-repo=https://example.com/my-repo.git"]` | 统一的仓库列表。`名称` 使用 `projectPath/名称`；`名称=路径或Git地址` 使用显式目标 |
 | `datasetDir` | `"../arkts-code-smell/dataset"` | 数据集的 `dataset` 目录，内部应直接包含 `positive` 和 `negative`。非空时运行 F1；设为 `""` 时只统计性能与告警数量 |
 | `logPath` | `"./HomeCheck.log"` | HomeCheck 日志文件路径。留空时写到当前仓库的自动报告目录；批量扫描时建议留空，避免多个仓库共用一个日志文件 |
 | `ohosSdkPath` | DevEco SDK 的绝对路径 | OpenHarmony ETS SDK 目录，必须按本机 DevEco Studio 安装位置设置 |
 | `hmsSdkPath` | DevEco SDK 的绝对路径 | HMS ETS SDK 目录，必须按本机 DevEco Studio 安装位置设置 |
 | `checkPath` | `""` | 可选的“指定检查文件列表”配置文件路径，不是源码目录；留空表示按 `ruleConfig.json` 的 `files/ignore` 扫描 |
 | `sdkVersion` | `20` | HomeCheck 构建分析场景时使用的 SDK API 版本，应与待测工程兼容 |
+| `fileConcurrency` | `64` | HomeCheck 子进程异步文件操作的并发上限；流式打开另由 `graceful-fs` 在 `EMFILE` 时排队重试 |
 | `fix` | `"false"` | 是否启用规则自动修复；本项目的性能/F1 评测建议保持关闭 |
 | `npmPath` | `""` | npm 可执行程序；留空时 HomeCheck 使用系统 PATH 中的 `npm` |
 | `npmInstallDir` | `"./"` | HomeCheck 安装扩展规则包时使用的 npm 目录，一般保持默认 |
@@ -167,6 +169,7 @@ npm run perf:gitcode -- `
 - `projectConfig.json` 使用统一的 `repos` 选择仓库：`仓库名` 扫描 `projectPath/仓库名`，`仓库名=路径或Git地址` 使用显式目标
 - 启用 `datasetDir` 后，`repos` 中有数据集标注的仓库会在性能扫描后继续计算 F1；没有标注的仓库只生成性能结果
 - 每个仓库只启动一次 HomeCheck，`code-clone-fragment`、`feature-envy`、`long-method`、`switch-statement` 四种异味检测共享同一份 Scene 预处理
+- 性能统计前的 CLOC 只枚举 `.ets` 和 `.ts` 文件：`.ets` 按 ArkTs、`.ts` 按 TypeScript 解析；范围与 HomeCheck 一致，同时避免分析其他语言文件
 - 运行中打开终端打印的 `Live dashboard` 地址可看实时面板；结束后结果保存在 `report/.perftest/gitcode_arkts_smell_perf/`：
   - `perfDashboard.html`：性能面板，浏览器直接打开
   - `perfReport.md`：性能汇总（检测耗时、吞吐、峰值内存）
@@ -187,6 +190,7 @@ npm run perf:gitcode -- `
 | `--dashboardPort=<n>` | 自动选择 | 固定实时面板端口，例如 `3000` |
 | `--updateExisting=true` | `false` | 对已有 Git 仓库执行快进更新 |
 | `--nodeMaxOldSpaceMB=<n>` | `8192` | HomeCheck 子进程最大堆内存（MB） |
+| `--fileConcurrency=<n>` | `64` | 覆盖异步文件操作并发上限；建议从 32、64、128 中实测 |
 | `--timeoutMs=<n>` | `1800000` | 单仓库超时时间（毫秒） |
 
 `--baseProjectConfig`、`--baseRuleConfig` 和 `--runnerPath` 仅作为高级覆盖参数保留，普通运行无需填写。SDK 路径仍需在 `config/projectConfig.json` 中按本机 DevEco Studio 安装位置填写绝对路径。

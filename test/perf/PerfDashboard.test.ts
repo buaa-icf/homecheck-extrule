@@ -85,7 +85,7 @@ describe('performance dashboard', () => {
         expect(html).toContain("state.runs.forEach(function(run){ var row=document.createElement('tr');");
         expect(html).toContain('峰值 RSS (MB)');
         expect(html).toContain('peakRss.toFixed(2)');
-        expect(html).toContain('.ets 代码行数');
+        expect(html).toContain('.ets/.ts 代码行数');
         expect(html).toContain('cases/long-method');
         expect(html).toContain('F1 评估（数据集仓库）');
         expect(html).toContain('TP/(TP+FP)');

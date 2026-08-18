@@ -1,0 +1,14 @@
+diff --git a/node_modules/arkanalyzer/lib/utils/logger.js b/node_modules/arkanalyzer/lib/utils/logger.js
+--- a/node_modules/arkanalyzer/lib/utils/logger.js
++++ b/node_modules/arkanalyzer/lib/utils/logger.js
+@@ -44,6 +44,9 @@ class ConsoleLogger {
+             appenders: {
+                 file: {
+-                    type: 'fileSync',
++                    // Keep one asynchronous file stream open instead of
++                    // reopening the log synchronously for every message.
++                    // The latter can fail with EMFILE during large Scene builds.
++                    type: 'file',
+                     filename: `${logFilePath}`,
+                     maxLogSize: 5 * 1024 * 1024,
+                     backups: 5,

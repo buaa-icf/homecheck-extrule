@@ -8,6 +8,7 @@ const {
     filterIssuesByRule,
     main,
     parseExtraRepos,
+    parseRepos,
     parseRepoFilter,
     runRepositoryScan,
     RULES,
@@ -31,14 +32,25 @@ describe('gitcodeArktsPerfTest helpers', () => {
         expect(parseRepoFilter('')).toBeNull();
     });
 
-    it('parses --extraRepos entries into git-url and local-path repos', () => {
+    it('parses unified repos entries into names, git URLs, and local paths', () => {
+        expect(parseRepos([
+            'cases',
+            'my-repo=https://example.com/my-repo.git',
+            'Local=/tmp/my-repo',
+        ])).toEqual([
+            { name: 'cases' },
+            { name: 'my-repo', url: 'https://example.com/my-repo.git' },
+            { name: 'Local', localPath: '/tmp/my-repo' },
+        ]);
+
+        // 旧命令行参数继续兼容。
         expect(parseExtraRepos(undefined)).toEqual([]);
         expect(parseExtraRepos('MyRepo=https://github.com/xxx/yyy.git,Local=/tmp/my-repo'))
             .toEqual([
                 { name: 'MyRepo', url: 'https://github.com/xxx/yyy.git' },
                 { name: 'Local', localPath: '/tmp/my-repo' },
             ]);
-        expect(() => parseExtraRepos('bad-entry')).toThrow('--extraRepos');
+        expect(() => parseExtraRepos('bad-entry')).toThrow('extraRepos');
     });
 
     it('counts top-level issue objects and nested messages', () => {
@@ -183,6 +195,8 @@ describe('gitcodeArktsPerfTest helpers', () => {
         );
 
         const runnerPath = path.join(root, 'fake-runner.js');
+        const projectConfigPath = path.join(root, 'projectConfig.json');
+        fs.writeFileSync(projectConfigPath, JSON.stringify({ repos: ['cases'] }));
         fs.writeFileSync(runnerPath, [
             "const fs = require('node:fs');",
             "const path = require('node:path');",
@@ -201,8 +215,8 @@ describe('gitcodeArktsPerfTest helpers', () => {
             `--reposRoot=${reposRoot}`,
             `--outputDir=${outputDir}`,
             `--runnerPath=${runnerPath}`,
+            `--baseProjectConfig=${projectConfigPath}`,
             `--datasetDir=${datasetDir}`,
-            '--includeRepos=cases',
             '--includeRules=long-method',
             '--dashboard=false',
             '--f1=false',
@@ -313,14 +327,16 @@ describe('gitcodeArktsPerfTest helpers', () => {
         ].join('\n'));
 
         const previousArgv = process.argv;
+        const projectConfigPath = path.join(root, 'projectConfig.json');
+        fs.writeFileSync(projectConfigPath, JSON.stringify({ repos: ['fakerepo'] }));
         process.argv = [
             previousArgv[0],
             previousArgv[1],
             `--reposRoot=${reposRoot}`,
             `--outputDir=${outputDir}`,
             `--runnerPath=${runnerPath}`,
+            `--baseProjectConfig=${projectConfigPath}`,
             `--datasetDir=${datasetDir}`,
-            '--includeRepos=fakerepo',
             '--includeRules=long-method',
             '--dashboard=false',
         ];
@@ -385,14 +401,16 @@ describe('gitcodeArktsPerfTest helpers', () => {
         ].join('\n'));
 
         const previousArgv = process.argv;
+        const projectConfigPath = path.join(root, 'projectConfig.json');
+        fs.writeFileSync(projectConfigPath, JSON.stringify({ repos: ['cases'] }));
         process.argv = [
             previousArgv[0],
             previousArgv[1],
             `--reposRoot=${reposRoot}`,
             `--outputDir=${outputDir}`,
             `--runnerPath=${runnerPath}`,
+            `--baseProjectConfig=${projectConfigPath}`,
             `--datasetDir=${datasetDir}`,
-            '--includeRepos=cases',
             '--includeRules=long-method',
             '--dashboard=false',
         ];
@@ -406,14 +424,14 @@ describe('gitcodeArktsPerfTest helpers', () => {
         const summary = JSON.parse(
             fs.readFileSync(path.join(outputDir, 'summary.json'), 'utf8'),
         );
-        // includeRepos 同时限制性能与 F1 仓库
+        // repos 只选择 cases，因此数据集中另一个仓库不会参与 F1。
         expect(summary.repositories.map((repo: { name: string }) => repo.name)).toEqual(['cases']);
         expect(summary.repositories[0].group).toBe('benchmark');
         expect(summary.repositories[0].runs).toHaveLength(1);
         expect(fs.existsSync(path.join(outputDir, 'f1Report.json'))).toBe(false);
     });
 
-    it('scans an arbitrary local repo passed via --extraRepos without F1 evaluation', async () => {
+    it('scans an arbitrary local repo configured through repos without F1 evaluation', async () => {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gitcode-extra-'));
         const reposRoot = path.join(root, 'repos');
         const outputDir = path.join(root, 'out');
@@ -449,15 +467,18 @@ describe('gitcodeArktsPerfTest helpers', () => {
         ].join('\n'));
 
         const previousArgv = process.argv;
+        const projectConfigPath = path.join(root, 'projectConfig.json');
+        fs.writeFileSync(projectConfigPath, JSON.stringify({
+            repos: [`my-big-repo=${localRepoPath}`],
+        }));
         process.argv = [
             previousArgv[0],
             previousArgv[1],
             `--reposRoot=${reposRoot}`,
             `--outputDir=${outputDir}`,
             `--runnerPath=${runnerPath}`,
+            `--baseProjectConfig=${projectConfigPath}`,
             `--datasetDir=${datasetDir}`,
-            `--extraRepos=my-big-repo=${localRepoPath}`,
-            '--includeRepos=__none__',
             '--includeRules=long-method',
             '--dashboard=false',
         ];
@@ -471,7 +492,7 @@ describe('gitcodeArktsPerfTest helpers', () => {
         const summary = JSON.parse(
             fs.readFileSync(path.join(outputDir, 'summary.json'), 'utf8'),
         );
-        // includeRepos=__none__ 同时排除数据集仓库，额外本地仓库仍参与性能扫描
+        // 左侧名称与数据集仓库不同，因此只做性能扫描。
         expect(summary.repositories.map((repo: { name: string }) => repo.name))
             .toEqual(['my-big-repo']);
         expect(summary.repositories[0].group).toBe('benchmark');

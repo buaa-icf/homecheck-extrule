@@ -147,3 +147,74 @@ index 89e8bec..7ed546c 100644
                  logger.info('Start to execute cmd: ' + cmd);
                  const execLog = (0, child_process_1.execSync)(cmd);
                  logger.info('Exec log: ' + execLog.toString());
+diff --git a/node_modules/homecheck/lib/utils/common/FileUtils.js b/node_modules/homecheck/lib/utils/common/FileUtils.js
+--- a/node_modules/homecheck/lib/utils/common/FileUtils.js
++++ b/node_modules/homecheck/lib/utils/common/FileUtils.js
+@@ -124,4 +124,6 @@ class FileUtils {
+                 let readLineNo = 1;
++                const input = fs.createReadStream(filePath);
++                let stoppedEarly = false;
+                 let rl = (0, readline_1.createInterface)({
+-                    input: fs.createReadStream(filePath),
++                    input,
+                     crlfDelay: Infinity
+@@ -132,3 +134,5 @@ class FileUtils {
+                             lines.push(line);
++                            stoppedEarly = true;
+                             rl.close();
++                            input.destroy();
+                         }
+@@ -142,6 +146,14 @@ class FileUtils {
+                 rl.on('close', () => {
+-                    resolve(lines);
++                    if (stoppedEarly && !input.closed) {
++                        input.once('close', () => resolve(lines));
++                    }
++                    else {
++                        resolve(lines);
++                    }
+                 });
+                 rl.on('error', (err) => {
+                     reject(err);
+                 });
++                input.on('error', (err) => {
++                    reject(err);
++                });
+diff --git a/node_modules/homecheck/lib/utils/common/FileUtils.js b/node_modules/homecheck/lib/utils/common/FileUtils.js
+--- a/node_modules/homecheck/lib/utils/common/FileUtils.js
++++ b/node_modules/homecheck/lib/utils/common/FileUtils.js
+@@ -94,14 +94,24 @@ class FileUtils {
+         return __awaiter(this, void 0, void 0, function* () {
+-            let result = [];
+-            for (const filePath of fileList) {
+-                if (!(ignoreGlob === null || ignoreGlob === void 0 ? void 0 : ignoreGlob.matchGlob(filePath)) && fileGlob.matchGlob(filePath)) {
+-                    // 读取file文件内容首行，若为屏蔽行则跳过
+-                    const firstLineText = yield this.readLinesFromFile(filePath, 1);
+-                    if (firstLineText.includes(Disable_1.DisableText.FILE_DISABLE_TEXT)) {
+-                        continue;
++            const candidates = fileList.filter((filePath) => !(ignoreGlob === null || ignoreGlob === void 0 ? void 0 : ignoreGlob.matchGlob(filePath)) && fileGlob.matchGlob(filePath));
++            const accepted = new Array(candidates.length).fill(false);
++            const configuredConcurrency = Number(process.env.HOMECHECK_FILE_CONCURRENCY || 64);
++            const concurrency = Number.isInteger(configuredConcurrency) && configuredConcurrency > 0
++                ? configuredConcurrency
++                : 64;
++            let nextIndex = 0;
++            const worker = () => __awaiter(this, void 0, void 0, function* () {
++                while (true) {
++                    const index = nextIndex++;
++                    if (index >= candidates.length) {
++                        return;
++                    }
++                    const firstLineText = yield this.readLinesFromFile(candidates[index], 1);
++                    if (!firstLineText.includes(Disable_1.DisableText.FILE_DISABLE_TEXT)) {
++                        accepted[index] = true;
+                     }
+-                    result.push(filePath);
+                 }
+-            }
+-            return result;
++            });
++            const workers = Array.from({ length: Math.min(concurrency, candidates.length) }, () => worker());
++            yield Promise.all(workers);
++            return candidates.filter((_filePath, index) => accepted[index]);
+         });

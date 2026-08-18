@@ -4,12 +4,15 @@
     "**/*.ts"
   ],
   "ignore": [
+    "**/.git/**/*",
     "**/ohosTest/**/*",
     "**/test/**/*",
     "**/node_modules/**/*",
     "**/build/**/*",
     "**/hvigorfile/**/*",
     "**/oh_modules/**/*",
+    "**/coverage/**/*",
+    "**/report/**/*",
     "**/.preview/**/*"
   ],
   "rules": {},

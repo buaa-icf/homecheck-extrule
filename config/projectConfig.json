@@ -1,9 +1,8 @@
 {
   "projectName": "",
-  "projectPath": "..",
+  "projectPath": "...",
   "repos": [
-    "applications_settings",
-    "homecheck-extrule"
+  "feature-envy_refactor"
   ],
   "datasetDir": "../arkts-code-smell/dataset",
   "logPath": "./HomeCheck.log",
@@ -11,6 +10,7 @@
   "hmsSdkPath": "E:/DevEco Studio/sdk/default/hms/ets",
   "checkPath": "",
   "sdkVersion": 20,
+  "fileConcurrency": 64,
   "fix": "false",
   "npmPath": "",
   "npmInstallDir": "./",

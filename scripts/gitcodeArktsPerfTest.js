@@ -332,9 +332,12 @@ async function countEtsLinesWithCloc(repoPath) {
     '.',
     '--json',
     '--quiet',
-    '--include-lang=ArkTs',
-    // '--include-ext=ets',
-    // '--force-lang=TypeScript,ets',
+    // Filter paths before language analysis. --include-lang alone still makes
+    // CLOC walk/classify every file in large mixed-language repositories.
+    '--match-f=\\.(ets|ts)$',
+    // CLOC knows .ts as TypeScript; only the ArkTS-specific .ets extension
+    // needs an explicit mapping.
+    '--force-lang=ArkTs,ets',
     `--exclude-dir=${CLOC_EXCLUDE_DIRS}`,
   ], { cwd: repoPath });
   const start = output.indexOf('{');
@@ -480,6 +483,7 @@ async function runRepositoryScan(context) {
     npmCacheDir,
     timeoutMs,
     nodeMaxOldSpaceMB,
+    fileConcurrency,
     packagePath,
     arkCheckPath,
     perfEnabled,
@@ -544,6 +548,8 @@ async function runRepositoryScan(context) {
   const result = await executeCommand(
     'node',
     [
+      '--require',
+      path.join(__dirname, 'fsConcurrencyLimit.js'),
       runnerPath,
       `--projectConfigPath=${tempProjectConfigPath}`,
       `--configPath=${tempRuleConfigPath}`,
@@ -558,6 +564,7 @@ async function runRepositoryScan(context) {
         EXTRULES_PERF: shouldCollectPerf ? '1' : '0',
         ...(shouldCollectPerf ? { EXTRULES_PERF_TIMELINE_PATH: memoryTimelinePath } : {}),
         NODE_OPTIONS: buildNodeOptions(process.env.NODE_OPTIONS, nodeMaxOldSpaceMB),
+        HOMECHECK_FILE_CONCURRENCY: String(fileConcurrency),
         npm_config_cache: npmCacheDir,
         NPM_CONFIG_CACHE: npmCacheDir,
       },
@@ -663,7 +670,7 @@ function buildMarkdown(report) {
   lines.push('');
   lines.push('## 检测器性能（不含共享预处理）');
   lines.push('');
-  lines.push('| 仓库 | .ets 代码行数 | 异味类型 | 检测耗时（不含预处理）(s) | 告警对象数 | 告警指标数 | 检测吞吐 (行/s) | 检测吞吐 (万行/s) | ≥2万行/s |');
+  lines.push('| 仓库 | .ets/.ts 代码行数 | 异味类型 | 检测耗时（不含预处理）(s) | 告警对象数 | 告警指标数 | 检测吞吐 (行/s) | 检测吞吐 (万行/s) | ≥2万行/s |');
   lines.push('| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |');
   for (const repo of report.repositories) {
     for (const run of repo.runs) {
@@ -771,6 +778,7 @@ function printUsage() {
   console.log('  --cloneDepth=1                 git clone depth, use 0 for full clone');
   console.log('  --timeoutMs=<n>                Timeout for each repository run');
   console.log('  --nodeMaxOldSpaceMB=<n>        Child homecheck Node heap limit (default 8192)');
+  console.log('  --fileConcurrency=<n>          Maximum concurrently open async files (default 64)');
   console.log('  --dashboard=false              Disable live HTTP dashboard (final HTML is still written)');
   console.log('  --dashboardPort=<n>            Dashboard port, default 0 selects a free local port');
   console.log('  --perf=false                   Disable CLOC and performance collection (enabled by default)');
@@ -820,8 +828,10 @@ function toDashboardRepositoryRun(repoName, sharedRun, etsLines, timing = {}) {
 
 function snapshotDashboardState(state) {
   let current = state.current;
-  if (current && current.kind === 'scan') {
-    const memorySamples = readMemoryTimeline(current.memoryTimelinePath);
+  if (current && current.startedMs) {
+    const memorySamples = current.kind === 'scan'
+      ? readMemoryTimeline(current.memoryTimelinePath)
+      : [];
     current = {
       ...current,
       elapsedMs: Date.now() - current.startedMs,
@@ -889,6 +899,15 @@ async function main() {
 
   const baseProjectConfig = readJson(baseProjectConfigPath, {});
   const baseRuleConfig = readJson(baseRuleConfigPath, {});
+  const configuredFileConcurrency = args.fileConcurrency !== undefined
+    ? args.fileConcurrency
+    : baseProjectConfig.fileConcurrency;
+  const fileConcurrency = configuredFileConcurrency !== undefined
+    ? Number(configuredFileConcurrency)
+    : 64;
+  if (!Number.isInteger(fileConcurrency) || fileConcurrency <= 0) {
+    throw new Error(`fileConcurrency should be a positive integer, got: ${configuredFileConcurrency}`);
+  }
   const configuredArkCheckPath = typeof baseProjectConfig.arkCheckPath === 'string'
     ? baseProjectConfig.arkCheckPath.trim()
     : '';
@@ -1069,7 +1088,14 @@ async function main() {
           updateExisting,
           cloneDepth: args.cloneDepth || '1',
         });
+      dashboardState.current = {
+        kind: 'setup',
+        label: `统计代码行数 ${repo.name}`,
+        startedMs: Date.now(),
+      };
+      console.log('  [count] 正在统计 ArkTS/TypeScript 代码行数...');
       const etsLines = perfEnabled ? await countEtsLinesWithCloc(cloneResult.path) : 0;
+      console.log(`  [count] 完成，共 ${etsLines} 行 ArkTS/TypeScript`);
       const repoResult = {
         name: repo.name,
         url: repo.url,
@@ -1107,6 +1133,7 @@ async function main() {
           npmCacheDir,
           timeoutMs,
           nodeMaxOldSpaceMB,
+          fileConcurrency,
           packagePath,
           arkCheckPath,
           perfEnabled,
