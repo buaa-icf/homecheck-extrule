@@ -65,7 +65,8 @@ const RULE_ORDER = [
   RULES.switchStatement,
 ];
 
-const CLOC_EXCLUDE_DIRS = [
+const CLOC_EXCLUDE_DIR_NAMES = new Set([
+  '.git',
   'ohosTest',
   'test',
   'node_modules',
@@ -73,7 +74,7 @@ const CLOC_EXCLUDE_DIRS = [
   'hvigorfile',
   'oh_modules',
   '.preview',
-].join(',');
+]);
 
 function parseArgs(argv) {
   const args = {};
@@ -325,21 +326,65 @@ function resolveClocInvocation() {
   return { command: 'cloc', prefixArgs: [], source: 'system' };
 }
 
+async function collectArkTsFiles(repoPath, directoryConcurrency = 32) {
+  let pendingDirectories = [repoPath];
+  const files = [];
+
+  while (pendingDirectories.length > 0) {
+    const batch = pendingDirectories.splice(0, directoryConcurrency);
+    const entriesByDirectory = await Promise.all(batch.map(async (directory) => ({
+      directory,
+      entries: await fs.promises.readdir(directory, { withFileTypes: true }),
+    })));
+
+    for (const { directory, entries } of entriesByDirectory) {
+      for (const entry of entries) {
+        if (entry.isSymbolicLink()) {
+          continue;
+        }
+        const absolutePath = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          if (!CLOC_EXCLUDE_DIR_NAMES.has(entry.name)) {
+            pendingDirectories.push(absolutePath);
+          }
+        } else if (entry.isFile() && /\.(?:ets|ts)$/i.test(entry.name)) {
+          files.push(path.relative(repoPath, absolutePath).split(path.sep).join('/'));
+        }
+      }
+    }
+  }
+
+  files.sort();
+  return files;
+}
+
 async function countEtsLinesWithCloc(repoPath) {
   const clocInvocation = resolveClocInvocation();
-  const output = await runCommand(clocInvocation.command, [
-    ...clocInvocation.prefixArgs,
-    '.',
-    '--json',
-    '--quiet',
-    // Filter paths before language analysis. --include-lang alone still makes
-    // CLOC walk/classify every file in large mixed-language repositories.
-    '--match-f=\\.(ets|ts)$',
-    // CLOC knows .ts as TypeScript; only the ArkTS-specific .ets extension
-    // needs an explicit mapping.
-    '--force-lang=ArkTs,ets',
-    `--exclude-dir=${CLOC_EXCLUDE_DIRS}`,
-  ], { cwd: repoPath });
+  const arkTsFiles = await collectArkTsFiles(repoPath);
+  if (arkTsFiles.length === 0) {
+    return 0;
+  }
+
+  // Let Node enumerate large/complex directory trees. CLOC's Windows build
+  // can misparse nested directory output; --list-file makes it process only
+  // the already selected .ets/.ts files and avoids a second recursive walk.
+  const listDirectory = fs.mkdtempSync(path.join(path.dirname(repoPath), '.cloc-arkts-'));
+  const listPath = path.join(listDirectory, 'files.txt');
+  fs.writeFileSync(listPath, `${arkTsFiles.join('\n')}\n`, 'utf8');
+  let output;
+  try {
+    output = await runCommand(clocInvocation.command, [
+      ...clocInvocation.prefixArgs,
+      `--list-file=${listPath}`,
+      '--json',
+      '--quiet',
+      // CLOC knows .ts as TypeScript; only the ArkTS-specific .ets extension
+      // needs an explicit mapping.
+      '--force-lang=ArkTs,ets',
+    ], { cwd: repoPath });
+  } finally {
+    fs.rmSync(listDirectory, { recursive: true, force: true });
+  }
   const start = output.indexOf('{');
   const end = output.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) {
@@ -349,7 +394,29 @@ async function countEtsLinesWithCloc(repoPath) {
   return Number(parsed.SUM && parsed.SUM.code) || 0;
 }
 
-function buildMultiRuleConfig(baseConfig, rules, packagePath) {
+function scopeIgnorePatterns(patterns, repoPath) {
+  if (!repoPath || !Array.isArray(patterns)) {
+    return patterns;
+  }
+  const normalizedRoot = path.resolve(repoPath).split(path.sep).join('/').replace(/\/+$/, '');
+  return patterns.map((pattern) => {
+    const normalizedPattern = String(pattern).replace(/\\/g, '/').replace(/^\/+/, '');
+    return path.isAbsolute(pattern) ? pattern : `${normalizedRoot}/${normalizedPattern}`;
+  });
+}
+
+function scopeRuleConfigIgnores(config, repoPath) {
+  return {
+    ...config,
+    ...(Array.isArray(config.ignore) ? { ignore: scopeIgnorePatterns(config.ignore, repoPath) } : {}),
+    ...(Array.isArray(config.excluded) ? { excluded: scopeIgnorePatterns(config.excluded, repoPath) } : {}),
+    ...(Array.isArray(config.overrides)
+      ? { overrides: config.overrides.map((override) => scopeRuleConfigIgnores(override, repoPath)) }
+      : {}),
+  };
+}
+
+function buildMultiRuleConfig(baseConfig, rules, packagePath, repoPath) {
   const baseExtRuleSet = Array.isArray(baseConfig.extRuleSet)
     ? baseConfig.extRuleSet
     : [];
@@ -363,7 +430,7 @@ function buildMultiRuleConfig(baseConfig, rules, packagePath) {
     extRules[rule.ruleName] = 2;
   }
   return {
-    ...baseConfig,
+    ...scopeRuleConfigIgnores(baseConfig, repoPath),
     extRuleSet: [{
       ...baseRuleSet,
       packagePath: resolvedPackagePath,
@@ -527,7 +594,7 @@ async function runRepositoryScan(context) {
     tempProjectConfigPath,
     buildProjectConfig(baseProjectConfig, repo.name, repoPath, reportDir, logPath, resolvedArkCheckPath),
   );
-  writeJson(tempRuleConfigPath, buildMultiRuleConfig(baseRuleConfig, rules, resolvedPackagePath));
+  writeJson(tempRuleConfigPath, buildMultiRuleConfig(baseRuleConfig, rules, resolvedPackagePath, repoPath));
 
   removeIfExists(generatedIssuesPath);
   removeIfExists(fallbackIssuesPath);
@@ -1265,9 +1332,11 @@ module.exports = {
   buildMarkdown,
   buildMultiRuleConfig,
   buildNodeOptions,
+  collectArkTsFiles,
   computeThroughput,
   computeThroughputWan,
   countIssues,
+  countEtsLinesWithCloc,
   filterIssuesByRule,
   main,
   parseArgs,
@@ -1277,5 +1346,6 @@ module.exports = {
   readMemoryTimeline,
   resolveClocInvocation,
   runRepositoryScan,
+  scopeIgnorePatterns,
   snapshotDashboardState,
 };

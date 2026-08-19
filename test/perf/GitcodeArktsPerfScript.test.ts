@@ -4,6 +4,7 @@ const {
     buildNodeOptions,
     computeThroughput,
     computeThroughputWan,
+    collectArkTsFiles,
     countIssues,
     filterIssuesByRule,
     main,
@@ -11,6 +12,7 @@ const {
     parseRepos,
     parseRepoFilter,
     runRepositoryScan,
+    scopeIgnorePatterns,
     RULES,
 } = require('../../scripts/gitcodeArktsPerfTest.js');
 
@@ -70,6 +72,23 @@ describe('gitcodeArktsPerfTest helpers', () => {
         expect(computeThroughputWan(100000, 2000)).toBe(5);
     });
 
+    it('enumerates only .ets/.ts files and skips ignored directory trees', async () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'arkts-file-list-'));
+        fs.mkdirSync(path.join(root, 'Application', 'Entry Card'), { recursive: true });
+        fs.mkdirSync(path.join(root, 'node_modules', 'dependency'), { recursive: true });
+        fs.mkdirSync(path.join(root, 'test'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'Application', 'Entry Card', 'Page.ets'), 'let page = 1;\n');
+        fs.writeFileSync(path.join(root, 'Application', 'Entry Card', 'Model.ts'), 'let model = 1;\n');
+        fs.writeFileSync(path.join(root, 'Application', 'Entry Card', 'README.md'), '# ignored\n');
+        fs.writeFileSync(path.join(root, 'node_modules', 'dependency', 'index.ts'), 'let ignored = 1;\n');
+        fs.writeFileSync(path.join(root, 'test', 'Page.test.ets'), 'let ignored = 1;\n');
+
+        await expect(collectArkTsFiles(root)).resolves.toEqual([
+            'Application/Entry Card/Model.ts',
+            'Application/Entry Card/Page.ets',
+        ]);
+    });
+
     it('builds one rule config containing every selected smell rule', () => {
         const baseConfig = {
             files: ['**/*.ets'],
@@ -92,6 +111,14 @@ describe('gitcodeArktsPerfTest helpers', () => {
         });
         expect(config.files).toEqual(['**/*.ets']);
         expect(config.ignore).toEqual(['**/node_modules/**/*']);
+    });
+
+    it('scopes ignore globs to the repository instead of matching parent report directories', () => {
+        const repoPath = path.resolve('report/.perftest/repos/agc-demos');
+        const [scoped] = scopeIgnorePatterns(['**/report/**/*'], repoPath);
+        expect(scoped.replace(/\\/g, '/')).toBe(
+            `${repoPath.replace(/\\/g, '/')}/**/report/**/*`,
+        );
     });
 
     it('splits a combined issues report by rule while preserving file grouping', () => {

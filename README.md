@@ -107,8 +107,6 @@ npm pack
 
 该命令会把当前扩展规则项目打包为根目录下的 `extrulesproject-1.0.0.tgz`。只修改扫描仓库、数据集或配置文件时不需要重复执行。
 
-批量脚本内部仍会调用 HomeCheck 的 `lib/run.js` 完成每个仓库的实际扫描，但使用者无需手动执行 `node ./node_modules/homecheck/lib/run.js ...`。手动调用只适用于调试 HomeCheck 单项目原始输出，不包含多仓库调度、性能统计、F1 和可视化面板。
-
 ### 批量评测配置
 
 脚本固定读取仓库内的 `config/projectConfig.json` 和 `config/ruleConfig.json`，无需在命令中重复指定。规则包和 HomeCheck 路径也会按当前 `homecheck-extrule` 目录自动解析。
@@ -169,7 +167,7 @@ npm run perf:gitcode -- `
 - `projectConfig.json` 使用统一的 `repos` 选择仓库：`仓库名` 扫描 `projectPath/仓库名`，`仓库名=路径或Git地址` 使用显式目标
 - 启用 `datasetDir` 后，`repos` 中有数据集标注的仓库会在性能扫描后继续计算 F1；没有标注的仓库只生成性能结果
 - 每个仓库只启动一次 HomeCheck，`code-clone-fragment`、`feature-envy`、`long-method`、`switch-statement` 四种异味检测共享同一份 Scene 预处理
-- 性能统计前的 CLOC 只枚举 `.ets` 和 `.ts` 文件：`.ets` 按 ArkTs、`.ts` 按 TypeScript 解析；范围与 HomeCheck 一致，同时避免分析其他语言文件
+- 性能统计前由 Node 受控枚举 `.ets` 和 `.ts` 文件，再通过 CLOC 文件清单统计行数：`.ets` 按 ArkTs、`.ts` 按 TypeScript 解析；范围与 HomeCheck 一致，同时避免 CLOC 在大型复杂目录中递归失败
 - 运行中打开终端打印的 `Live dashboard` 地址可看实时面板；结束后结果保存在 `report/.perftest/gitcode_arkts_smell_perf/`：
   - `perfDashboard.html`：性能面板，浏览器直接打开
   - `perfReport.md`：性能汇总（检测耗时、吞吐、峰值内存）
