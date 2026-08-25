@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { buildDashboardHtml, startDashboardServer } = require('./perfDashboard');
@@ -287,13 +288,19 @@ async function cloneOrUpdateRepository(repo, reposRoot, options = {}) {
       cloneArgs.push(`--depth=${cloneDepth}`);
     }
     cloneArgs.push(repo.url, repoPath);
-    await runCommand('git', cloneArgs, { stdio: options.stdio || 'inherit' });
+    await runCommand('git', cloneArgs, {
+      stdio: options.stdio || 'inherit',
+      // Source analysis does not need binary LFS payloads. Avoid an apparently
+      // finished clone waiting silently in the Git LFS smudge filter.
+      env: { ...process.env, GIT_LFS_SKIP_SMUDGE: '1' },
+    });
     return { path: repoPath, durationMs: Date.now() - started, action: 'cloned' };
   }
 
   if (options.updateExisting && fs.existsSync(path.join(repoPath, '.git'))) {
     await runCommand('git', ['-C', repoPath, 'pull', '--ff-only'], {
       stdio: options.stdio || 'inherit',
+      env: { ...process.env, GIT_LFS_SKIP_SMUDGE: '1' },
     });
     return { path: repoPath, durationMs: Date.now() - started, action: 'updated' };
   }
@@ -368,30 +375,52 @@ async function countEtsLinesWithCloc(repoPath) {
   // Let Node enumerate large/complex directory trees. CLOC's Windows build
   // can misparse nested directory output; --list-file makes it process only
   // the already selected .ets/.ts files and avoids a second recursive walk.
-  const listDirectory = fs.mkdtempSync(path.join(path.dirname(repoPath), '.cloc-arkts-'));
-  const listPath = path.join(listDirectory, 'files.txt');
-  fs.writeFileSync(listPath, `${arkTsFiles.join('\n')}\n`, 'utf8');
-  let output;
+  // Keep staged paths short. The bundled Perl-based Windows cloc cannot open
+  // many valid repository paths once their absolute length approaches MAX_PATH.
+  const listDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'cloc-arkts-'));
+  // cloc-2.10.exe on Windows exhausts its internal file handles when one
+  // --list-file contains thousands of inputs. Process bounded batches and
+  // sum the exact same CLOC code-line totals.
+  const batchSize = 2000;
+  let totalCodeLines = 0;
   try {
-    output = await runCommand(clocInvocation.command, [
-      ...clocInvocation.prefixArgs,
-      `--list-file=${listPath}`,
-      '--json',
-      '--quiet',
-      // CLOC knows .ts as TypeScript; only the ArkTS-specific .ets extension
-      // needs an explicit mapping.
-      '--force-lang=ArkTs,ets',
-    ], { cwd: repoPath });
+    for (let offset = 0; offset < arkTsFiles.length; offset += batchSize) {
+      const batch = arkTsFiles.slice(offset, offset + batchSize);
+      const stageDirectory = path.join(listDirectory, 'stage');
+      fs.rmSync(stageDirectory, { recursive: true, force: true });
+      fs.mkdirSync(stageDirectory);
+      const stagedFiles = batch.map((relativePath, index) => {
+        const extension = path.extname(relativePath).toLowerCase() === '.ets' ? '.ets' : '.ts';
+        const stagedName = `${index}${extension}`;
+        fs.copyFileSync(path.join(repoPath, ...relativePath.split('/')), path.join(stageDirectory, stagedName));
+        return stagedName;
+      });
+      const listPath = path.join(listDirectory, `files-${offset / batchSize}.txt`);
+      fs.writeFileSync(listPath, `${stagedFiles.join('\n')}\n`, 'utf8');
+      const output = await runCommand(clocInvocation.command, [
+        ...clocInvocation.prefixArgs,
+        `--list-file=${listPath}`,
+        '--json',
+        '--quiet',
+        // HomeCheck scans every source file, including identical copies in
+        // different sample projects; keep the throughput denominator aligned.
+        '--skip-uniqueness',
+        // CLOC knows .ts as TypeScript; only the ArkTS-specific .ets extension
+        // needs an explicit mapping.
+        '--force-lang=ArkTs,ets',
+      ], { cwd: stageDirectory });
+      const start = output.indexOf('{');
+      const end = output.lastIndexOf('}');
+      if (start === -1 || end === -1 || end < start) {
+        throw new Error(`Failed to parse cloc JSON output for ${repoPath}`);
+      }
+      const parsed = JSON.parse(output.slice(start, end + 1));
+      totalCodeLines += Number(parsed.SUM && parsed.SUM.code) || 0;
+    }
   } finally {
     fs.rmSync(listDirectory, { recursive: true, force: true });
   }
-  const start = output.indexOf('{');
-  const end = output.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error(`Failed to parse cloc JSON output for ${repoPath}`);
-  }
-  const parsed = JSON.parse(output.slice(start, end + 1));
-  return Number(parsed.SUM && parsed.SUM.code) || 0;
+  return totalCodeLines;
 }
 
 function scopeIgnorePatterns(patterns, repoPath) {
@@ -941,7 +970,7 @@ async function main() {
     : path.join(projectRoot, 'config', 'ruleConfig.json');
   const packagePath = path.join(projectRoot, 'extrulesproject-1.0.0.tgz');
   const npmCacheDir = path.resolve(cwd, args.npmCacheDir || './report/.npm-cache');
-  const timeoutMs = args.timeoutMs ? Number(args.timeoutMs) : 30 * 60 * 1000;
+  const timeoutMs = args.timeoutMs ? Number(args.timeoutMs) : 60 * 60 * 1000;
   const nodeMaxOldSpaceMB = args.nodeMaxOldSpaceMB ? Number(args.nodeMaxOldSpaceMB) : 8192;
   const includeRules = args.includeRules ? new Set(args.includeRules.split(',').filter(Boolean)) : null;
   const updateExisting = args.updateExisting === 'true';

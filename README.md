@@ -35,8 +35,7 @@ projectConfig.json 示例：
     "model-evaluation-testsuite",
     "openharmony_tpc_samples",
     "ostest_integration_test",
-    "feature-envy=D:/ROG/Documents/harmonyos/feature-envy_refactor",
-    "my-repo=https://example.com/my-repo.git"
+    "feature-envy=D:/ROG/Documents/harmonyos/feature-envy_refactor"
   ],
   "datasetDir": "../arkts-code-smell/dataset",
   "logPath": "./HomeCheck.log",
@@ -189,7 +188,7 @@ npm run perf:gitcode -- `
 | `--updateExisting=true` | `false` | 对已有 Git 仓库执行快进更新 |
 | `--nodeMaxOldSpaceMB=<n>` | `8192` | HomeCheck 子进程最大堆内存（MB） |
 | `--fileConcurrency=<n>` | `1` | 覆盖异步文件操作并发上限；大仓库默认串行读取以降低文件句柄压力 |
-| `--timeoutMs=<n>` | `1800000` | 单仓库超时时间（毫秒） |
+| `--timeoutMs=<n>` | `3600000` | 单仓库超时时间（毫秒，默认 1 小时） |
 
 `--baseProjectConfig`、`--baseRuleConfig` 和 `--runnerPath` 仅作为高级覆盖参数保留，普通运行无需填写。SDK 路径仍需在 `config/projectConfig.json` 中按本机 DevEco Studio 安装位置填写绝对路径。
 `projectConfig.json` 中的 `reportDir`、`logPath`、`arkCheckPath` 也会生效：非空时使用配置值，相对路径以运行命令的目录为基准；留空时脚本才自动生成报告/日志位置或定位当前项目的 `node_modules/homecheck`。批量扫描时会在 `reportDir` 下按仓库名建立子目录，避免多个仓库互相覆盖。

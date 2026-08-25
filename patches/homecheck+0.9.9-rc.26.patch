@@ -23,6 +23,24 @@ index 558ab0e..1d301e2 100644
 +Object.defineProperty(exports, "BaseChecker", { enumerable: true, get: function () { return BaseChecker_1.BaseChecker; } });
 +Object.defineProperty(exports, "AdviceChecker", { enumerable: true, get: function () { return BaseChecker_1.AdviceChecker; } });
 +Object.defineProperty(exports, "isAdviceChecker", { enumerable: true, get: function () { return BaseChecker_1.isAdviceChecker; } });
+diff --git a/node_modules/homecheck/lib/Main.js b/node_modules/homecheck/lib/Main.js
+index 4807880..80ea0e9 100644
+--- a/node_modules/homecheck/lib/Main.js
++++ b/node_modules/homecheck/lib/Main.js
+@@ -69,10 +69,13 @@ function start(checkEntry) {
+             return false;
+         }
+         // 开始检查
++        console.log('  [homecheck] Scene 构建完成，开始执行规则...');
+         yield checkEntry.runAll();
+         // 后处理
++        console.log('  [homecheck] 规则执行完成，正在生成报告...');
+         yield (0, AfterCheck_1.processAfterCheck)(checkEntry);
+         logger.info('Checking completed.');
++        console.log('  [homecheck] 检测完成。');
+         return true;
+     });
+ }
 diff --git a/node_modules/homecheck/lib/model/Defects.d.ts b/node_modules/homecheck/lib/model/Defects.d.ts
 index 32f017f..f85a84d 100644
 --- a/node_modules/homecheck/lib/model/Defects.d.ts
@@ -60,10 +78,14 @@ index e445ac3..29c1222 100644
          this.mergeKey = filePath + '%' + this.fixKey + '%' + this.description;
          this.ruleDocPath = ruleDocPath.replace('.md', exports.defectConf.defectSuffix);
 diff --git a/node_modules/homecheck/lib/utils/common/CheckEntry.js b/node_modules/homecheck/lib/utils/common/CheckEntry.js
-index 38443b7..3843f63 100644
+index 38443b7..bdcf2c8 100644
 --- a/node_modules/homecheck/lib/utils/common/CheckEntry.js
 +++ b/node_modules/homecheck/lib/utils/common/CheckEntry.js
-@@ -285,12 +285,17 @@ function buildScene(fileList, checkEntry) {
+@@ -282,15 +282,21 @@ function buildScene(fileList, checkEntry) {
+         sceneConfig.buildFromProjectFiles(projectName, projectPath, fileList, sdkList);
+         logger.info('Build sceneConfig completed.');
+         // 构建Scene信息
++        console.log(`  [homecheck] 扫描 ${fileList.length} 个文件，正在构建 Scene...`);
          checkEntry.scene = new arkanalyzer_1.Scene();
          checkEntry.scene.buildSceneFromFiles(sceneConfig);
          logger.info('Build scene completed.');
@@ -84,15 +106,14 @@ index 38443b7..3843f63 100644
      return true;
  }
 diff --git a/node_modules/homecheck/lib/utils/common/ConfigUtils.js b/node_modules/homecheck/lib/utils/common/ConfigUtils.js
-index 5879002..acbb816 100644
+index 5879002..a8b7dce 100644
 --- a/node_modules/homecheck/lib/utils/common/ConfigUtils.js
 +++ b/node_modules/homecheck/lib/utils/common/ConfigUtils.js
-@@ -194,7 +194,7 @@ class ConfigUtils {
+@@ -194,6 +194,7 @@ class ConfigUtils {
                  return;
              }
              try {
--                const cmd = `${projectConfig.npmPath} install --no-save --prefix "${projectConfig.npmInstallDir}" "${ruleSet.packagePath}"`;
-+                const cmd = `${projectConfig.npmPath} install --force --no-save --prefix "${projectConfig.npmInstallDir}" "${ruleSet.packagePath}"`;
++                console.log('  [homecheck] 正在准备扩展规则...');
+                 const cmd = `${projectConfig.npmPath} install --no-save --prefix "${projectConfig.npmInstallDir}" "${ruleSet.packagePath}"`;
                  logger.info('Start to execute cmd: ' + cmd);
                  const execLog = (0, child_process_1.execSync)(cmd);
-                 logger.info('Exec log: ' + execLog.toString());

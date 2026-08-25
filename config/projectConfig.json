@@ -2,15 +2,9 @@
   "projectName": "",
   "projectPath": "..",
   "repos": [
-    "agc-template-market-harmonyos-demos",
-    "applications_photos",
-    "applications_settings",
-    "cases",
-    "model-evaluation-testsuite",
-    "openharmony_tpc_samples",
-    "ostest_integration_test"
+    "aws-sdk-js-v3=D:/ROG/Documents/harmonyos/二阶段上传文件留存/aws-sdk-js-v3"
   ],
-  "datasetDir": "../arkts-code-smell/dataset",
+  "datasetDir": "",
   "logPath": "",
   "ohosSdkPath": "E:/DevEco Studio/sdk/default/openharmony/ets",
   "hmsSdkPath": "E:/DevEco Studio/sdk/default/hms/ets",
