@@ -1,0 +1,98 @@
+diff --git a/node_modules/homecheck/lib/Index.d.ts b/node_modules/homecheck/lib/Index.d.ts
+index 2c13fda..bf09848 100644
+--- a/node_modules/homecheck/lib/Index.d.ts
++++ b/node_modules/homecheck/lib/Index.d.ts
+@@ -1,5 +1,5 @@
+ export { start } from './Main';
+-export { BaseMetaData, BaseChecker } from './checker/BaseChecker';
++export { BaseMetaData, BaseChecker, AdviceChecker, isAdviceChecker } from './checker/BaseChecker';
+ export * from './matcher/Matchers';
+ export { CheckerStorage } from './utils/common/CheckerStorage';
+ export { Rule } from './model/Rule';
+diff --git a/node_modules/homecheck/lib/Index.js b/node_modules/homecheck/lib/Index.js
+index 558ab0e..1d301e2 100644
+--- a/node_modules/homecheck/lib/Index.js
++++ b/node_modules/homecheck/lib/Index.js
+@@ -84,3 +84,9 @@ exports.arkanalyzer = __importStar(require("arkanalyzer"));
+ var toolEntry_1 = require("./tools/toolEntry");
+ Object.defineProperty(exports, "runTool", { enumerable: true, get: function () { return toolEntry_1.runTool; } });
+ Object.defineProperty(exports, "Tools", { enumerable: true, get: function () { return toolEntry_1.Tools; } });
++// checkers (patched)
++var BaseChecker_1 = require("./checker/BaseChecker");
++Object.defineProperty(exports, "BaseMetaData", { enumerable: true, get: function () { return BaseChecker_1.BaseMetaData; } });
++Object.defineProperty(exports, "BaseChecker", { enumerable: true, get: function () { return BaseChecker_1.BaseChecker; } });
++Object.defineProperty(exports, "AdviceChecker", { enumerable: true, get: function () { return BaseChecker_1.AdviceChecker; } });
++Object.defineProperty(exports, "isAdviceChecker", { enumerable: true, get: function () { return BaseChecker_1.isAdviceChecker; } });
+diff --git a/node_modules/homecheck/lib/model/Defects.d.ts b/node_modules/homecheck/lib/model/Defects.d.ts
+index 32f017f..f85a84d 100644
+--- a/node_modules/homecheck/lib/model/Defects.d.ts
++++ b/node_modules/homecheck/lib/model/Defects.d.ts
+@@ -18,8 +18,9 @@ export declare class Defects {
+     fixKey: string;
+     showIgnoreIcon: boolean;
+     engineName: string;
++    methodName: string;
+     fix?: FixData;
+-    constructor(reportLine: number, reportColumn: number, endColumn: number, description: string, severity: number, ruleId: string, filePath: string, ruleDocPath: string, disabled: boolean, checked: boolean, fixable: boolean, showIgnoreIcon?: boolean);
++    constructor(reportLine: number, reportColumn: number, endColumn: number, description: string, severity: number, ruleId: string, filePath: string, ruleDocPath: string, disabled: boolean, checked: boolean, fixable: boolean, methodName?: string, showIgnoreIcon?: boolean);
+ }
+ export declare class IssueReport {
+     defect: Defects;
+diff --git a/node_modules/homecheck/lib/model/Defects.js b/node_modules/homecheck/lib/model/Defects.js
+index e445ac3..29c1222 100644
+--- a/node_modules/homecheck/lib/model/Defects.js
++++ b/node_modules/homecheck/lib/model/Defects.js
+@@ -6,7 +6,7 @@ exports.defectConf = {
+     defectSuffix: ''
+ };
+ class Defects {
+-    constructor(reportLine, reportColumn, endColumn, description, severity, ruleId, filePath, ruleDocPath, disabled, checked, fixable, showIgnoreIcon = true) {
++    constructor(reportLine, reportColumn, endColumn, description, severity, ruleId, filePath, ruleDocPath, disabled, checked, fixable, methodName = "", showIgnoreIcon = true) {
+         this.description = '';
+         this.severity = -1; // 0:info, 1:warning, 2:error
+         this.ruleId = '@perforce/<checker-name>';
+@@ -23,6 +23,7 @@ class Defects {
+         this.description = description;
+         this.severity = severity;
+         this.ruleId = ruleId;
++        this.methodName = methodName;
+         this.fixKey = this.reportLine + '%' + this.reportColumn + '%' + endColumn + '%' + this.ruleId;
+         this.mergeKey = filePath + '%' + this.fixKey + '%' + this.description;
+         this.ruleDocPath = ruleDocPath.replace('.md', exports.defectConf.defectSuffix);
+diff --git a/node_modules/homecheck/lib/utils/common/CheckEntry.js b/node_modules/homecheck/lib/utils/common/CheckEntry.js
+index 38443b7..3843f63 100644
+--- a/node_modules/homecheck/lib/utils/common/CheckEntry.js
++++ b/node_modules/homecheck/lib/utils/common/CheckEntry.js
+@@ -285,12 +285,17 @@ function buildScene(fileList, checkEntry) {
+         checkEntry.scene = new arkanalyzer_1.Scene();
+         checkEntry.scene.buildSceneFromFiles(sceneConfig);
+         logger.info('Build scene completed.');
++    }
++    catch (error) {
++        logger.error(`Build scene error ${error}`);
++        return false;
++    }
++    try {
+         checkEntry.scene.inferTypes();
+         logger.info('Infer types completed.');
+     }
+     catch (error) {
+-        logger.error(`Build scene or infer types error ${error}`);
+-        return false;
++        logger.error(`Infer types error, continue with partial scene ${error}`);
+     }
+     return true;
+ }
+diff --git a/node_modules/homecheck/lib/utils/common/ConfigUtils.js b/node_modules/homecheck/lib/utils/common/ConfigUtils.js
+index 5879002..acbb816 100644
+--- a/node_modules/homecheck/lib/utils/common/ConfigUtils.js
++++ b/node_modules/homecheck/lib/utils/common/ConfigUtils.js
+@@ -194,7 +194,7 @@ class ConfigUtils {
+                 return;
+             }
+             try {
+-                const cmd = `${projectConfig.npmPath} install --no-save --prefix "${projectConfig.npmInstallDir}" "${ruleSet.packagePath}"`;
++                const cmd = `${projectConfig.npmPath} install --force --no-save --prefix "${projectConfig.npmInstallDir}" "${ruleSet.packagePath}"`;
+                 logger.info('Start to execute cmd: ' + cmd);
+                 const execLog = (0, child_process_1.execSync)(cmd);
+                 logger.info('Exec log: ' + execLog.toString());

@@ -78,7 +78,9 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
     protected readonly defaultOptions = DEFAULT_OPTIONS;
 
     private methodMatcher: MethodMatcher = {
-        matcherType: MatcherTypes.METHOD
+        matcherType: MatcherTypes.METHOD,
+        // 直接匹配当前派发的方法，避免旧兼容分支产生 N×N 方法回调。
+        match: () => true
     };
 
     /**
@@ -98,6 +100,9 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
      */
     public check = (targetMtd: ArkMethod) => {
         PerfReporter.time(this.constructor.name, 'check', () => {
+            if (!this.shouldCheckMethod(targetMtd)) {
+                return;
+            }
             const body = targetMtd.getBody();
             if (!body) {
                 return;
@@ -105,10 +110,28 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
 
             const stmts = body.getCfg().getStmts();
             const reported = new Set<string>();
+            const code = targetMtd.getCode();
 
-            this.detectSwitchesFromCfg(targetMtd, stmts, reported);
-            this.detectFromSource(targetMtd, reported);
-            this.detectIfElseChainsFromSource(targetMtd);
+            // ArkAnalyzer may fail to reconstruct source for an otherwise valid CFG.
+            // Preserve CFG switch detection in that case instead of dropping findings.
+            if (!code) {
+                this.detectSwitchesFromCfg(targetMtd, stmts, reported);
+                return;
+            }
+
+            const mayContainSwitch = code.includes("switch");
+            const mayContainIf = code.includes("if");
+            if (!mayContainSwitch && !mayContainIf) {
+                return;
+            }
+
+            if (mayContainSwitch) {
+                this.detectSwitchesFromCfg(targetMtd, stmts, reported);
+                this.detectFromSource(targetMtd, code, reported);
+            }
+            if (mayContainIf) {
+                this.detectIfElseChainsFromSource(targetMtd, code);
+            }
         });
     }
 
@@ -155,12 +178,7 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
      * Fallback scan over raw source to catch switches that CFG misses.
      * De-duplicates with the `reported` key set.
      */
-    private detectFromSource(method: ArkMethod, reported: Set<string>): void {
-        const code = method.getCode();
-        if (!code) {
-            return;
-        }
-
+    private detectFromSource(method: ArkMethod, code: string, reported: Set<string>): void {
         const lines = code.split(/\r?\n/);
         for (const block of collectSourceSwitchBlocks(lines)) {
             const caseCount = countCases(block.text);
@@ -192,12 +210,7 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
      * This path deliberately avoids CFG reconstruction because ArkAnalyzer expands
      * else-if chains into overlapping ArkIfStmt nodes.
      */
-    private detectIfElseChainsFromSource(method: ArkMethod): void {
-        const code = method.getCode();
-        if (!code) {
-            return;
-        }
-
+    private detectIfElseChainsFromSource(method: ArkMethod, code: string): void {
         const conditionalTokens = scanConditionalTokens(code);
         const threshold = this.getCaseThreshold();
 

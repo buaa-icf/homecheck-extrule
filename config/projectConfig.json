@@ -16,7 +16,7 @@
   "hmsSdkPath": "E:/DevEco Studio/sdk/default/hms/ets",
   "checkPath": "",
   "sdkVersion": 20,
-  "fileConcurrency": 64,
+  "fileConcurrency": 1,
   "fix": "false",
   "npmPath": "",
   "npmInstallDir": "./",

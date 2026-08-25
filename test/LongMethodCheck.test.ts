@@ -468,6 +468,7 @@ describe('LongMethodCheck 元数据和注册', () => {
         expect(Array.isArray(matchers)).toBe(true);
         expect(matchers.length).toBe(1);
         expect(matchers[0].matcher).toBeDefined();
+        expect(matchers[0].matcher?.match).toBeDefined();
         expect(matchers[0].callback).toBeDefined();
     });
 });
@@ -477,6 +478,27 @@ describe('LongMethodCheck 元数据和注册', () => {
 // ============================================================
 
 describe('多方法累积告警', () => {
+    test('同一个方法对象被重复派发时只检测一次', () => {
+        const checker = createChecker();
+        const method = createMockMethod({ name: 'duplicatedMethod', stmtCount: 60 });
+
+        (checker as any).check(method);
+        (checker as any).check(method);
+
+        expect(checker.issues.length).toBe(1);
+    });
+
+    test('新一轮 beforeCheck 后允许再次检测同一个方法对象', () => {
+        const checker = createChecker();
+        const method = createMockMethod({ name: 'nextRunMethod', stmtCount: 60 });
+
+        (checker as any).check(method);
+        checker.beforeCheck();
+        (checker as any).check(method);
+
+        expect(checker.issues.length).toBe(1);
+    });
+
     test('多个方法超出阈值应累积多个 issue', () => {
         const checker = createChecker();
 

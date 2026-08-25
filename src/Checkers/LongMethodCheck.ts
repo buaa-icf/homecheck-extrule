@@ -69,7 +69,9 @@ export class LongMethodCheck extends BaseRuleChecker<LongMethodRuleOptions> {
 
     // 匹配所有方法
     private methodMatcher: MethodMatcher = {
-        matcherType: MatcherTypes.METHOD
+        matcherType: MatcherTypes.METHOD,
+        // 避免 File2Check 的旧 matcher 兼容分支对每个方法再次扫描全文件。
+        match: () => true
     };
 
     public registerMatchers(): MatcherCallback[] {
@@ -82,6 +84,9 @@ export class LongMethodCheck extends BaseRuleChecker<LongMethodRuleOptions> {
 
     public check = (targetMtd: ArkMethod) => {
         PerfReporter.time(this.constructor.name, 'check', () => {
+            if (!this.shouldCheckMethod(targetMtd)) {
+                return;
+            }
             const codeLineCount = this.countMethodCodeLines(targetMtd);
 
             if (isArkUiMethod(targetMtd)) {

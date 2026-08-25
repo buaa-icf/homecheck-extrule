@@ -845,7 +845,7 @@ function printUsage() {
   console.log('  --cloneDepth=1                 git clone depth, use 0 for full clone');
   console.log('  --timeoutMs=<n>                Timeout for each repository run');
   console.log('  --nodeMaxOldSpaceMB=<n>        Child homecheck Node heap limit (default 8192)');
-  console.log('  --fileConcurrency=<n>          Maximum concurrently open async files (default 64)');
+  console.log('  --fileConcurrency=<n>          Maximum concurrently open async files (default 1)');
   console.log('  --dashboard=false              Disable live HTTP dashboard (final HTML is still written)');
   console.log('  --dashboardPort=<n>            Dashboard port, default 0 selects a free local port');
   console.log('  --perf=false                   Disable CLOC and performance collection (enabled by default)');
@@ -971,7 +971,7 @@ async function main() {
     : baseProjectConfig.fileConcurrency;
   const fileConcurrency = configuredFileConcurrency !== undefined
     ? Number(configuredFileConcurrency)
-    : 64;
+    : 1;
   if (!Number.isInteger(fileConcurrency) || fileConcurrency <= 0) {
     throw new Error(`fileConcurrency should be a positive integer, got: ${configuredFileConcurrency}`);
   }

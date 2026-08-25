@@ -1,7 +1,9 @@
 diff --git a/node_modules/arkanalyzer/lib/utils/logger.js b/node_modules/arkanalyzer/lib/utils/logger.js
+index acf3412..4770215 100644
 --- a/node_modules/arkanalyzer/lib/utils/logger.js
 +++ b/node_modules/arkanalyzer/lib/utils/logger.js
-@@ -44,6 +44,9 @@ class ConsoleLogger {
+@@ -44,7 +44,10 @@ class ConsoleLogger {
+         (0, log4js_1.configure)({
              appenders: {
                  file: {
 -                    type: 'fileSync',

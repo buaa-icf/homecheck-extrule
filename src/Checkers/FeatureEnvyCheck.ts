@@ -53,7 +53,10 @@ export class FeatureEnvyCheck extends BaseRuleChecker<FeatureEnvyRuleOptions> {
 
     // Match every method.
     private methodMatcher: MethodMatcher = {
-        matcherType: MatcherTypes.METHOD
+        matcherType: MatcherTypes.METHOD,
+        // HomeCheck File2Check 已经逐个 METHOD 派发；提供 match 可走新版
+        // 直接回调通道，避免旧兼容分支再次全文件扫描形成 N×N 回调。
+        match: () => true
     };
 
     /**
@@ -68,6 +71,9 @@ export class FeatureEnvyCheck extends BaseRuleChecker<FeatureEnvyRuleOptions> {
      */
     public check = (targetMtd: ArkMethod) => {
         PerfReporter.time(this.constructor.name, 'check', () => {
+            if (!this.shouldCheckMethod(targetMtd)) {
+                return;
+            }
             const methodName = targetMtd.getName() ?? "";
             if (shouldSkipMethod(methodName) || isArkUiMethod(targetMtd)) {
                 return;

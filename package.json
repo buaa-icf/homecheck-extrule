@@ -21,10 +21,10 @@
     ],
     "devDependencies": {
         "@types/jest": "^30.0.0",
-        "arkanalyzer": "^1.0.19",
+        "arkanalyzer": "1.0.92",
         "chart.js": "^4.5.1",
         "graceful-fs": "^4.2.11",
-        "homecheck": "^0.9.9",
+        "homecheck": "0.9.9-rc.26",
         "jest": "^30.2.0",
         "patch-package": "^8.0.0",
         "ts-jest": "^29.4.6",

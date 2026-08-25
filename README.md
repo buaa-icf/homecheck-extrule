@@ -126,7 +126,7 @@ npm pack
 | `hmsSdkPath` | DevEco SDK 的绝对路径 | HMS ETS SDK 目录，必须按本机 DevEco Studio 安装位置设置 |
 | `checkPath` | `""` | 可选的“指定检查文件列表”配置文件路径，不是源码目录；留空表示按 `ruleConfig.json` 的 `files/ignore` 扫描 |
 | `sdkVersion` | `20` | HomeCheck 构建分析场景时使用的 SDK API 版本，应与待测工程兼容 |
-| `fileConcurrency` | `64` | HomeCheck 子进程异步文件操作的并发上限；流式打开另由 `graceful-fs` 在 `EMFILE` 时排队重试 |
+| `fileConcurrency` | `1` | HomeCheck 子进程异步文件操作的并发上限；默认串行读取，流式打开另由 `graceful-fs` 在 `EMFILE` 时排队重试 |
 | `fix` | `"false"` | 是否启用规则自动修复；本项目的性能/F1 评测建议保持关闭 |
 | `npmPath` | `""` | npm 可执行程序；留空时 HomeCheck 使用系统 PATH 中的 `npm` |
 | `npmInstallDir` | `"./"` | HomeCheck 安装扩展规则包时使用的 npm 目录，一般保持默认 |
@@ -188,7 +188,7 @@ npm run perf:gitcode -- `
 | `--dashboardPort=<n>` | 自动选择 | 固定实时面板端口，例如 `3000` |
 | `--updateExisting=true` | `false` | 对已有 Git 仓库执行快进更新 |
 | `--nodeMaxOldSpaceMB=<n>` | `8192` | HomeCheck 子进程最大堆内存（MB） |
-| `--fileConcurrency=<n>` | `64` | 覆盖异步文件操作并发上限；建议从 32、64、128 中实测 |
+| `--fileConcurrency=<n>` | `1` | 覆盖异步文件操作并发上限；大仓库默认串行读取以降低文件句柄压力 |
 | `--timeoutMs=<n>` | `1800000` | 单仓库超时时间（毫秒） |
 
 `--baseProjectConfig`、`--baseRuleConfig` 和 `--runnerPath` 仅作为高级覆盖参数保留，普通运行无需填写。SDK 路径仍需在 `config/projectConfig.json` 中按本机 DevEco Studio 安装位置填写绝对路径。

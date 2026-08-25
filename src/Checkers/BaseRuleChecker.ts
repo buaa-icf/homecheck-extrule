@@ -45,6 +45,7 @@ export abstract class BaseRuleChecker<TOptions extends object> implements BaseCh
 
     private _resolvedOptions: TOptions | null = null;
     private _optionsInitialized = false;
+    private checkedMethodObjects = new WeakSet<object>();
 
     /**
      * 每轮检测开始时重置状态并解析配置。
@@ -52,6 +53,7 @@ export abstract class BaseRuleChecker<TOptions extends object> implements BaseCh
     public beforeCheck(): void {
         PerfReporter.time(this.constructor.name, 'beforeCheck', () => {
             this.issues = [];
+            this.checkedMethodObjects = new WeakSet<object>();
             this._resolvedOptions = parseRuleOptions(this.rule, this.optionSchema, this.defaultOptions);
             this._optionsInitialized = true;
         });
@@ -66,6 +68,18 @@ export abstract class BaseRuleChecker<TOptions extends object> implements BaseCh
             this._optionsInitialized = true;
         }
         return this._resolvedOptions!;
+    }
+
+    /**
+     * HomeCheck 新旧 matcher 通道可能把同一个 ArkMethod 对象重复派发。
+     * 保留 METHOD Matcher 的筛选语义，只让每轮检测中的同一对象进入规则一次。
+     */
+    protected shouldCheckMethod(method: object): boolean {
+        if (this.checkedMethodObjects.has(method)) {
+            return false;
+        }
+        this.checkedMethodObjects.add(method);
+        return true;
     }
 
     /**

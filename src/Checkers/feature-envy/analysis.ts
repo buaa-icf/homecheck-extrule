@@ -47,7 +47,7 @@ type AssignStmtLike = Stmt & {
 type TypeLike = {
     getClassSignature?: () => { getClassName?: () => string };
     getName?: () => string;
-    getTypeString?: () => string;
+    toString?: () => string;
 } | null | undefined;
 
 type InvokeLike = Exclude<ReturnType<typeof CheckerUtils.getInvokeExprFromStmt>, null | undefined> & {};
@@ -81,7 +81,7 @@ function getClassNameFromType(type: TypeLike): string {
         return unclearName;
     }
 
-    return type.getTypeString?.() ?? "";
+    return type.toString?.() ?? "";
 }
 
 function splitTopLevelTypeNames(typeName: string): string[] {

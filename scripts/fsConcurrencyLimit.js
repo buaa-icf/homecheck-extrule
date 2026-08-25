@@ -4,8 +4,8 @@
 const fs = require('node:fs');
 const gracefulFs = require('graceful-fs');
 
-const configuredLimit = Number(process.env.HOMECHECK_FILE_CONCURRENCY || 64);
-const limit = Number.isInteger(configuredLimit) && configuredLimit > 0 ? configuredLimit : 64;
+const configuredLimit = Number(process.env.HOMECHECK_FILE_CONCURRENCY || 1);
+const limit = Number.isInteger(configuredLimit) && configuredLimit > 0 ? configuredLimit : 1;
 
 // Queue and retry EMFILE/ENFILE instead of replacing low-level descriptor lifecycle.
 gracefulFs.gracefulify(fs);
