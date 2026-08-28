@@ -37,11 +37,11 @@ projectConfig.json 示例：
     "ostest_integration_test",
     "feature-envy=D:/ROG/Documents/harmonyos/feature-envy_refactor"
   ],
+  "checkFiles": [],
   "datasetDir": "../arkts-code-smell/dataset",
   "logPath": "./HomeCheck.log",
   "ohosSdkPath": "E:/DevEco Studio/sdk/default/openharmony/ets",
   "hmsSdkPath": "E:/DevEco Studio/sdk/default/hms/ets",
-  "checkPath": "",
   "sdkVersion": 20,
   "fix": "false",
   "npmPath": "",
@@ -127,11 +127,11 @@ npm pack
 | `projectName` | `""` | 单项目运行时的项目名；批量评测时自动替换为当前仓库名，可以留空 |
 | `projectPath` | `".."` | 批量评测的仓库根目录。`repos` 中只有名称的条目从该目录下查找，例如 `../cases`；命令行 `--reposRoot` 可覆盖 |
 | `repos` | `["cases", "custom=D:/projects/custom", "my-repo=https://example.com/my-repo.git"]` | 统一的仓库列表。`名称` 使用 `projectPath/名称`；`名称=路径或Git地址` 使用显式目标 |
+| `checkFiles` | `["src/main/ets/Page.ets", "src/main/ets/Model.ts"]` | 可选；单仓库模式下只扫描这些仓库内相对路径。命令行 `--files=` 可覆盖 |
 | `datasetDir` | `"../arkts-code-smell/dataset"` | 数据集的 `dataset` 目录，内部应直接包含 `positive` 和 `negative`。非空时运行 F1；设为 `""` 时只统计性能与告警数量 |
 | `logPath` | `"./HomeCheck.log"` | HomeCheck 日志文件路径。留空时写到当前仓库的自动报告目录；批量扫描时建议留空，避免多个仓库共用一个日志文件 |
 | `ohosSdkPath` | DevEco SDK 的绝对路径 | OpenHarmony ETS SDK 目录，必须按本机 DevEco Studio 安装位置设置 |
 | `hmsSdkPath` | DevEco SDK 的绝对路径 | HMS ETS SDK 目录，必须按本机 DevEco Studio 安装位置设置 |
-| `checkPath` | `""` | 可选的“指定检查文件列表”配置文件路径，不是源码目录；留空表示按 `ruleConfig.json` 的 `files/ignore` 扫描 |
 | `sdkVersion` | `20` | HomeCheck 构建分析场景时使用的 SDK API 版本，应与待测工程兼容 |
 | `fileConcurrency` | `1` | HomeCheck 子进程异步文件操作的并发上限；默认串行读取，流式打开另由 `graceful-fs` 在 `EMFILE` 时排队重试 |
 | `fix` | `"false"` | 是否启用规则自动修复；本项目的性能/F1 评测建议保持关闭 |
@@ -191,6 +191,7 @@ npm run perf:gitcode -- `
 | `--datasetDir=<path>` | `projectConfig.datasetDir` | 覆盖 F1 标签数据集目录；配置为空时不运行 F1 |
 | `--outputDir=<path>` | `report/.perftest/gitcode_arkts_smell_perf` | JSON、Markdown 和面板输出目录 |
 | `--includeRules=a,b` | 四条规则 | 只启用指定异味，可用值为 `code-clone-fragment`、`feature-envy`、`long-method`、`switch-statement` |
+| `--files=a.ets,b.ts` | `projectConfig.checkFiles` | 单仓库模式下只扫描指定的仓库内相对路径；命令行覆盖配置文件 |
 | `--dashboard=false` | `true` | 关闭实时 HTTP 面板；最终 HTML 仍会生成 |
 | `--dashboardPort=<n>` | 自动选择 | 固定实时面板端口，例如 `3000` |
 | `--updateExisting=true` | `false` | 对已有 Git 仓库执行快进更新 |

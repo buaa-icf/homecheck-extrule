@@ -28,6 +28,10 @@ describe('gitcodeArktsPerfTest helpers', () => {
             '.\\src\\main\\ets\\Page.ets, src/main/ets/Model.ts',
         )).toEqual(['src/main/ets/Page.ets', 'src/main/ets/Model.ts']);
         expect(parseFileSelectors(undefined)).toEqual([]);
+        expect(parseFileSelectors([
+            'src/main/ets/Page.ets',
+            'src/main/ets/Model.ts',
+        ])).toEqual(['src/main/ets/Page.ets', 'src/main/ets/Model.ts']);
     });
 
     it('validates selected paths inside the repository', () => {

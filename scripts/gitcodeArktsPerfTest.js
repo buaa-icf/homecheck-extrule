@@ -94,7 +94,12 @@ function parseArgs(argv) {
 }
 
 function parseFileSelectors(value) {
-  return (typeof value === 'string' ? value.split(',') : [])
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(',')
+      : [];
+  return values
     .map((item) => item.trim().replace(/\\/g, '/').replace(/^\.\//, ''))
     .filter(Boolean);
 }
@@ -1006,7 +1011,6 @@ function snapshotDashboardState(state) {
 async function main() {
   const rawArgs = process.argv.slice(2);
   const args = parseArgs(rawArgs);
-  const fileSelectors = parseFileSelectors(args.files);
   if (args.help === 'true') {
     printUsage();
     return 0;
@@ -1051,6 +1055,10 @@ async function main() {
 
   const baseProjectConfig = readJson(baseProjectConfigPath, {});
   const baseRuleConfig = readJson(baseRuleConfigPath, {});
+  const commandLineFiles = parseFileSelectors(args.files);
+  const fileSelectors = commandLineFiles.length > 0
+    ? commandLineFiles
+    : parseFileSelectors(baseProjectConfig.checkFiles);
   const configuredFileConcurrency = args.fileConcurrency !== undefined
     ? args.fileConcurrency
     : baseProjectConfig.fileConcurrency;

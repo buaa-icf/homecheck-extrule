@@ -4,11 +4,15 @@
   "repos": [
     "feature-envy_refactor=D:/ROG/Documents/harmonyos/feature-envy_refactor"
   ],
+  "checkFiles": [
+    "openharmony_tpc_samples/node-imap/entry/src/main/ets/pages/LoginPage.ets",
+    "openharmony_tpc_samples/node-imap/entry/src/main/ets/pages/MsgListPage.ets",
+    "openharmony_tpc_samples/node-imap/entry/src/main/ets/TestInterfaceUtil.ts"
+  ],
   "datasetDir": "",
   "logPath": "",
   "ohosSdkPath": "E:/DevEco Studio/sdk/default/openharmony/ets",
   "hmsSdkPath": "E:/DevEco Studio/sdk/default/hms/ets",
-  "checkPath": "",
   "sdkVersion": 20,
   "fileConcurrency": 1,
   "fix": "false",
