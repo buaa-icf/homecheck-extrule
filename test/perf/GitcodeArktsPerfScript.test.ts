@@ -9,8 +9,10 @@ const {
     filterIssuesByRule,
     main,
     parseExtraRepos,
+    parseFileSelectors,
     parseRepos,
     parseRepoFilter,
+    resolveSelectedFiles,
     runRepositoryScan,
     scopeIgnorePatterns,
     RULES,
@@ -21,6 +23,26 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 describe('gitcodeArktsPerfTest helpers', () => {
+    it('parses named comma-separated file selectors', () => {
+        expect(parseFileSelectors(
+            '.\\src\\main\\ets\\Page.ets, src/main/ets/Model.ts',
+        )).toEqual(['src/main/ets/Page.ets', 'src/main/ets/Model.ts']);
+        expect(parseFileSelectors(undefined)).toEqual([]);
+    });
+
+    it('validates selected paths inside the repository', () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'selected-files-'));
+        fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'src', 'Page.ets'), 'Text("ok")\n');
+
+        expect(resolveSelectedFiles(root, ['src/Page.ets'])).toEqual([{
+            relativePath: 'src/Page.ets',
+            absolutePath: path.resolve(root, 'src', 'Page.ets'),
+        }]);
+        expect(() => resolveSelectedFiles(root, ['../outside.ets'])).toThrow('越出仓库目录');
+        expect(() => resolveSelectedFiles(root, ['src/Missing.ets'])).toThrow('不存在');
+    });
+
     it('parses repository filters from command-line strings and project config arrays', () => {
         expect(Array.from(parseRepoFilter('cases, applications_photos'))).toEqual([
             'cases',
@@ -270,11 +292,15 @@ describe('gitcodeArktsPerfTest helpers', () => {
     it('runs multiple rules in one repository process and writes compatible split artifacts', async () => {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gitcode-shared-scene-'));
         const runnerPath = path.join(root, 'fake-runner.js');
+        const selectedSource = path.join(root, 'Target.ets');
+        fs.writeFileSync(selectedSource, 'function target() {}\n');
         fs.writeFileSync(runnerPath, [
             "const fs = require('node:fs');",
             "const path = require('node:path');",
             "const args = Object.fromEntries(process.argv.slice(2).map((item) => { const i=item.indexOf('='); return [item.slice(2,i), item.slice(i+1)]; }));",
             "const project = JSON.parse(fs.readFileSync(args.projectConfigPath, 'utf8'));",
+            "const selected = JSON.parse(fs.readFileSync(project.checkPath, 'utf8'));",
+            "fs.writeFileSync(path.join(__dirname, 'selected.json'), JSON.stringify(selected));",
             "fs.mkdirSync(project.reportDir, { recursive: true });",
             "fs.writeFileSync(path.join(project.reportDir, 'issuesReport.json'), JSON.stringify([{ filePath: 'A.ets', messages: [{ rule: '@extrulesproject/long-method-check' }, { rule: '@extrulesproject/feature-envy-check' }] }]));",
             "fs.mkdirSync(path.join(process.cwd(), 'report'), { recursive: true });",
@@ -297,9 +323,13 @@ describe('gitcodeArktsPerfTest helpers', () => {
             npmCacheDir: path.join(root, 'npm-cache'),
             timeoutMs: 5000,
             nodeMaxOldSpaceMB: 1024,
+            selectedFiles: [{ relativePath: 'Target.ets', absolutePath: selectedSource }],
         });
 
         expect(fs.readFileSync(path.join(root, 'invocations.txt'), 'utf8').trim()).toBe('1');
+        expect(JSON.parse(fs.readFileSync(path.join(root, 'selected.json'), 'utf8'))).toEqual({
+            checkPath: [{ filePath: selectedSource, fixKey: [] }],
+        });
         expect(result.sharedRun.success).toBe(true);
         expect(result.runs.map((run: { smell: string }) => run.smell)).toEqual(['long-method', 'feature-envy']);
         expect(result.runs[0]).toEqual(expect.objectContaining({

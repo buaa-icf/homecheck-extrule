@@ -94,6 +94,14 @@ ruleConfig.json 示例：
 npm run perf:gitcode
 ```
 
+只扫描 `repos` 中仓库的指定文件（路径相对于仓库根目录）：
+
+```powershell
+npm run scan:files -- --files=src/main/ets/pages/Index.ets,src/main/ets/model/User.ts
+```
+
+指定文件模式仅支持 `repos` 中配置一个仓库，只构建指定 `.ets/.ts` 文件的 Scene，并只报告这些文件中的异味；它不会计算整库 F1。
+
 该命令可以批量扫描仓库，统计告警数量和性能数据；配置了 `datasetDir` 时还会计算 F1。运行时默认启动实时面板，并在结束后生成 HTML 报告。
 
 ### 打包扩展规则

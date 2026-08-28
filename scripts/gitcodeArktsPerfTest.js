@@ -93,6 +93,39 @@ function parseArgs(argv) {
   return args;
 }
 
+function parseFileSelectors(value) {
+  return (typeof value === 'string' ? value.split(',') : [])
+    .map((item) => item.trim().replace(/\\/g, '/').replace(/^\.\//, ''))
+    .filter(Boolean);
+}
+
+function resolveSelectedFiles(repoPath, relativeFiles) {
+  if (!relativeFiles) {
+    return null;
+  }
+  const root = path.resolve(repoPath);
+  const seen = new Set();
+  return relativeFiles.map((relativeFile) => {
+    if (path.isAbsolute(relativeFile) || !/\.(?:ets|ts)$/i.test(relativeFile)) {
+      throw new Error(`指定文件必须是仓库内的 .ets/.ts 相对路径: ${relativeFile}`);
+    }
+    const absolute = path.resolve(root, ...relativeFile.split('/'));
+    const relative = path.relative(root, absolute);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw new Error(`指定文件越出仓库目录或不是文件: ${relativeFile}`);
+    }
+    if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
+      throw new Error(`指定文件不存在: ${path.join(repoPath, relativeFile)}`);
+    }
+    const key = process.platform === 'win32' ? absolute.toLowerCase() : absolute;
+    if (seen.has(key)) {
+      throw new Error(`指定文件重复: ${relativeFile}`);
+    }
+    seen.add(key);
+    return { relativePath: relative.split(path.sep).join('/'), absolutePath: absolute };
+  });
+}
+
 function parseRepoFilter(value) {
   const items = Array.isArray(value)
     ? value
@@ -365,9 +398,11 @@ async function collectArkTsFiles(repoPath, directoryConcurrency = 32) {
   return files;
 }
 
-async function countEtsLinesWithCloc(repoPath) {
+async function countEtsLinesWithCloc(repoPath, selectedFiles = null) {
   const clocInvocation = resolveClocInvocation();
-  const arkTsFiles = await collectArkTsFiles(repoPath);
+  const arkTsFiles = selectedFiles
+    ? selectedFiles.map((file) => file.relativePath)
+    : await collectArkTsFiles(repoPath);
   if (arkTsFiles.length === 0) {
     return 0;
   }
@@ -468,7 +503,7 @@ function buildMultiRuleConfig(baseConfig, rules, packagePath, repoPath) {
   };
 }
 
-function buildProjectConfig(baseProjectConfig, repoName, repoPath, reportDir, logPath, arkCheckPath) {
+function buildProjectConfig(baseProjectConfig, repoName, repoPath, reportDir, logPath, arkCheckPath, checkPath) {
   return {
     ...baseProjectConfig,
     projectName: repoName,
@@ -476,6 +511,7 @@ function buildProjectConfig(baseProjectConfig, repoName, repoPath, reportDir, lo
     reportDir,
     logPath,
     arkCheckPath,
+    ...(checkPath ? { checkPath } : {}),
   };
 }
 
@@ -583,6 +619,7 @@ async function runRepositoryScan(context) {
     packagePath,
     arkCheckPath,
     perfEnabled,
+    selectedFiles,
   } = context;
   const resolvedPackagePath = packagePath || path.resolve(cwd, 'extrulesproject-1.0.0.tgz');
   const resolvedArkCheckPath = arkCheckPath || path.dirname(path.dirname(runnerPath));
@@ -609,6 +646,9 @@ async function runRepositoryScan(context) {
     tmpConfigDir,
     `ruleConfig.${toSafeName(repo.name)}.json`,
   );
+  const tempCheckPath = selectedFiles
+    ? path.join(tmpConfigDir, `checkPath.${toSafeName(repo.name)}.json`)
+    : '';
   const generatedIssuesPath = path.join(reportDir, 'issuesReport.json');
   const fallbackIssuesPath = path.join(cwd, 'report', 'issuesReport.json');
   const generatedPerfPath = path.join(cwd, 'report', 'perfReport.json');
@@ -619,9 +659,22 @@ async function runRepositoryScan(context) {
 
   ensureDir(runDir);
   ensureDir(reportDir);
+  if (selectedFiles) {
+    writeJson(tempCheckPath, {
+      checkPath: selectedFiles.map((file) => ({ filePath: file.absolutePath, fixKey: [] })),
+    });
+  }
   writeJson(
     tempProjectConfigPath,
-    buildProjectConfig(baseProjectConfig, repo.name, repoPath, reportDir, logPath, resolvedArkCheckPath),
+    buildProjectConfig(
+      baseProjectConfig,
+      repo.name,
+      repoPath,
+      reportDir,
+      logPath,
+      resolvedArkCheckPath,
+      tempCheckPath,
+    ),
   );
   writeJson(tempRuleConfigPath, buildMultiRuleConfig(baseRuleConfig, rules, resolvedPackagePath, repoPath));
 
@@ -881,6 +934,7 @@ function printUsage() {
   console.log('  --f1=false                     Disable dataset F1 evaluation');
   console.log('  --datasetDir=<path>            Override projectConfig.datasetDir; empty config disables F1');
   console.log('  --f1Repos=a,b                  Only run selected dataset repository names');
+  console.log('  --files=a.ets,b.ts             Scan only relative files in the single configured repo');
 }
 
 function toDashboardRun(repoName, run) {
@@ -950,7 +1004,9 @@ function snapshotDashboardState(state) {
 }
 
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const rawArgs = process.argv.slice(2);
+  const args = parseArgs(rawArgs);
+  const fileSelectors = parseFileSelectors(args.files);
   if (args.help === 'true') {
     printUsage();
     return 0;
@@ -1037,7 +1093,11 @@ async function main() {
   const datasetDirValue = args.datasetDir !== undefined
     ? String(args.datasetDir).trim()
     : configuredDatasetDir;
-  const f1Requested = args.f1 !== 'false' && datasetDirValue.length > 0;
+  const f1Requested = args.f1 !== 'false' && datasetDirValue.length > 0 && fileSelectors.length === 0;
+
+  if (fileSelectors.length > 0 && args.f1 !== 'false' && datasetDirValue.length > 0) {
+    console.log('[files] 指定文件模式不计算整库 F1，已自动跳过数据集评估');
+  }
 
   if (!perfEnabled && !f1Requested) {
     throw new Error('No task enabled: enable performance collection or configure a dataset for F1');
@@ -1146,6 +1206,11 @@ async function main() {
       ...extraWorkItems,
     ];
   }
+  if (fileSelectors.length > 0) {
+    if (repoWorkItems.length !== 1) {
+      throw new Error('--files 仅支持 config/projectConfig.json 中恰好配置一个仓库');
+    }
+  }
   const dashboardState = {
     status: 'running',
     startedAt,
@@ -1184,13 +1249,20 @@ async function main() {
           updateExisting,
           cloneDepth: args.cloneDepth || '1',
         });
+      const selectedFiles = resolveSelectedFiles(
+        cloneResult.path,
+        fileSelectors.length > 0 ? fileSelectors : null,
+      );
+      if (selectedFiles) {
+        console.log(`  [files] 只扫描 ${selectedFiles.length} 个指定文件`);
+      }
       dashboardState.current = {
         kind: 'setup',
         label: `统计代码行数 ${repo.name}`,
         startedMs: Date.now(),
       };
       console.log('  [count] 正在统计 ArkTS/TypeScript 代码行数...');
-      const etsLines = perfEnabled ? await countEtsLinesWithCloc(cloneResult.path) : 0;
+      const etsLines = perfEnabled ? await countEtsLinesWithCloc(cloneResult.path, selectedFiles) : 0;
       console.log(`  [count] 完成，共 ${etsLines} 行 ArkTS/TypeScript`);
       const repoResult = {
         name: repo.name,
@@ -1233,6 +1305,7 @@ async function main() {
           packagePath,
           arkCheckPath,
           perfEnabled,
+          selectedFiles,
         });
         repoResult.sharedRun = result.sharedRun;
         repoResult.runs.push(...result.runs);
@@ -1370,9 +1443,11 @@ module.exports = {
   main,
   parseArgs,
   parseExtraRepos,
+  parseFileSelectors,
   parseRepos,
   parseRepoFilter,
   readMemoryTimeline,
+  resolveSelectedFiles,
   resolveClocInvocation,
   runRepositoryScan,
   scopeIgnorePatterns,

@@ -11,7 +11,8 @@
         "test:coverage": "jest --coverage",
         "scan:batch": "node ./scripts/batchScanRepos.js",
         "scan:split": "node ./scripts/recursiveSplitScan.js",
-        "perf:gitcode": "node ./scripts/gitcodeArktsPerfTest.js"
+        "perf:gitcode": "node ./scripts/gitcodeArktsPerfTest.js",
+        "scan:files": "node ./scripts/gitcodeArktsPerfTest.js --f1=false"
     },
     "files": [
         "lib",
