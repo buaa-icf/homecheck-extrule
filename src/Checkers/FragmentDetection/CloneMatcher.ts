@@ -78,7 +78,7 @@ export class CloneMatcher {
     private fileTokens: Map<string, Token[]> = new Map();
 
     /** 每个文件的 Token ID 序列引用（用于窗口等价校验） */
-    private fileTokenIds: Map<string, number[]> = new Map();
+    private fileTokenIds: Map<string, Uint32Array> = new Map();
 
     /** 单个规范化指纹最多展开的候选克隆对数量 */
     private readonly maxPairsPerFingerprint: number;
@@ -111,7 +111,7 @@ export class CloneMatcher {
         this.fileTokens.set(file, tokens);
 
         // 将 Token 值映射为整数 ID
-        const tokenIds = new Array<number>(tokens.length);
+        const tokenIds = new Uint32Array(tokens.length);
         const tokenVocab = this.tokenVocab;
         for (let index = 0; index < tokens.length; index++) {
             const tokenValue = tokens[index].value;
@@ -127,20 +127,21 @@ export class CloneMatcher {
         const rollingHash = new RollingHash(this.windowSize);
 
         // 初始化首个窗口
-        const firstHash = rollingHash.initWindow(tokenIds, 0);
+        const firstHash = rollingHash.initWindowNumeric(tokenIds, 0);
         const firstEndLine = tokens[this.windowSize - 1].line;
 
-        this.hashIndex.addWindow(firstHash, file, 0, tokens[0].line, firstEndLine);
+        this.hashIndex.addNumericWindow(firstHash, rollingHash.getSecondHash(), file, 0, tokens[0].line, firstEndLine);
 
         // 滑动计算后续窗口（每步 O(1)）
         for (let i = 1; i <= tokens.length - this.windowSize; i++) {
-            const hash = rollingHash.slidePositive(
+            const hash = rollingHash.slidePositiveNumeric(
                 tokenIds[i - 1],
                 tokenIds[i + this.windowSize - 1]
             );
 
-            this.hashIndex.addWindow(
+            this.hashIndex.addNumericWindow(
                 hash,
+                rollingHash.getSecondHash(),
                 file,
                 i,
                 tokens[i].line,
@@ -155,7 +156,10 @@ export class CloneMatcher {
      * @returns 克隆匹配列表
      */
     getMatches(): CloneMatch[] {
-        const duplicates = this.hashIndex.getDuplicates();
+        const duplicates = [
+            ...this.hashIndex.getDuplicates(),
+            ...this.hashIndex.getNumericDuplicates()
+        ];
         
         return duplicates.map(([hash, locations]) => ({
             hash,
@@ -362,9 +366,9 @@ function sortFragmentLocations(locations: FragmentLocation[]): FragmentLocation[
 }
 
 function sameTokenIdWindow(
-    firstIds: number[],
+    firstIds: ArrayLike<number>,
     firstStart: number,
-    secondIds: number[],
+    secondIds: ArrayLike<number>,
     secondStart: number,
     windowSize: number
 ): boolean {

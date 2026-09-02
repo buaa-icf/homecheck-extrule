@@ -57,7 +57,7 @@ export class RollingHash {
      * @param tokenIds 首个窗口的 Token ID 列表
      * @returns 组合哈希键
      */
-    init(tokenIds: number[]): string {
+    init(tokenIds: ArrayLike<number>): string {
         if (tokenIds.length !== this.windowSize) {
             throw new Error(`tokenIds length must equal windowSize (${this.windowSize})`);
         }
@@ -72,7 +72,13 @@ export class RollingHash {
      * @param startIndex 窗口起始位置
      * @returns 组合哈希键
      */
-    initWindow(tokenIds: number[], startIndex: number): string {
+    initWindow(tokenIds: ArrayLike<number>, startIndex: number): string {
+        this.initWindowNumeric(tokenIds, startIndex);
+        return this.getHashKey();
+    }
+
+    /** 热路径：更新双哈希并仅返回第一个数值哈希，第二个通过 getSecondHash() 获取。 */
+    initWindowNumeric(tokenIds: ArrayLike<number>, startIndex: number): number {
         if (startIndex < 0 || startIndex + this.windowSize > tokenIds.length) {
             throw new Error(`tokenIds window must contain windowSize (${this.windowSize}) items`);
         }
@@ -95,7 +101,7 @@ export class RollingHash {
             );
         }
 
-        return this.getHashKey();
+        return this.hash1;
     }
 
     /**
@@ -137,6 +143,12 @@ export class RollingHash {
      * CloneMatcher 生成的 Token ID 始终为正整数，因此可以少做负数规范化。
      */
     slidePositive(removeId: number, addId: number): string {
+        this.slidePositiveNumeric(removeId, addId);
+        return this.getHashKey();
+    }
+
+    /** 热路径：滑动双哈希但不创建组合字符串。 */
+    slidePositiveNumeric(removeId: number, addId: number): number {
         const removeContribution1 = this.mulMod(
             removeId >= this.mod1 ? removeId % this.mod1 : removeId,
             this.pow1,
@@ -171,7 +183,12 @@ export class RollingHash {
             this.hash2 %= this.mod2;
         }
 
-        return this.getHashKey();
+        return this.hash1;
+    }
+
+    /** 返回当前第二个数值哈希。 */
+    getSecondHash(): number {
+        return this.hash2;
     }
 
     /**

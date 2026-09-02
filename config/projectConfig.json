@@ -1,15 +1,17 @@
 {
   "projectName": "",
-  "projectPath": "..",
+  "projectPath": "D:/ROG/Documents/harmonyos/feature-envy_refactor",
   "repos": [
-    "feature-envy_refactor=D:/ROG/Documents/harmonyos/feature-envy_refactor"
+    "agc-template-market-harmonyos-demos",
+    "applications_photos",
+    "applications_settings",
+    "cases",
+    "model-evaluation-testsuite",
+    "openharmony_tpc_samples",
+    "ostest_integration_test"
   ],
-  "checkFiles": [
-    "openharmony_tpc_samples/node-imap/entry/src/main/ets/pages/LoginPage.ets",
-    "openharmony_tpc_samples/node-imap/entry/src/main/ets/pages/MsgListPage.ets",
-    "openharmony_tpc_samples/node-imap/entry/src/main/ets/TestInterfaceUtil.ts"
-  ],
-  "datasetDir": "",
+  "checkFiles": [],
+  "datasetDir": "D:/ROG/Documents/harmonyos/feature-envy_refactor/arkts-code-smell/dataset",
   "logPath": "",
   "ohosSdkPath": "E:/DevEco Studio/sdk/default/openharmony/ets",
   "hmsSdkPath": "E:/DevEco Studio/sdk/default/hms/ets",
@@ -18,7 +20,7 @@
   "fix": "false",
   "npmPath": "",
   "npmInstallDir": "./",
-  "reportDir": "./report",
+  "reportDir": "./report/dataset-memory-20260902/homecheck",
   "arkCheckPath": "",
   "product": "default",
   "sdksThirdParty": []

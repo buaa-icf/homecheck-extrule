@@ -342,8 +342,7 @@ export class Tokenizer {
                 value: tokenValue,
                 type: tokenType,
                 line,
-                column,
-                file: filePath
+                column
             });
             
             // 继续扫描

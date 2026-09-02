@@ -199,7 +199,8 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
      */
     public afterCheck(): void {
         const checkerName = this.constructor.name;
-        PerfReporter.time(checkerName, 'afterCheck', () => {
+        try {
+            PerfReporter.time(checkerName, 'afterCheck', () => {
             const exactGroups = PerfReporter.time(
                 checkerName,
                 'afterCheck.getExactCloneGroups',
@@ -254,7 +255,18 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
                     this.addIssueReport(this.createNearMissReport(clone));
                 }
             });
-        });
+            });
+        } finally {
+            this.releaseScanCaches();
+        }
+    }
+
+    /** 报告生成后立即释放全仓 Token、哈希索引和 ArkFile 引用。 */
+    private releaseScanCaches(): void {
+        this.cloneMatcher.clear();
+        this.fileTokenCache.clear();
+        this.fileCache.clear();
+        this.locationCache.clear();
     }
 
     /**

@@ -47,8 +47,6 @@ export interface Token {
     /** 所在列号（0-based） */
     column: number;
     
-    /** 所属文件路径（可选，用于跨文件检测） */
-    file?: string;
 }
 
 /**
@@ -58,10 +56,9 @@ export function createToken(
     value: string,
     type: TokenType,
     line: number,
-    column: number,
-    file?: string
+    column: number
 ): Token {
-    return { value, type, line, column, file };
+    return { value, type, line, column };
 }
 
 /**

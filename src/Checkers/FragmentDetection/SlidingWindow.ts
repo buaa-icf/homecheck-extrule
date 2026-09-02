@@ -22,8 +22,6 @@ export interface TokenWindow {
     /** 窗口的结束行号（取最后一个 Token 的行号） */
     endLine: number;
     
-    /** 所属文件（取第一个 Token 的文件） */
-    file?: string;
 }
 
 /**
@@ -58,8 +56,7 @@ export function createSlidingWindows(tokens: Token[], windowSize: number): Token
             startIndex: i,
             tokens: windowTokens,
             startLine: firstToken.line,
-            endLine: lastToken.line,
-            file: firstToken.file
+            endLine: lastToken.line
         });
     }
     

@@ -9,6 +9,34 @@ import { TokenWindow } from './SlidingWindow';
 import { djb2Hash } from '../shared';
 
 type StoredLocationRef = number | number[];
+type TokenIdSequence = number[] | Uint32Array;
+
+class GrowableUint32Array {
+    private values = new Uint32Array(4096);
+    public length = 0;
+
+    push(value: number): void {
+        if (this.length === this.values.length) {
+            const next = new Uint32Array(this.values.length * 2);
+            next.set(this.values);
+            this.values = next;
+        }
+        this.values[this.length++] = value;
+    }
+
+    get(index: number): number {
+        return this.values[index];
+    }
+
+    set(index: number, value: number): void {
+        this.values[index] = value;
+    }
+
+    clear(): void {
+        this.values = new Uint32Array(4096);
+        this.length = 0;
+    }
+}
 
 /**
  * 片段位置信息
@@ -30,7 +58,7 @@ export interface FragmentLocation {
     tokenFingerprint?: string;
 
     /** 可选 Token ID 序列引用（兼容手工构造 location；主路径使用文件级缓存） */
-    tokenIds?: number[];
+    tokenIds?: TokenIdSequence;
 
     /** 可选 Token 序列引用（兼容手工构造 location；主路径使用文件级缓存） */
     allTokens?: Token[];
@@ -44,14 +72,19 @@ export interface FragmentLocation {
 export class HashIndex {
     /** 哈希值 → 紧凑位置索引；单次出现时不提前分配数组 */
     private index: Map<string, StoredLocationRef> = new Map();
+    /** 主扫描路径以首哈希为数值键；只有首哈希碰撞时才创建二级 Map。 */
+    private numericIndex: Map<number, StoredLocationRef> = new Map();
+    private numericCollisions: Map<number, Map<number, StoredLocationRef>> = new Map();
+    private locationHash2 = new GrowableUint32Array();
 
     private files: string[] = [];
-    private startIndexes: number[] = [];
-    private startLines: number[] = [];
-    private endLines: number[] = [];
-    private tokenFingerprints: Array<string | undefined> = [];
-    private tokenIdRefs: Array<number[] | undefined> = [];
-    private tokenRefs: Array<Token[] | undefined> = [];
+    private startIndexes = new GrowableUint32Array();
+    private startLines = new GrowableUint32Array();
+    private endLines = new GrowableUint32Array();
+    /** 仅兼容 add() 手工传入的附加信息；addWindow() 热路径不分配空槽。 */
+    private tokenFingerprints: Map<number, string> = new Map();
+    private tokenIdRefs: Map<number, TokenIdSequence> = new Map();
+    private tokenRefs: Map<number, Token[]> = new Map();
     
     /**
      * 添加一个位置到索引
@@ -82,6 +115,37 @@ export class HashIndex {
         this.addStoredLocation(hash, file, startIndex, startLine, endLine);
     }
 
+    /** CloneMatcher 热路径：使用双数值哈希添加窗口。 */
+    addNumericWindow(hash1: number, hash2: number, file: string, startIndex: number, startLine: number, endLine: number): void {
+        const locationIndex = this.storeLocation(file, startIndex, startLine, endLine);
+        this.locationHash2.set(locationIndex, hash2);
+
+        const collisionBucket = this.numericCollisions.get(hash1);
+        if (collisionBucket !== undefined) {
+            collisionBucket.set(hash2, appendLocationRef(collisionBucket.get(hash2), locationIndex));
+            return;
+        }
+
+        const existing = this.numericIndex.get(hash1);
+        if (existing === undefined) {
+            this.numericIndex.set(hash1, locationIndex);
+            return;
+        }
+
+        const existingIndex = Array.isArray(existing) ? existing[0] : existing;
+        const existingHash2 = this.locationHash2.get(existingIndex);
+        if (existingHash2 === hash2) {
+            this.numericIndex.set(hash1, appendLocationRef(existing, locationIndex));
+            return;
+        }
+
+        const secondary = new Map<number, StoredLocationRef>();
+        secondary.set(existingHash2, existing);
+        secondary.set(hash2, locationIndex);
+        this.numericIndex.delete(hash1);
+        this.numericCollisions.set(hash1, secondary);
+    }
+
     private addStoredLocation(
         hash: string,
         file: string,
@@ -89,28 +153,31 @@ export class HashIndex {
         startLine: number,
         endLine: number,
         tokenFingerprint?: string,
-        tokenIds?: number[],
+        tokenIds?: TokenIdSequence,
         allTokens?: Token[]
     ): void {
+        const locationIndex = this.storeLocation(file, startIndex, startLine, endLine);
+        if (tokenFingerprint !== undefined) {
+            this.tokenFingerprints.set(locationIndex, tokenFingerprint);
+        }
+        if (tokenIds !== undefined) {
+            this.tokenIdRefs.set(locationIndex, tokenIds);
+        }
+        if (allTokens !== undefined) {
+            this.tokenRefs.set(locationIndex, allTokens);
+        }
+
+        this.index.set(hash, appendLocationRef(this.index.get(hash), locationIndex));
+    }
+
+    private storeLocation(file: string, startIndex: number, startLine: number, endLine: number): number {
         const locationIndex = this.files.length;
         this.files.push(file);
         this.startIndexes.push(startIndex);
         this.startLines.push(startLine);
         this.endLines.push(endLine);
-        this.tokenFingerprints.push(tokenFingerprint);
-        this.tokenIdRefs.push(tokenIds);
-        this.tokenRefs.push(allTokens);
-
-        const existing = this.index.get(hash);
-        if (existing === undefined) {
-            this.index.set(hash, locationIndex);
-            return;
-        }
-        if (Array.isArray(existing)) {
-            existing.push(locationIndex);
-            return;
-        }
-        this.index.set(hash, [existing, locationIndex]);
+        this.locationHash2.push(0);
+        return locationIndex;
     }
     
     /**
@@ -145,12 +212,35 @@ export class HashIndex {
         
         return duplicates;
     }
+
+    /** 获取主扫描数值索引中的重复窗口；只为实际重复项生成字符串标识。 */
+    getNumericDuplicates(): [string, FragmentLocation[]][] {
+        const duplicates: [string, FragmentLocation[]][] = [];
+        for (const [hash1, value] of this.numericIndex) {
+            if (Array.isArray(value) && value.length >= 2) {
+                const hash2 = this.locationHash2.get(value[0]);
+                duplicates.push([`${hash1}_${hash2}`, value.map(index => this.toLocation(index))]);
+            }
+        }
+        for (const [hash1, secondary] of this.numericCollisions) {
+            for (const [hash2, value] of secondary) {
+                if (Array.isArray(value) && value.length >= 2) {
+                    duplicates.push([`${hash1}_${hash2}`, value.map(index => this.toLocation(index))]);
+                }
+            }
+        }
+        return duplicates;
+    }
     
     /**
      * 获取索引大小（不同哈希值的数量）
      */
     size(): number {
-        return this.index.size;
+        let numericSize = this.numericIndex.size;
+        for (const secondary of this.numericCollisions.values()) {
+            numericSize += secondary.size;
+        }
+        return this.index.size + numericSize;
     }
     
     /**
@@ -158,40 +248,54 @@ export class HashIndex {
      */
     clear(): void {
         this.index.clear();
+        this.numericIndex.clear();
+        this.numericCollisions.clear();
+        this.locationHash2.clear();
         this.files = [];
-        this.startIndexes = [];
-        this.startLines = [];
-        this.endLines = [];
-        this.tokenFingerprints = [];
-        this.tokenIdRefs = [];
-        this.tokenRefs = [];
+        this.startIndexes.clear();
+        this.startLines.clear();
+        this.endLines.clear();
+        this.tokenFingerprints.clear();
+        this.tokenIdRefs.clear();
+        this.tokenRefs.clear();
     }
 
     private toLocation(index: number): FragmentLocation {
         const location: FragmentLocation = {
             file: this.files[index],
-            startIndex: this.startIndexes[index],
-            startLine: this.startLines[index],
-            endLine: this.endLines[index]
+            startIndex: this.startIndexes.get(index),
+            startLine: this.startLines.get(index),
+            endLine: this.endLines.get(index)
         };
 
-        const tokenFingerprint = this.tokenFingerprints[index];
+        const tokenFingerprint = this.tokenFingerprints.get(index);
         if (tokenFingerprint !== undefined) {
             location.tokenFingerprint = tokenFingerprint;
         }
 
-        const tokenIds = this.tokenIdRefs[index];
+        const tokenIds = this.tokenIdRefs.get(index);
         if (tokenIds !== undefined) {
             location.tokenIds = tokenIds;
         }
 
-        const allTokens = this.tokenRefs[index];
+        const allTokens = this.tokenRefs.get(index);
         if (allTokens !== undefined) {
             location.allTokens = allTokens;
         }
 
         return location;
     }
+}
+
+function appendLocationRef(existing: StoredLocationRef | undefined, locationIndex: number): StoredLocationRef {
+    if (existing === undefined) {
+        return locationIndex;
+    }
+    if (Array.isArray(existing)) {
+        existing.push(locationIndex);
+        return existing;
+    }
+    return [existing, locationIndex];
 }
 
 /**
@@ -228,7 +332,7 @@ export function computeTokensHash(tokens: Token[]): string {
  */
 export function createLocationFromWindow(window: TokenWindow, defaultFile: string = '', tokenFingerprint: string = ''): FragmentLocation {
     return {
-        file: window.file || defaultFile,
+        file: defaultFile,
         startIndex: window.startIndex,
         startLine: window.startLine,
         endLine: window.endLine,

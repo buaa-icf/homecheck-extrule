@@ -60,13 +60,12 @@ function mockTokens(values: string[], startLine: number = 1): Token[] {
 
 describe('Token 接口', () => {
     test('createToken 应正确创建 Token', () => {
-        const token = createToken('let', TokenType.KEYWORD, 1, 0, 'test.ets');
+        const token = createToken('let', TokenType.KEYWORD, 1, 0);
         
         expect(token.value).toBe('let');
         expect(token.type).toBe(TokenType.KEYWORD);
         expect(token.line).toBe(1);
         expect(token.column).toBe(0);
-        expect(token.file).toBe('test.ets');
     });
     
     test('isKeyword 应正确判断关键字', () => {
@@ -242,6 +241,12 @@ describe('哈希索引', () => {
 
         (index as any).addWindow('hash1', 'b.ets', 100, 10, 15);
         expect((index as any).index.get('hash1')).toEqual([0, 1]);
+        expect((index as any).tokenFingerprints.size).toBe(0);
+        expect((index as any).tokenIdRefs.size).toBe(0);
+        expect((index as any).tokenRefs.size).toBe(0);
+        expect((index as any).startIndexes.values).toBeInstanceOf(Uint32Array);
+        expect((index as any).startLines.values).toBeInstanceOf(Uint32Array);
+        expect((index as any).endLines.values).toBeInstanceOf(Uint32Array);
 
         expect(index.get('hash1')).toEqual([
             { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5 },
@@ -253,6 +258,24 @@ describe('哈希索引', () => {
                 [
                     { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5 },
                     { file: 'b.ets', startIndex: 100, startLine: 10, endLine: 15 }
+                ]
+            ]
+        ]);
+    });
+
+    test('数值索引应使用完整双哈希区分首哈希碰撞', () => {
+        const index = new HashIndex();
+        index.addNumericWindow(100, 200, 'a.ets', 0, 1, 5);
+        index.addNumericWindow(100, 300, 'b.ets', 0, 1, 5);
+        index.addNumericWindow(100, 200, 'c.ets', 0, 1, 5);
+
+        expect(index.size()).toBe(2);
+        expect(index.getNumericDuplicates()).toEqual([
+            [
+                '100_200',
+                [
+                    { file: 'a.ets', startIndex: 0, startLine: 1, endLine: 5 },
+                    { file: 'c.ets', startIndex: 0, startLine: 1, endLine: 5 }
                 ]
             ]
         ]);
@@ -359,9 +382,9 @@ describe('克隆匹配器', () => {
         expect(getTokenIdCalls).toBe(0);
     });
 
-    test('processFile 应通过 HashIndex.addWindow 延迟物化窗口位置对象', () => {
+    test('processFile 应通过数值双哈希入口延迟物化窗口位置对象', () => {
         const matcher = new CloneMatcher(3);
-        const addWindowSpy = jest.spyOn(HashIndex.prototype as any, 'addWindow');
+        const addWindowSpy = jest.spyOn(HashIndex.prototype as any, 'addNumericWindow');
         const addSpy = jest.spyOn(HashIndex.prototype, 'add');
 
         try {
@@ -369,6 +392,7 @@ describe('克隆匹配器', () => {
 
             expect(addWindowSpy).toHaveBeenCalledTimes(3);
             expect(addSpy).toHaveBeenCalledTimes(0);
+            expect((matcher as any).fileTokenIds.get('file.ts')).toBeInstanceOf(Uint32Array);
         } finally {
             addWindowSpy.mockRestore();
             addSpy.mockRestore();
@@ -949,13 +973,12 @@ describe('Tokenizer - 基础 tokenize 功能', () => {
         expect(values).toContain('*');
     });
     
-    test('文件路径记录', () => {
+    test('Token 不应为每个元素重复保存文件路径', () => {
         const code = 'let x = 1;';
         const tokens = tokenize(code, 'test.ets');
-        
-        tokens.forEach(token => {
-            expect(token.file).toBe('test.ets');
-        });
+
+        expect(tokens.length).toBeGreaterThan(0);
+        expect(tokens.every(token => !Object.prototype.hasOwnProperty.call(token, 'file'))).toBe(true);
     });
 
     test('tokenize 主循环不应逐 token 调用 createToken helper', () => {
@@ -967,7 +990,6 @@ describe('Tokenizer - 基础 tokenize 功能', () => {
             });
 
             expect(tokens.length).toBeGreaterThan(0);
-            expect(tokens.every(token => token.file === 'test.ets')).toBe(true);
             expect(createTokenSpy).toHaveBeenCalledTimes(0);
         } finally {
             createTokenSpy.mockRestore();
@@ -1325,6 +1347,22 @@ describe('CodeCloneFragmentCheck - 规则类创建', () => {
         expect(matchers.length).toBeGreaterThan(0);
         expect(matchers[0].matcher).toBeDefined();
         expect(matchers[0].callback).toBeDefined();
+    });
+
+    test('afterCheck 应释放全仓扫描缓存', () => {
+        const checker = new CodeCloneFragmentCheck();
+        const matcher = (checker as any).cloneMatcher as CloneMatcher;
+        const clearSpy = jest.spyOn(matcher, 'clear');
+        (checker as any).fileTokenCache.set('test.ets', []);
+        (checker as any).fileCache.set('test.ets', {});
+        (checker as any).locationCache.set('test', {});
+
+        checker.afterCheck();
+
+        expect(clearSpy).toHaveBeenCalledTimes(1);
+        expect((checker as any).fileTokenCache.size).toBe(0);
+        expect((checker as any).fileCache.size).toBe(0);
+        expect((checker as any).locationCache.size).toBe(0);
     });
 
     test('collectTokens 检查 distinct token types 时不应对 token 数组调用 map', () => {
