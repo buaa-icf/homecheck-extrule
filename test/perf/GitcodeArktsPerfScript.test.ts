@@ -7,6 +7,7 @@ const {
     collectArkTsFiles,
     countIssues,
     filterIssuesByRule,
+    formatAvailableF1Metrics,
     main,
     parseExtraRepos,
     parseFileSelectors,
@@ -15,6 +16,7 @@ const {
     resolveSelectedFiles,
     runRepositoryScan,
     scopeIgnorePatterns,
+    snapshotDashboardState,
     RULES,
 } = require('../../scripts/gitcodeArktsPerfTest.js');
 
@@ -23,6 +25,27 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 describe('gitcodeArktsPerfTest helpers', () => {
+    it('omits completed repository memory timelines from live dashboard snapshots', () => {
+        const snapshot = snapshotDashboardState({
+            status: 'running',
+            startedAt: '2026-09-03T00:00:00.000Z',
+            finishedAt: null,
+            totalRuns: 1,
+            current: null,
+            runs: [],
+            repositoryRuns: [{ repoName: 'cases', peakRssMB: 100, memorySamples: [{ rssMB: 100 }] }],
+            f1: null,
+        });
+
+        expect(snapshot.repositoryRuns[0]).toEqual({ repoName: 'cases', peakRssMB: 100 });
+    });
+
+    it('omits F1 metrics whose denominator is zero', () => {
+        expect(formatAvailableF1Metrics({ precision: null, recall: null, f1: null })).toBe('');
+        expect(formatAvailableF1Metrics({ precision: 1, recall: 0.5, f1: 2 / 3 }))
+            .toBe(', P=100.00% R=50.00% F1=66.67%');
+    });
+
     it('parses named comma-separated file selectors', () => {
         expect(parseFileSelectors(
             '.\\src\\main\\ets\\Page.ets, src/main/ets/Model.ts',

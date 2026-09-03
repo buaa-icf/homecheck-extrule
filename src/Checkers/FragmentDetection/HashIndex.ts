@@ -77,7 +77,10 @@ export class HashIndex {
     private numericCollisions: Map<number, Map<number, StoredLocationRef>> = new Map();
     private locationHash2 = new GrowableUint32Array();
 
-    private files: string[] = [];
+    /** 每个窗口只保存4字节fileId，路径字符串每个文件仅保留一份。 */
+    private fileIds = new GrowableUint32Array();
+    private fileIdByPath: Map<string, number> = new Map();
+    private filePaths: string[] = [];
     private startIndexes = new GrowableUint32Array();
     private startLines = new GrowableUint32Array();
     private endLines = new GrowableUint32Array();
@@ -171,8 +174,14 @@ export class HashIndex {
     }
 
     private storeLocation(file: string, startIndex: number, startLine: number, endLine: number): number {
-        const locationIndex = this.files.length;
-        this.files.push(file);
+        const locationIndex = this.fileIds.length;
+        let fileId = this.fileIdByPath.get(file);
+        if (fileId === undefined) {
+            fileId = this.filePaths.length;
+            this.fileIdByPath.set(file, fileId);
+            this.filePaths.push(file);
+        }
+        this.fileIds.push(fileId);
         this.startIndexes.push(startIndex);
         this.startLines.push(startLine);
         this.endLines.push(endLine);
@@ -231,6 +240,33 @@ export class HashIndex {
         }
         return duplicates;
     }
+
+    /**
+     * 逐个访问重复窗口桶，避免调用方同时物化全仓所有重复位置。
+     * 回调中的位置数组只在当前桶处理期间存在。
+     */
+    forEachDuplicate(visitor: (hash: string, locations: FragmentLocation[]) => void): void {
+        for (const [hash, value] of this.index) {
+            if (Array.isArray(value) && value.length >= 2) {
+                visitor(hash, value.map(index => this.toLocation(index)));
+            }
+        }
+
+        for (const [hash1, value] of this.numericIndex) {
+            if (Array.isArray(value) && value.length >= 2) {
+                const hash2 = this.locationHash2.get(value[0]);
+                visitor(`${hash1}_${hash2}`, value.map(index => this.toLocation(index)));
+            }
+        }
+
+        for (const [hash1, secondary] of this.numericCollisions) {
+            for (const [hash2, value] of secondary) {
+                if (Array.isArray(value) && value.length >= 2) {
+                    visitor(`${hash1}_${hash2}`, value.map(index => this.toLocation(index)));
+                }
+            }
+        }
+    }
     
     /**
      * 获取索引大小（不同哈希值的数量）
@@ -251,7 +287,9 @@ export class HashIndex {
         this.numericIndex.clear();
         this.numericCollisions.clear();
         this.locationHash2.clear();
-        this.files = [];
+        this.fileIds.clear();
+        this.fileIdByPath.clear();
+        this.filePaths = [];
         this.startIndexes.clear();
         this.startLines.clear();
         this.endLines.clear();
@@ -262,7 +300,7 @@ export class HashIndex {
 
     private toLocation(index: number): FragmentLocation {
         const location: FragmentLocation = {
-            file: this.files[index],
+            file: this.filePaths[this.fileIds.get(index)],
             startIndex: this.startIndexes.get(index),
             startLine: this.startLines.get(index),
             endLine: this.endLines.get(index)

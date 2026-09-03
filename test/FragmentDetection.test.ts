@@ -19,6 +19,7 @@ import {
     createSlidingWindows,
     getWindowCount,
     HashIndex,
+    FragmentLocation,
     djb2Hash,
     computeFingerprint,
     computeTokensHash,
@@ -280,6 +281,31 @@ describe('哈希索引', () => {
             ]
         ]);
     });
+
+    test('forEachDuplicate 应逐桶返回重复位置且忽略单次窗口', () => {
+        const index = new HashIndex();
+        index.addNumericWindow(10, 20, 'a.ets', 0, 1, 2);
+        index.addNumericWindow(10, 20, 'b.ets', 0, 1, 2);
+        index.addNumericWindow(30, 40, 'c.ets', 0, 1, 2);
+        const visited: Array<[string, FragmentLocation[]]> = [];
+
+        index.forEachDuplicate((hash, locations) => visited.push([hash, locations]));
+
+        expect(visited).toHaveLength(1);
+        expect(visited[0][0]).toBe('10_20');
+        expect(visited[0][1].map(location => location.file)).toEqual(['a.ets', 'b.ets']);
+    });
+
+    test('数值索引应让同一文件的所有窗口共享一个文件路径', () => {
+        const index = new HashIndex();
+        index.addNumericWindow(1, 11, 'shared.ets', 0, 1, 2);
+        index.addNumericWindow(2, 22, 'shared.ets', 1, 1, 3);
+        index.addNumericWindow(3, 33, 'other.ets', 0, 1, 2);
+
+        expect((index as any).filePaths).toEqual(['shared.ets', 'other.ets']);
+        expect((index as any).fileIdByPath.size).toBe(2);
+        expect((index as any).fileIds.values).toBeInstanceOf(Uint32Array);
+    });
     
     test('getDuplicates 应只返回有重复的哈希', () => {
         const index = new HashIndex();
@@ -393,6 +419,7 @@ describe('克隆匹配器', () => {
             expect(addWindowSpy).toHaveBeenCalledTimes(3);
             expect(addSpy).toHaveBeenCalledTimes(0);
             expect((matcher as any).fileTokenIds.get('file.ts')).toBeInstanceOf(Uint32Array);
+            expect((matcher as any).fileTokens).toBeUndefined();
         } finally {
             addWindowSpy.mockRestore();
             addSpy.mockRestore();
@@ -1401,6 +1428,8 @@ describe('CodeCloneFragmentCheck - 规则类创建', () => {
         }
 
         expect(tokenArrayMaps).toBe(0);
+        expect((check as any).fileTokenCache.size).toBe(0);
+        expect((check as any).cloneMatcher.fileTokenIds.size).toBeGreaterThan(0);
     });
 
     test('collectTokens 应避免缓存 token 数量不足的文件', () => {

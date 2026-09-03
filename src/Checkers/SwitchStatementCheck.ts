@@ -22,7 +22,7 @@ import {
     buildSwitchKey,
     calculateCaseLineCounts,
     CaseLineCount,
-    collectBraceDelimitedBlock,
+    collectBraceDelimitedBlockLazy,
     collectSourceSwitchBlocks,
     containsSwitch,
     countCases,
@@ -109,13 +109,12 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             }
 
             const stmts = body.getCfg().getStmts();
-            const reported = new Set<string>();
             const code = targetMtd.getCode();
 
             // ArkAnalyzer may fail to reconstruct source for an otherwise valid CFG.
             // Preserve CFG switch detection in that case instead of dropping findings.
             if (!code) {
-                this.detectSwitchesFromCfg(targetMtd, stmts, reported);
+                this.detectSwitchesFromCfg(targetMtd, stmts, new Set<string>());
                 return;
             }
 
@@ -126,6 +125,7 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             }
 
             if (mayContainSwitch) {
+                const reported = new Set<string>();
                 this.detectSwitchesFromCfg(targetMtd, stmts, reported);
                 this.detectFromSource(targetMtd, code, reported);
             }
@@ -139,16 +139,18 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
      * Detect switch statements from CFG statement stream.
      */
     private detectSwitchesFromCfg(method: ArkMethod, stmts: Stmt[], reported: Set<string>): void {
-        const stmtTexts = stmts.map(stmt => this.getStmtText(stmt));
-
         for (let i = 0; i < stmts.length; i++) {
             const stmt = stmts[i];
-            const text = stmtTexts[i];
+            const text = this.getStmtText(stmt);
             if (!containsSwitch(text)) {
                 continue;
             }
 
-            const switchBlockText = collectBraceDelimitedBlock(stmtTexts, i);
+            const switchBlockText = collectBraceDelimitedBlockLazy(
+                stmts.length,
+                index => index === i ? text : this.getStmtText(stmts[index]),
+                i
+            );
             const caseCount = countCases(switchBlockText);
             if (caseCount >= this.getCaseThreshold()) {
                 const caseLineCounts = calculateCaseLineCounts(switchBlockText);

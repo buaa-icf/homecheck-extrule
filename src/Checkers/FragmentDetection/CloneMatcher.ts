@@ -74,9 +74,6 @@ export class CloneMatcher {
     /** Token 词汇表：token value → 整数 ID */
     private tokenVocab: Map<string, number> = new Map();
 
-    /** 每个文件的 Token 序列引用（用于惰性指纹计算） */
-    private fileTokens: Map<string, Token[]> = new Map();
-
     /** 每个文件的 Token ID 序列引用（用于窗口等价校验） */
     private fileTokenIds: Map<string, Uint32Array> = new Map();
 
@@ -106,9 +103,6 @@ export class CloneMatcher {
         if (tokens.length < this.windowSize) {
             return;
         }
-
-        // 保存 Token 序列引用，用于惰性指纹计算
-        this.fileTokens.set(file, tokens);
 
         // 将 Token 值映射为整数 ID
         const tokenIds = new Uint32Array(tokens.length);
@@ -178,15 +172,16 @@ export class CloneMatcher {
     getExactCloneGroups(): ExactCloneGroup[] {
         const groups: ExactCloneGroup[] = [];
 
-        for (const match of this.getMatches()) {
-            const verifiedGroups = this.groupByVerifiedWindow(match.locations);
+        // 按哈希桶流式处理，避免 getMatches() 先复制全仓全部重复位置。
+        this.hashIndex.forEachDuplicate((hash, locations) => {
+            const verifiedGroups = this.groupByVerifiedWindow(locations);
             for (let groupIndex = 0; groupIndex < verifiedGroups.length; groupIndex++) {
                 const group = verifiedGroups[groupIndex];
                 if (group.locations.length < 2) {
                     continue;
                 }
 
-                const fingerprint = this.resolveExactGroupFingerprint(match.hash, group.representative, groupIndex);
+                const fingerprint = this.resolveExactGroupFingerprint(hash, group.representative, groupIndex);
                 if (fingerprint === '') {
                     continue;
                 }
@@ -197,7 +192,7 @@ export class CloneMatcher {
                     tokenCount: this.windowSize
                 });
             }
-        }
+        });
 
         return groups;
     }
@@ -279,13 +274,6 @@ export class CloneMatcher {
             loc.tokenFingerprint = fp;
             return fp;
         }
-        // 兜底：从 fileTokens 中获取
-        const tokens = this.fileTokens.get(loc.file);
-        if (tokens) {
-            const fp = computeFingerprint(tokens, loc.startIndex, this.windowSize);
-            loc.tokenFingerprint = fp;
-            return fp;
-        }
         return '';
     }
 
@@ -331,7 +319,6 @@ export class CloneMatcher {
     clear(): void {
         this.hashIndex.clear();
         this.tokenVocab.clear();
-        this.fileTokens.clear();
         this.fileTokenIds.clear();
     }
     

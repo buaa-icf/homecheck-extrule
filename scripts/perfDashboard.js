@@ -152,7 +152,8 @@ function buildDashboardHtml(staticPayload = null) {
         document.getElementById('throughputSummary').textContent=values.length?'不含共享预处理 · 性能基准 ≥ 2 万行/秒 · 达到基准 '+passed+' / '+values.length+' · 最低 '+minimum.toFixed(4):'不含共享预处理 · 性能基准 ≥ 2 万行/秒'; throughputChart.update('none'); }
       function renderTable(){ var body=document.getElementById('resultsBody'); body.replaceChildren(); state.runs.forEach(function(run){ var row=document.createElement('tr'); var throughput=run.throughputWanLinesPerSecond; var target=throughput===null?'—':throughput>=throughputTarget?'已达到':'待提升'; var peakRss=run.peakRssMB; var values=[run.repoName,run.smell,run.success?'成功':run.timedOut?'超时':'失败',(run.detectorDurationMs/1000).toFixed(2),String(run.issueMessages),peakRss===null||peakRss===undefined?'—':peakRss.toFixed(2),throughput===null?'—':throughput.toFixed(4),target]; values.forEach(function(value,index){var cell=document.createElement('td');cell.textContent=value;if(index>=3&&index<=6)cell.className='num';if(index===2)cell.className=run.success?'ok':'bad';if(index===7&&throughput!==null)cell.className=throughput>=throughputTarget?'ok':'bad';row.appendChild(cell);});body.appendChild(row);}); }
       function renderRepositoryTable(){ var body=document.getElementById('repositoriesBody'); body.replaceChildren(); (state.repositoryRuns||[]).forEach(function(run){ var row=document.createElement('tr'); var seconds=function(ms){return ms===null||ms===undefined?'—':(ms/1000).toFixed(2);}; var values=[run.repoName,run.rules.join(', '),run.success?'成功':run.timedOut?'超时':'失败',run.etsLines===null||run.etsLines===undefined?'—':String(run.etsLines),seconds(run.preprocessingMs),seconds(run.analysisMs),run.peakRssMB.toFixed(2)]; values.forEach(function(value,index){var cell=document.createElement('td');cell.textContent=value;if(index>=3)cell.className='num';if(index===2)cell.className=run.success?'ok':'bad';row.appendChild(cell);});body.appendChild(row);}); }
-      async function refresh(){ if(staticMode){render();return;} try{var response=await fetch('/api/state',{cache:'no-store'});if(response.ok){state=await response.json();render();if(state&&(state.status==='completed'||state.status==='failed')&&pollTimer){clearInterval(pollTimer);pollTimer=null;}}}catch(error){document.getElementById('statusText').textContent='连接中断';} }
+      var refreshInFlight=false;
+      async function refresh(){ if(staticMode){render();return;} if(refreshInFlight){return;} refreshInFlight=true; try{var response=await fetch('/api/state',{cache:'no-store'});if(response.ok){state=await response.json();render();if(state&&(state.status==='completed'||state.status==='failed')&&pollTimer){clearInterval(pollTimer);pollTimer=null;}}}catch(error){document.getElementById('statusText').textContent='连接中断';}finally{refreshInFlight=false;} }
       var pollTimer=null;
       refresh(); if(!staticMode){pollTimer=setInterval(refresh,1000);}
     }());
@@ -164,16 +165,29 @@ function buildDashboardHtml(staticPayload = null) {
 function startDashboardServer(options) {
   const host = '127.0.0.1';
   const liveHtml = buildDashboardHtml();
+  let resolveFinalStateServed;
+  let finalStateWasServed = false;
+  let clientWasSeen = false;
+  const finalStateServed = new Promise((resolve) => {
+    resolveFinalStateServed = resolve;
+  });
   const server = http.createServer((request, response) => {
     const requestUrl = new URL(request.url || '/', `http://${host}`);
     if (requestUrl.pathname === '/api/state') {
+      clientWasSeen = true;
       try {
-        const body = JSON.stringify(options.getState());
+        const state = options.getState();
+        const body = JSON.stringify(state);
         response.writeHead(200, {
           'Content-Type': 'application/json; charset=utf-8',
           'Cache-Control': 'no-store',
         });
-        response.end(body);
+        response.end(body, () => {
+          if (!finalStateWasServed && (state.status === 'completed' || state.status === 'failed')) {
+            finalStateWasServed = true;
+            resolveFinalStateServed();
+          }
+        });
       } catch (error) {
         response.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
         response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
@@ -181,6 +195,7 @@ function startDashboardServer(options) {
       return;
     }
     if (requestUrl.pathname === '/' || requestUrl.pathname === '/index.html') {
+      clientWasSeen = true;
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
@@ -199,6 +214,12 @@ function startDashboardServer(options) {
       const address = server.address();
       resolve({
         url: `http://${host}:${address.port}/`,
+        waitForFinalStateServed: (timeoutMs = 10000) => clientWasSeen
+          ? Promise.race([
+            finalStateServed,
+            new Promise((waitResolve) => setTimeout(waitResolve, timeoutMs)),
+          ])
+          : Promise.resolve(),
         close: () => new Promise((closeResolve, closeReject) => {
           server.close((error) => error ? closeReject(error) : closeResolve());
         }),

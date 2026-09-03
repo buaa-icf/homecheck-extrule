@@ -33,6 +33,12 @@ export interface TokenizerOptions {
     normalizeSingleCharIdentifiers?: boolean;
 }
 
+export interface ControlFlowToken {
+    kind: "if" | "else" | "{" | "}";
+    line: number;
+    column: number;
+}
+
 /**
  * 默认配置
  */
@@ -370,6 +376,64 @@ export class Tokenizer {
         }
 
         return filteredTokens;
+    }
+
+    /**
+     * 仅扫描条件分支和花括号。Switch规则无需构造完整Token对象数组，
+     * 可显著减少大型方法在if/else分析阶段的临时内存。
+     */
+    public scanControlFlow(sourceCode: string): ControlFlowToken[] {
+        const scanner = ts.createScanner(ts.ScriptTarget.Latest, true);
+        scanner.setText(sourceCode);
+        if (typeof scanner.setEtsContext === 'function') {
+            scanner.setEtsContext(true);
+        }
+
+        const result: ControlFlowToken[] = [];
+        const positionCursor = new SourcePositionMapper(sourceCode).createCursor();
+        const templateExpressionBraceDepth: number[] = [];
+        let kind = scanner.scan();
+
+        while (kind !== ts.SyntaxKind.EndOfFileToken) {
+            if (kind === ts.SyntaxKind.CloseBraceToken && templateExpressionBraceDepth.length > 0) {
+                const templateIndex = templateExpressionBraceDepth.length - 1;
+                if (templateExpressionBraceDepth[templateIndex] === 0) {
+                    kind = scanner.reScanTemplateToken(false);
+                } else {
+                    templateExpressionBraceDepth[templateIndex]--;
+                }
+            }
+
+            let controlKind: ControlFlowToken['kind'] | null = null;
+            if (kind === ts.SyntaxKind.IfKeyword) {
+                controlKind = "if";
+            } else if (kind === ts.SyntaxKind.ElseKeyword) {
+                controlKind = "else";
+            } else if (kind === ts.SyntaxKind.OpenBraceToken) {
+                controlKind = "{";
+            } else if (kind === ts.SyntaxKind.CloseBraceToken) {
+                controlKind = "}";
+            }
+
+            if (controlKind !== null) {
+                const { line, column } = positionCursor.toLineColumn(scanner.getTokenPos());
+                result.push({ kind: controlKind, line, column });
+            }
+
+            if (kind === ts.SyntaxKind.TemplateHead) {
+                templateExpressionBraceDepth.push(0);
+            } else if (kind === ts.SyntaxKind.TemplateMiddle) {
+                templateExpressionBraceDepth[templateExpressionBraceDepth.length - 1] = 0;
+            } else if (kind === ts.SyntaxKind.TemplateTail) {
+                templateExpressionBraceDepth.pop();
+            } else if (kind === ts.SyntaxKind.OpenBraceToken && templateExpressionBraceDepth.length > 0) {
+                templateExpressionBraceDepth[templateExpressionBraceDepth.length - 1]++;
+            }
+
+            kind = scanner.scan();
+        }
+
+        return result;
     }
     
     /**

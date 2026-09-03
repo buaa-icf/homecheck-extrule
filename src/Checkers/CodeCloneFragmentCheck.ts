@@ -182,7 +182,10 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
                     () => this.cloneMatcher.processFile(tokens, filePath)
                 );
                 this.fileCache.set(filePath, arkFile);
-                this.fileTokenCache.set(filePath, tokens);
+                // Type-3近似克隆才需要原始Token；默认精确模式只保留紧凑Token ID。
+                if (this.options.similarityThreshold < 1.0) {
+                    this.fileTokenCache.set(filePath, tokens);
+                }
             } catch (error) {
                 this.diagnostics.filesProcessFailed++;
                 this.diagnostics.errors.push({
@@ -201,60 +204,70 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         const checkerName = this.constructor.name;
         try {
             PerfReporter.time(checkerName, 'afterCheck', () => {
-            const exactGroups = PerfReporter.time(
-                checkerName,
-                'afterCheck.getExactCloneGroups',
-                () => this.cloneMatcher.getExactCloneGroups()
-            );
+                let exactGroups: ReturnType<CloneMatcher['getExactCloneGroups']>;
+                try {
+                    exactGroups = PerfReporter.time(
+                        checkerName,
+                        'afterCheck.getExactCloneGroups',
+                        () => this.cloneMatcher.getExactCloneGroups()
+                    );
+                } finally {
+                    // 分组已物化为轻量位置对象，后续阶段不再需要全仓哈希与Token ID。
+                    this.cloneMatcher.clear();
+                }
 
-            const exactCloneClasses = exactGroups.length > 0
-                ? PerfReporter.time(
-                    checkerName,
-                    'afterCheck.buildExactCloneClasses',
-                    () => this.exactCloneClassBuilder.build(exactGroups)
-                )
-                : [];
-
-            const exactClones = PerfReporter.time(
-                checkerName,
-                'afterCheck.dedup',
-                () => deduplicateMergedClones(
-                    filterSelfOverlappingClones(
-                        this.exactCloneClassBuilder.toRepresentativeClones(exactCloneClasses)
+                const exactCloneClasses = exactGroups.length > 0
+                    ? PerfReporter.time(
+                        checkerName,
+                        'afterCheck.buildExactCloneClasses',
+                        () => this.exactCloneClassBuilder.build(exactGroups)
                     )
-                )
-            );
+                    : [];
+                // 克隆类已拥有独立的轻量成员，原始窗口分组可立即释放。
+                exactGroups.length = 0;
 
-            const threshold = this.options.similarityThreshold;
-            const nearMissClones = threshold < 1.0
-                ? PerfReporter.time(
-                    checkerName,
-                    'afterCheck.findNearMissClones',
-                    () => this.findNearMissClones(threshold)
-                )
-                : [];
+                const exactClones = this.options.enableCloneClasses
+                    ? []
+                    : PerfReporter.time(
+                        checkerName,
+                        'afterCheck.dedup',
+                        () => deduplicateMergedClones(
+                            filterSelfOverlappingClones(
+                                this.exactCloneClassBuilder.toRepresentativeClones(exactCloneClasses)
+                            )
+                        )
+                    );
 
-            if (exactClones.length === 0 && nearMissClones.length === 0) {
-                return;
-            }
+                const threshold = this.options.similarityThreshold;
+                const nearMissClones = threshold < 1.0
+                    ? PerfReporter.time(
+                        checkerName,
+                        'afterCheck.findNearMissClones',
+                        () => this.findNearMissClones(threshold)
+                    )
+                    : [];
 
-            PerfReporter.time(checkerName, 'afterCheck.reportGen', () => {
-                if (this.options.enableCloneClasses) {
-                    const classReports = this.createCloneClassReportsFromMergedClasses(exactCloneClasses);
-                    for (const report of classReports) {
-                        this.addCloneClassIssueReport(report);
-                    }
+                if (exactClones.length === 0 && nearMissClones.length === 0) {
                     return;
                 }
 
-                for (const clone of exactClones) {
-                    this.addIssueReport(this.createCloneReport(clone));
-                }
+                PerfReporter.time(checkerName, 'afterCheck.reportGen', () => {
+                    if (this.options.enableCloneClasses) {
+                        const classReports = this.createCloneClassReportsFromMergedClasses(exactCloneClasses);
+                        for (const report of classReports) {
+                            this.addCloneClassIssueReport(report);
+                        }
+                        return;
+                    }
 
-                for (const clone of nearMissClones) {
-                    this.addIssueReport(this.createNearMissReport(clone));
-                }
-            });
+                    for (const clone of exactClones) {
+                        this.addIssueReport(this.createCloneReport(clone));
+                    }
+
+                    for (const clone of nearMissClones) {
+                        this.addIssueReport(this.createNearMissReport(clone));
+                    }
+                });
             });
         } finally {
             this.releaseScanCaches();
@@ -263,7 +276,6 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
 
     /** 报告生成后立即释放全仓 Token、哈希索引和 ArkFile 引用。 */
     private releaseScanCaches(): void {
-        this.cloneMatcher.clear();
         this.fileTokenCache.clear();
         this.fileCache.clear();
         this.locationCache.clear();

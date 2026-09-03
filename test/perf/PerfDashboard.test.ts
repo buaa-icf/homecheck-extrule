@@ -95,6 +95,7 @@ describe('performance dashboard', () => {
         expect(html).toContain('id="f1Body"');
         expect(html).not.toContain('id="runSelect"');
         expect(html).toContain("memoryChart.data.labels=runs.map(repositoryLabel)");
+        expect(html).toContain('if(refreshInFlight){return;}');
         expect(html).toContain('chart.umd');
         expect(html).not.toContain('cdn.jsdelivr.net');
     });
@@ -109,6 +110,7 @@ describe('performance dashboard', () => {
             const stateResponse = await fetch(`${server.url}api/state`);
             expect(stateResponse.status).toBe(200);
             await expect(stateResponse.json()).resolves.toEqual(payload);
+            await expect(server.waitForFinalStateServed(100)).resolves.toBeUndefined();
         } finally {
             await server.close();
         }

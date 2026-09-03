@@ -199,15 +199,15 @@ export class FeatureEnvyAnalyzer {
                 localDataAccesses++;
             }
 
-            for (const invoke of this.collectInvokes(stmt)) {
+            this.forEachUniqueInvoke(stmt, (invoke) => {
                 const provider = this.resolveInvokeProvider(invoke);
                 if (!this.isForeignProvider(provider)) {
-                    continue;
+                    return;
                 }
 
                 foreignDataAccesses++;
                 incrementCount(providerAccessCount, provider);
-            }
+            });
         }
 
         const totalDataAccesses = localDataAccesses + foreignDataAccesses;
@@ -271,22 +271,25 @@ export class FeatureEnvyAnalyzer {
 
         let terminalInvokeCount = 0;
         for (const stmt of stmts) {
-            for (const invoke of this.collectInvokes(stmt)) {
+            const allAccepted = this.forEachUniqueInvoke(stmt, (invoke) => {
                 const provider = this.resolveInvokeProvider(invoke);
                 if (!this.isForeignProvider(provider)) {
-                    continue;
+                    return;
                 }
 
                 const invokeBaseName = getValueName((invoke as { getBase?: () => ValueLike }).getBase?.());
                 if (this.isConstructorInvoke(invoke) && freshAliases.has(invokeBaseName)) {
-                    continue;
+                    return;
                 }
 
                 if (invokeBaseName === targetBase) {
                     terminalInvokeCount++;
-                    continue;
+                    return;
                 }
 
+                return false;
+            });
+            if (!allAccepted) {
                 return false;
             }
         }
@@ -308,36 +311,43 @@ export class FeatureEnvyAnalyzer {
         return dominantProvider;
     }
 
-    private collectInvokes(stmt: Stmt): InvokeLike[] {
-        const invokes: InvokeLike[] = [];
-        const seenKeys = new Set<string>();
-
-        const tryAdd = (invoke: InvokeLike): void => {
-            const key = getInvokeText(invoke);
-            if (!seenKeys.has(key)) {
-                seenKeys.add(key);
-                invokes.push(invoke);
-            }
-        };
-
+    private forEachUniqueInvoke(stmt: Stmt, visitor: (invoke: InvokeLike) => boolean | void): boolean {
         const direct = CheckerUtils.getInvokeExprFromStmt(stmt);
-        if (direct) {
-            tryAdd(direct as InvokeLike);
-        }
+        const exprs = typeof stmt.getExprs === "function" ? (stmt.getExprs() ?? []) : [];
+        let seenKeys: Set<string> | null = null;
 
-        if (typeof stmt.getExprs === "function") {
-            for (const expr of stmt.getExprs() ?? []) {
-                const exprObj = expr as { getInvokeExpr?: () => unknown } | null;
-                if (exprObj && typeof exprObj.getInvokeExpr === "function") {
-                    const invoke = exprObj.getInvokeExpr();
-                    if (invoke) {
-                        tryAdd(invoke as InvokeLike);
-                    }
-                }
+        if (direct) {
+            if (exprs.length > 0) {
+                seenKeys = new Set<string>([getInvokeText(direct as InvokeLike)]);
+            }
+            if (visitor(direct as InvokeLike) === false) {
+                return false;
             }
         }
 
-        return invokes;
+        for (const expr of exprs) {
+            const exprObj = expr as { getInvokeExpr?: () => unknown } | null;
+            if (!exprObj || typeof exprObj.getInvokeExpr !== "function") {
+                continue;
+            }
+            const invoke = exprObj.getInvokeExpr() as InvokeLike | null | undefined;
+            if (!invoke) {
+                continue;
+            }
+            const key = getInvokeText(invoke);
+            if (seenKeys === null) {
+                seenKeys = new Set<string>();
+            }
+            if (seenKeys.has(key)) {
+                continue;
+            }
+            seenKeys.add(key);
+            if (visitor(invoke) === false) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private classifyFieldAccess(stmt: Stmt): FieldAccessResult {

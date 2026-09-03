@@ -1,5 +1,6 @@
-import { TokenType } from "../FragmentDetection/Token";
 import { Tokenizer } from "../FragmentDetection/Tokenizer";
+
+const CONDITIONAL_TOKENIZER = new Tokenizer({ skipComments: true });
 
 export type ConditionalTokenKind = "if" | "elseIf" | "else";
 
@@ -39,12 +40,21 @@ export function countCases(text: string): number {
 }
 
 export function collectBraceDelimitedBlock(lines: string[], startIdx: number): string {
+    return collectBraceDelimitedBlockLazy(lines.length, index => lines[index], startIdx);
+}
+
+/** 与数组版本等价，但按需读取文本，避免预先物化整份CFG字符串数组。 */
+export function collectBraceDelimitedBlockLazy(
+    lineCount: number,
+    getLine: (index: number) => string,
+    startIdx: number
+): string {
     const blockLines: string[] = [];
     let braceDepth = 0;
     let started = false;
 
-    for (let i = startIdx; i < lines.length; i++) {
-        const text = lines[i];
+    for (let i = startIdx; i < lineCount; i++) {
+        const text = getLine(i);
         const delta = countBraceDelta(text);
 
         if (!started) {
@@ -173,30 +183,26 @@ export function calculateCaseLineCounts(text: string): CaseLineCount[] {
 }
 
 export function scanConditionalTokens(code: string): ConditionalToken[] {
-    const rawTokens = new Tokenizer({ skipComments: true }).tokenize(code);
+    const rawTokens = CONDITIONAL_TOKENIZER.scanControlFlow(code);
     const conditionalTokens: ConditionalToken[] = [];
     let depth = 0;
 
     for (let i = 0; i < rawTokens.length; i++) {
         const token = rawTokens[i];
 
-        if (token.type === TokenType.PUNCTUATION && token.value === "{") {
+        if (token.kind === "{") {
             depth++;
             continue;
         }
 
-        if (token.type === TokenType.PUNCTUATION && token.value === "}") {
+        if (token.kind === "}") {
             depth = Math.max(0, depth - 1);
             continue;
         }
 
-        if (token.type !== TokenType.KEYWORD) {
-            continue;
-        }
-
-        if (token.value === "else") {
+        if (token.kind === "else") {
             const next = rawTokens[i + 1];
-            if (next && next.type === TokenType.KEYWORD && next.value === "if") {
+            if (next && next.kind === "if") {
                 conditionalTokens.push({ kind: "elseIf", depth, line: token.line, column: token.column });
                 i++;
             } else {
@@ -205,7 +211,7 @@ export function scanConditionalTokens(code: string): ConditionalToken[] {
             continue;
         }
 
-        if (token.value === "if") {
+        if (token.kind === "if") {
             conditionalTokens.push({ kind: "if", depth, line: token.line, column: token.column });
         }
     }

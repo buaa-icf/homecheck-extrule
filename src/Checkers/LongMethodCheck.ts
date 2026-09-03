@@ -183,37 +183,52 @@ export class LongMethodCheck extends BaseRuleChecker<LongMethodRuleOptions> {
 }
 
 function countNonCommentCodeLines(code: string): number {
-    return stripComments(code)
-        .split(/\r?\n/)
-        .map(line => line.trim())
-        .filter(line => line.length > 0 && line !== '{' && line !== '}')
-        .length;
-}
-
-function stripComments(code: string): string {
-    let result = "";
+    let lines = 0;
     let inBlockComment = false;
     let inString: "'" | '"' | "`" | "" = "";
     let escaped = false;
+    let nonWhitespaceCount = 0;
+    let onlyBrace = true;
+
+    const accept = (char: string): void => {
+        if (!/\s/.test(char)) {
+            nonWhitespaceCount++;
+            if (char !== "{" && char !== "}") {
+                onlyBrace = false;
+            }
+        }
+    };
+
+    const finishLine = (): void => {
+        if (nonWhitespaceCount > 0 && !(nonWhitespaceCount === 1 && onlyBrace)) {
+            lines++;
+        }
+        nonWhitespaceCount = 0;
+        onlyBrace = true;
+    };
 
     for (let i = 0; i < code.length; i++) {
         const current = code[i];
         const next = code[i + 1] ?? "";
 
+        if (current === "\r" || current === "\n") {
+            finishLine();
+            if (current === "\r" && next === "\n") {
+                i++;
+            }
+            continue;
+        }
+
         if (inBlockComment) {
             if (current === "*" && next === "/") {
                 inBlockComment = false;
                 i++;
-                continue;
-            }
-            if (current === "\n" || current === "\r") {
-                result += current;
             }
             continue;
         }
 
         if (inString) {
-            result += current;
+            accept(current);
             if (escaped) {
                 escaped = false;
                 continue;
@@ -233,7 +248,10 @@ function stripComments(code: string): string {
                 i++;
             }
             if (i < code.length) {
-                result += code[i];
+                finishLine();
+                if (code[i] === "\r" && code[i + 1] === "\n") {
+                    i++;
+                }
             }
             continue;
         }
@@ -247,8 +265,9 @@ function stripComments(code: string): string {
         if (current === "'" || current === '"' || current === "`") {
             inString = current;
         }
-        result += current;
+        accept(current);
     }
 
-    return result;
+    finishLine();
+    return lines;
 }

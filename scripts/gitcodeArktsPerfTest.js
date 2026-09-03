@@ -959,6 +959,20 @@ function toDashboardRun(repoName, run) {
   };
 }
 
+function formatAvailableF1Metrics(metrics) {
+  const parts = [];
+  if (metrics.precision !== null && metrics.precision !== undefined) {
+    parts.push(`P=${formatPercent(metrics.precision)}`);
+  }
+  if (metrics.recall !== null && metrics.recall !== undefined) {
+    parts.push(`R=${formatPercent(metrics.recall)}`);
+  }
+  if (metrics.f1 !== null && metrics.f1 !== undefined) {
+    parts.push(`F1=${formatPercent(metrics.f1)}`);
+  }
+  return parts.length > 0 ? `, ${parts.join(' ')}` : '';
+}
+
 function toDashboardRepositoryRun(repoName, sharedRun, etsLines, timing = {}) {
   const memorySamples = readMemoryTimeline(sharedRun.memoryTimelinePath);
   const sampledPeakRssMB = Math.max(0, ...memorySamples.map((sample) => Number(sample.rssMB) || 0));
@@ -977,7 +991,6 @@ function toDashboardRepositoryRun(repoName, sharedRun, etsLines, timing = {}) {
     peakRssMB: Math.max(sharedRun.peakRssMB, sampledPeakRssMB),
     etsLines,
     rules: sharedRun.rules,
-    memorySamples,
   };
 }
 
@@ -1003,7 +1016,8 @@ function snapshotDashboardState(state) {
     totalRuns: state.totalRuns,
     current,
     runs: state.runs,
-    repositoryRuns: state.repositoryRuns,
+    // 已完成仓库的曲线明细不会再用于面板，只传峰值等摘要，避免实时响应随仓库数持续膨胀。
+    repositoryRuns: state.repositoryRuns.map(({ memorySamples: _memorySamples, ...run }) => run),
     f1: state.f1 || null,
   };
 }
@@ -1347,9 +1361,8 @@ async function main() {
             const counts = ruleComparison[rule.ruleName];
             const metrics = computeMetrics(counts);
             console.log(
-              `      [f1] ${rule.smell}: tp=${counts.tp} fp=${counts.fp} fn=${counts.fn} tn=${counts.tn}, ` +
-              `P=${formatPercent(metrics.precision)} R=${formatPercent(metrics.recall)} ` +
-              `F1=${formatPercent(metrics.f1)}`,
+              `      [f1] ${rule.smell}: tp=${counts.tp} fp=${counts.fp} fn=${counts.fn} tn=${counts.tn}` +
+              formatAvailableF1Metrics(metrics),
             );
           }
         }
@@ -1401,8 +1414,8 @@ async function main() {
       fs.writeFileSync(f1MarkdownPath, buildF1Markdown(f1Report));
     }
     if (dashboardServer) {
-      // 宽限几秒让实时面板拉取最终状态，避免页面定格在中间进度并显示"连接中断"
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      // 等待已打开的实时面板真正收到最终状态；无人打开时最多等待十秒。
+      await dashboardServer.waitForFinalStateServed(10000);
       await dashboardServer.close();
     }
   }
@@ -1448,6 +1461,7 @@ module.exports = {
   countIssues,
   countEtsLinesWithCloc,
   filterIssuesByRule,
+  formatAvailableF1Metrics,
   main,
   parseArgs,
   parseExtraRepos,
