@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { buildDashboardHtml, startDashboardServer } = require('./perfDashboard');
+const { filterIssuesReportFile } = require('./outOfScopeIssueFilter');
 const {
   buildDatasetRepos,
   buildF1Markdown,
@@ -624,6 +625,7 @@ async function runRepositoryScan(context) {
     packagePath,
     arkCheckPath,
     perfEnabled,
+    filterOutOfScope = true,
     selectedFiles,
   } = context;
   const resolvedPackagePath = packagePath || path.resolve(cwd, 'extrulesproject-1.0.0.tgz');
@@ -658,6 +660,8 @@ async function runRepositoryScan(context) {
   const fallbackIssuesPath = path.join(cwd, 'report', 'issuesReport.json');
   const generatedPerfPath = path.join(cwd, 'report', 'perfReport.json');
   const savedIssuesPath = path.join(runDir, 'issuesReport.json');
+  const rawIssuesPath = path.join(runDir, 'issuesReport.raw.json');
+  const filterAuditPath = path.join(runDir, 'outOfScopeFilterReport.json');
   const savedPerfPath = path.join(runDir, 'perfReport.json');
   const memoryTimelinePath = path.join(runDir, 'memoryTimeline.ndjson');
   const homecheckLogPath = logPath;
@@ -687,6 +691,8 @@ async function runRepositoryScan(context) {
   removeIfExists(fallbackIssuesPath);
   removeIfExists(generatedPerfPath);
   removeIfExists(savedIssuesPath);
+  removeIfExists(rawIssuesPath);
+  removeIfExists(filterAuditPath);
   removeIfExists(savedPerfPath);
   removeIfExists(memoryTimelinePath);
   removeIfExists(homecheckLogPath);
@@ -727,9 +733,32 @@ async function runRepositoryScan(context) {
   const durationMs = Date.now() - started;
   const timedOut = result.timedOut;
 
-  const copiedIssues =
-    copyIfExists(generatedIssuesPath, savedIssuesPath) ||
-    copyIfExists(fallbackIssuesPath, savedIssuesPath);
+  const sourceIssuesPath = fs.existsSync(generatedIssuesPath)
+    ? generatedIssuesPath
+    : fs.existsSync(fallbackIssuesPath)
+      ? fallbackIssuesPath
+      : null;
+  let copiedIssues = false;
+  let outOfScopeFilterStats = null;
+  if (sourceIssuesPath) {
+    if (filterOutOfScope) {
+      fs.copyFileSync(sourceIssuesPath, rawIssuesPath);
+      const filterResult = filterIssuesReportFile({
+        sourcePath: rawIssuesPath,
+        outputPath: savedIssuesPath,
+        auditPath: filterAuditPath,
+        repositoryRoot: repoPath,
+      });
+      outOfScopeFilterStats = filterResult.stats;
+      console.log(
+        `  [out-of-scope-filter] removed=${filterResult.stats.removedMessages}, ` +
+        `remaining=${filterResult.stats.after.issueMessages}`,
+      );
+    } else {
+      fs.copyFileSync(sourceIssuesPath, savedIssuesPath);
+    }
+    copiedIssues = true;
+  }
   const copiedPerf = shouldCollectPerf && copyIfExists(generatedPerfPath, savedPerfPath);
   const issues = readJson(savedIssuesPath, []);
   const issueCounts = countIssues(issues);
@@ -758,6 +787,9 @@ async function runRepositoryScan(context) {
     peakHeapMB,
     peakRssMB,
     issuesReportPath: savedIssuesPath,
+    rawIssuesReportPath: filterOutOfScope ? rawIssuesPath : null,
+    outOfScopeFilterReportPath: filterOutOfScope ? filterAuditPath : null,
+    outOfScopeFilterStats,
     perfReportPath: savedPerfPath,
     memoryTimelinePath,
     homecheckLogPath,
@@ -940,6 +972,7 @@ function printUsage() {
   console.log('  --datasetDir=<path>            Override projectConfig.datasetDir; empty config disables F1');
   console.log('  --f1Repos=a,b                  Only run selected dataset repository names');
   console.log('  --files=a.ets,b.ts             Scan only relative files in the single configured repo');
+  console.log('  --filterOutOfScope=false       Keep out-of-scope positives (filter is enabled by default)');
 }
 
 function toDashboardRun(repoName, run) {
@@ -1051,6 +1084,7 @@ async function main() {
   const dashboardEnabled = args.dashboard !== 'false';
   const dashboardPort = args.dashboardPort ? Number(args.dashboardPort) : 0;
   const perfEnabled = args.perf !== 'false';
+  const filterOutOfScope = args.filterOutOfScope !== 'false';
 
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new Error(`timeoutMs should be a positive number, got: ${args.timeoutMs}`);
@@ -1327,6 +1361,7 @@ async function main() {
           packagePath,
           arkCheckPath,
           perfEnabled,
+          filterOutOfScope,
           selectedFiles,
         });
         repoResult.sharedRun = result.sharedRun;

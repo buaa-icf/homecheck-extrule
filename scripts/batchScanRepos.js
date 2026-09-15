@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { filterIssuesReportFile } = require('./outOfScopeIssueFilter');
 
 function parseArgs(argv) {
   const args = {};
@@ -59,6 +60,7 @@ function printUsage() {
   console.log('  --includeHidden=true           Include hidden directories (default false)');
   console.log('  --maxRepos=<n>                 Scan at most N repositories');
   console.log('  --stopOnError=true             Stop at first failed repository');
+  console.log('  --filterOutOfScope=false       Keep out-of-scope positives (filter is enabled by default)');
 }
 
 function main() {
@@ -90,6 +92,7 @@ function main() {
   const includeHidden = args.includeHidden === 'true';
   const maxRepos = args.maxRepos ? Number(args.maxRepos) : null;
   const stopOnError = args.stopOnError === 'true';
+  const filterOutOfScope = args.filterOutOfScope !== 'false';
 
   if (!fs.existsSync(reposRoot)) {
     throw new Error(`reposRoot does not exist: ${reposRoot}`);
@@ -173,6 +176,8 @@ function main() {
     const repoStart = Date.now();
     const tempConfigPath = path.join(tmpConfigDir, `projectConfig.${toSafeFileName(repoName)}.json`);
     const savedReportPath = path.join(outputDir, ...repoName.split('/'), 'issuesReport.json');
+    const rawReportPath = path.join(outputDir, ...repoName.split('/'), 'issuesReport.raw.json');
+    const filterAuditPath = path.join(outputDir, ...repoName.split('/'), 'outOfScopeFilterReport.json');
 
     const projectConfig = {
       ...baseProjectConfig,
@@ -187,6 +192,8 @@ function main() {
 
     // Avoid copying stale report from previous runs.
     fs.rmSync(issuesReportPath, { force: true });
+    fs.rmSync(rawReportPath, { force: true });
+    fs.rmSync(filterAuditPath, { force: true });
 
     const runResult = spawnSync(
       'node',
@@ -207,8 +214,24 @@ function main() {
     );
 
     let copied = false;
+    let outOfScopeFilterStats = null;
     if (fs.existsSync(issuesReportPath)) {
-      fs.copyFileSync(issuesReportPath, savedReportPath);
+      if (filterOutOfScope) {
+        fs.copyFileSync(issuesReportPath, rawReportPath);
+        const filterResult = filterIssuesReportFile({
+          sourcePath: rawReportPath,
+          outputPath: savedReportPath,
+          auditPath: filterAuditPath,
+          repositoryRoot: repoPath,
+        });
+        outOfScopeFilterStats = filterResult.stats;
+        console.log(
+          `  [out-of-scope-filter] removed=${filterResult.stats.removedMessages}, ` +
+          `remaining=${filterResult.stats.after.issueMessages}`,
+        );
+      } else {
+        fs.copyFileSync(issuesReportPath, savedReportPath);
+      }
       copied = true;
     }
 
@@ -222,6 +245,9 @@ function main() {
       signal: runResult.signal,
       copied,
       savedReportPath,
+      rawReportPath: filterOutOfScope ? rawReportPath : null,
+      filterAuditPath: filterOutOfScope ? filterAuditPath : null,
+      outOfScopeFilterStats,
       durationMs
     };
     summary.items.push(item);
