@@ -18,6 +18,7 @@ export interface CaseLineCount {
 
 export interface SourceSwitchBlock {
     startLineIndex: number;
+    endLineIndex: number;
     switchColumn: number;
     text: string;
 }
@@ -26,12 +27,16 @@ function countBraceDelta(text: string): number {
     return (text.match(/\{/g)?.length ?? 0) - (text.match(/\}/g)?.length ?? 0);
 }
 
-export function buildSwitchKey(line: number, caseCount: number): string {
-    return `${line}-${caseCount}`;
-}
-
 export function containsSwitch(text: string): boolean {
     return /\bswitch\s*\(/.test(text);
+}
+
+/**
+ * CFG 语句只有在自身就是 switch 时才可作为 switch 节点处理。
+ * containsSwitch() 仍用于源码块分析；这里刻意不接受“回调/if/for 文本中包含 switch”。
+ */
+export function startsWithSwitch(text: string): boolean {
+    return /^\s*switch\s*\(/.test(text);
 }
 
 export function countCases(text: string): number {
@@ -96,6 +101,7 @@ export function collectSourceSwitchBlocks(lines: string[]): SourceSwitchBlock[] 
         const switchColumn = lines[startLineIndex].indexOf("switch");
         blocks.push({
             startLineIndex,
+            endLineIndex: startLineIndex + blockLines.length - 1,
             switchColumn: switchColumn >= 0 ? switchColumn : 0,
             text: blockLines.join("\n")
         });

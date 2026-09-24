@@ -37,6 +37,7 @@ import {
     FragmentCloneReport,
     getScopeDescription as getScopeDescriptionUtil,
     parseFragmentCloneOptions,
+    blankImportDeclarations,
     removeLogLines,
     resolveCodeLocationFromCache,
     createEmptyDiagnostics,
@@ -158,6 +159,14 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
                     checkerName,
                     'collectTokens.removeLogLines',
                     () => removeLogLines(narrowed, arkFile)
+                );
+            }
+
+            if (this.options.ignoreImports) {
+                sourceCode = PerfReporter.time(
+                    checkerName,
+                    'collectTokens.blankImportDeclarations',
+                    () => blankImportDeclarations(sourceCode!, filePath)
                 );
             }
 

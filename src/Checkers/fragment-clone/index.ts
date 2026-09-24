@@ -1,5 +1,6 @@
 export * from "./config";
 export * from "./diagnostics";
+export * from "./importFilter";
 export * from "./location";
 export * from "./logFilter";
 export * from "./reporting";

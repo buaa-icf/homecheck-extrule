@@ -10,6 +10,7 @@
 - `normalizeIdentifiers`: `true`
 - `normalizeLiterals`: `true`
 - `ignoreLogs`: `true`
+- `ignoreImports`: `true`（import 声明不参与 token 阈值和克隆指纹，源码行号保持不变）
 - `ignoreTypes`: `false`
 - `ignoreDecorators`: `false`
 - `minDistinctTokenTypes`: `3`
@@ -29,6 +30,7 @@
         "normalizeIdentifiers": true,
         "normalizeLiterals": true,
         "ignoreLogs": true,
+        "ignoreImports": true,
         "maxPairsPerFingerprint": 3000
       }
     }

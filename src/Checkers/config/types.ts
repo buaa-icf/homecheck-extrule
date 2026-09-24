@@ -5,6 +5,7 @@ export interface FragmentCloneRuleOptions {
     ignoreTypes: boolean;
     ignoreDecorators: boolean;
     ignoreLogs: boolean;
+    ignoreImports: boolean;
     minDistinctTokenTypes: number;
     enableCloneClasses: boolean;
     similarityThreshold: number;

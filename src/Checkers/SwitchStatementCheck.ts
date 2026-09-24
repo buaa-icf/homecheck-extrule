@@ -19,16 +19,15 @@ import { RuleOptionSchema } from "./config/parseRuleOptions";
 import { SwitchStatementRuleOptions } from "./config/types";
 import { BaseRuleChecker } from "./BaseRuleChecker";
 import {
-    buildSwitchKey,
     calculateCaseLineCounts,
     CaseLineCount,
     collectBraceDelimitedBlockLazy,
     collectSourceSwitchBlocks,
-    containsSwitch,
     countCases,
     countElseIfChainBranches,
     isNestedInsideElseBlock,
-    scanConditionalTokens
+    scanConditionalTokens,
+    startsWithSwitch
 } from "./switch-statement/sourceAnalysis";
 import { PerfReporter } from "./perf";
 
@@ -53,6 +52,7 @@ interface SwitchIssueParams {
     caseCount: number;
     caseLineCounts: CaseLineCount[];
     line: number;
+    endLine: number;
     startCol: number;
     endCol: number;
     filePath: string;
@@ -77,6 +77,9 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
     protected readonly optionSchema = SWITCH_OPTIONS_SCHEMA;
     protected readonly defaultOptions = DEFAULT_OPTIONS;
 
+    /** 同一源码 switch 可能同时属于普通方法和 ArkAnalyzer 生成的匿名方法。 */
+    private reportedSwitches = new Map<string, { issueIndex: number; methodName: string }>();
+
     private methodMatcher: MethodMatcher = {
         matcherType: MatcherTypes.METHOD,
         // 直接匹配当前派发的方法，避免旧兼容分支产生 N×N 方法回调。
@@ -88,6 +91,11 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
      */
     public registerMatchers(): MatcherCallback[] {
         return [{ matcher: this.methodMatcher, callback: this.check }];
+    }
+
+    public beforeCheck(): void {
+        super.beforeCheck();
+        this.reportedSwitches.clear();
     }
 
     /**
@@ -114,7 +122,7 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             // ArkAnalyzer may fail to reconstruct source for an otherwise valid CFG.
             // Preserve CFG switch detection in that case instead of dropping findings.
             if (!code) {
-                this.detectSwitchesFromCfg(targetMtd, stmts, new Set<string>());
+                this.detectSwitchesFromCfg(targetMtd, stmts);
                 return;
             }
 
@@ -125,9 +133,9 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             }
 
             if (mayContainSwitch) {
-                const reported = new Set<string>();
-                this.detectSwitchesFromCfg(targetMtd, stmts, reported);
-                this.detectFromSource(targetMtd, code, reported);
+                // 有源码时以真实源码节点为准。CFG 中的外层回调/if/for 语句可能把
+                // 内部 switch 的整段文本作为 originalText，不能与源码扫描并行上报。
+                this.detectFromSource(targetMtd, code);
             }
             if (mayContainIf) {
                 this.detectIfElseChainsFromSource(targetMtd, code);
@@ -138,11 +146,11 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
     /**
      * Detect switch statements from CFG statement stream.
      */
-    private detectSwitchesFromCfg(method: ArkMethod, stmts: Stmt[], reported: Set<string>): void {
+    private detectSwitchesFromCfg(method: ArkMethod, stmts: Stmt[]): void {
         for (let i = 0; i < stmts.length; i++) {
             const stmt = stmts[i];
             const text = this.getStmtText(stmt);
-            if (!containsSwitch(text)) {
+            if (!startsWithSwitch(text)) {
                 continue;
             }
 
@@ -155,16 +163,16 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             if (caseCount >= this.getCaseThreshold()) {
                 const caseLineCounts = calculateCaseLineCounts(switchBlockText);
                 const originPosition = stmt.getOriginPositionInfo();
-                this.addSwitchIssueReport({
+                this.reportSwitchOnce({
                     method,
                     caseCount,
                     caseLineCounts,
                     line: originPosition.getLineNo(),
+                    endLine: originPosition.getLineNo() + switchBlockText.split(/\r?\n/).length - 1,
                     startCol: originPosition.getColNo(),
                     endCol: originPosition.getColNo() + (stmt.getOriginalText()?.length ?? 0),
                     filePath: stmt.getCfg()?.getDeclaringMethod().getDeclaringArkFile()?.getFilePath() ?? "",
                 });
-                reported.add(buildSwitchKey(originPosition.getLineNo(), caseCount));
             }
         }
     }
@@ -176,11 +184,8 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
         return stmt.getOriginalText() ?? stmt.toString();
     }
 
-    /**
-     * Fallback scan over raw source to catch switches that CFG misses.
-     * De-duplicates with the `reported` key set.
-     */
-    private detectFromSource(method: ArkMethod, code: string, reported: Set<string>): void {
+    /** Scan raw source so reports are anchored to the actual switch node. */
+    private detectFromSource(method: ArkMethod, code: string): void {
         const lines = code.split(/\r?\n/);
         for (const block of collectSourceSwitchBlocks(lines)) {
             const caseCount = countCases(block.text);
@@ -189,21 +194,40 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             }
 
             const absoluteLine = this.toAbsoluteSourceLine(method, block.startLineIndex + 1);
-            const key = buildSwitchKey(absoluteLine, caseCount);
-            if (reported.has(key)) {
-                continue;
-            }
-
-            this.addSwitchIssueReport({
+            this.reportSwitchOnce({
                 method,
                 caseCount,
                 caseLineCounts: calculateCaseLineCounts(block.text),
                 line: absoluteLine,
+                endLine: this.toAbsoluteSourceLine(method, block.endLineIndex + 1),
                 startCol: block.switchColumn,
                 endCol: block.switchColumn + 1,
                 filePath: method.getDeclaringArkFile()?.getFilePath() ?? "",
             });
-            reported.add(key);
+        }
+    }
+
+    /**
+     * 以源码文件和真实 switch 起点作为身份，跨 ArkMethod 去重。
+     * 若匿名方法先被派发，后续普通方法会替换其归属，报告行仍是 switch 起始行。
+     */
+    private reportSwitchOnce(params: SwitchIssueParams): void {
+        const normalizedPath = params.filePath.replace(/\\/g, "/").toLowerCase();
+        const key = `${normalizedPath}:${params.line}:${params.endLine}`;
+        const methodName = params.method.getName();
+        const existing = this.reportedSwitches.get(key);
+
+        if (!existing) {
+            const issueIndex = this.issues.length;
+            this.addSwitchIssueReport(params);
+            this.reportedSwitches.set(key, { issueIndex, methodName });
+            return;
+        }
+
+        if (existing.methodName.startsWith("%") && !methodName.startsWith("%")) {
+            this.addSwitchIssueReport(params);
+            this.issues[existing.issueIndex] = this.issues.pop()!;
+            this.reportedSwitches.set(key, { issueIndex: existing.issueIndex, methodName });
         }
     }
 

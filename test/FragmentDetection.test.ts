@@ -1639,6 +1639,12 @@ describe('CodeCloneFragmentCheck - 配置读取', () => {
         const value = parseFragmentCloneOptions(rule).maxPairsPerFingerprint;
         expect(value).toBe(120);
     });
+
+    test('默认忽略 import，且允许显式关闭', () => {
+        expect(parseFragmentCloneOptions(undefined as any).ignoreImports).toBe(true);
+        const rule: any = { option: [{ ignoreImports: false }] };
+        expect(parseFragmentCloneOptions(rule).ignoreImports).toBe(false);
+    });
 });
 
 describe('CodeCloneFragmentCheck - 描述格式化', () => {

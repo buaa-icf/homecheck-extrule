@@ -48,6 +48,68 @@ beforeAll(() => {
 }, 60_000);
 
 describe("SwitchStatementCheck integration", () => {
+    test("同一源码 switch 被普通方法和匿名 ArkMethod 覆盖时只上报一次并归属普通方法", () => {
+        const checker = createChecker();
+        const file = { getFilePath: () => "CallbackSwitch.ets" };
+        const cfg = { getStmts: () => [] };
+        const switchBody = [
+            "switch (state) {",
+            "case 1: break;",
+            "case 2: break;",
+            "case 3: break;",
+            "case 4: break;",
+            "case 5: break;",
+            "default: break;",
+            "}"
+        ].join("\n");
+        const anonymous = {
+            getName: () => "%AM1$setCallback",
+            getBody: () => ({ getCfg: () => cfg }),
+            getCode: () => switchBody,
+            getLine: () => 12,
+            getDeclaringArkFile: () => file
+        } as any;
+        const ordinary = {
+            getName: () => "setCallback",
+            getBody: () => ({ getCfg: () => cfg }),
+            getCode: () => ["setCallback() {", "register(() => {", switchBody, "});", "}"].join("\n"),
+            getLine: () => 10,
+            getDeclaringArkFile: () => file
+        } as any;
+
+        // 故意先派发匿名方法，验证普通方法仍能接管同一个源码节点的归属。
+        checker.check(anonymous);
+        checker.check(ordinary);
+
+        expect(checker.issues).toHaveLength(1);
+        expect(checker.issues[0].defect.reportLine).toBe(12);
+        expect(checker.issues[0].defect.methodName).toBe("setCallback");
+    });
+
+    test("同一方法内两个不同的 switch 仍分别上报", () => {
+        const checker = createChecker();
+        const file = { getFilePath: () => "TwoSwitches.ets" };
+        const cfg = { getStmts: () => [] };
+        const oneSwitch = (name: string) => [
+            `switch (${name}) {`,
+            "case 1: break; case 2: break; case 3: break;",
+            "case 4: break; case 5: break; default: break;",
+            "}"
+        ].join("\n");
+        const method = {
+            getName: () => "render",
+            getBody: () => ({ getCfg: () => cfg }),
+            getCode: () => ["render() {", oneSwitch("first"), oneSwitch("second"), "}"].join("\n"),
+            getLine: () => 20,
+            getDeclaringArkFile: () => file
+        } as any;
+
+        checker.check(method);
+
+        expect(checker.issues).toHaveLength(2);
+        expect(checker.issues.map(issue => issue.defect.reportLine)).toEqual([21, 25]);
+    });
+
     test("默认阈值下应同时检测 large switch 和长 if-else 链", () => {
         const checker = createChecker();
 

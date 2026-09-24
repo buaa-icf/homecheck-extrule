@@ -5,10 +5,18 @@ import {
     countCases,
     countElseIfChainBranches,
     isNestedInsideElseBlock,
-    scanConditionalTokens
+    scanConditionalTokens,
+    startsWithSwitch
 } from "../src/Checkers/switch-statement/sourceAnalysis";
 
 describe("switch-statement source analysis", () => {
+    test("CFG 节点必须自身以 switch 开始，不能只是在外层文本中包含 switch", () => {
+        expect(startsWithSwitch("  switch (kind) {")).toBe(true);
+        expect(startsWithSwitch("callback(() => { switch (kind) {")).toBe(false);
+        expect(startsWithSwitch("if (ready) { switch (kind) {")).toBe(false);
+        expect(startsWithSwitch("for (;;) { switch (kind) {")).toBe(false);
+    });
+
     test("collectSourceSwitchBlocks 应处理 switch 与左花括号分行的情况", () => {
         const lines = [
             "switch (kind)",
@@ -25,6 +33,7 @@ describe("switch-statement source analysis", () => {
         expect(blocks).toHaveLength(1);
         expect(blocks[0]).toEqual({
             startLineIndex: 0,
+            endLineIndex: 6,
             switchColumn: 0,
             text: lines.join("\n")
         });
