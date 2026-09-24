@@ -43,6 +43,10 @@ describe("out-of-scope issue filter", () => {
     test.each([
         ["src/test/Foo.test.ets", "PATH_TEST"],
         ["src/main/ets/test/test_file.ets", "PATH_TEST"],
+        ["src/main/ets/account/components/VerifyPage.test.ets", "PATH_TEST"],
+        ["src/main/ets/account/components/VerifyPage.spec.ets", "PATH_TEST"],
+        ["src/main/ts/account/VerifyPage.test.ts", "PATH_TEST"],
+        ["src/main/ts/account/VerifyPage.spec.ts", "PATH_TEST"],
         [".test/default/cache/Foo.ets", "PATH_GENERATED_OR_CACHE"],
         ["sample/performance/Foo.ets", "PATH_PERFORMANCE_OR_BENCHMARK"],
         ["sample/benchmark/Foo.ets", "PATH_PERFORMANCE_OR_BENCHMARK"],
@@ -51,6 +55,16 @@ describe("out-of-scope issue filter", () => {
     ])("classifies %s", (relativePath, expectedRule) => {
         const match = classifyOutOfScopePath(path.join(root, ...relativePath.split("/")), root);
         expect(match?.rule).toBe(expectedRule);
+    });
+
+    test.each([
+        "src/main/ets/pages/Contest.ets",
+        "src/main/ets/pages/Latest.ets",
+        "src/main/ets/pages/TestPage.ets",
+        "src/main/ets/pages/Foo.test.ets.backup"
+    ])("does not classify production-like filename %s as test", (relativePath) => {
+        const match = classifyOutOfScopePath(path.join(root, ...relativePath.split("/")), root);
+        expect(match).toBeNull();
     });
 
     test("does not treat an ancestor report directory or normal production source as out of scope", () => {
@@ -67,8 +81,28 @@ describe("out-of-scope issue filter", () => {
         expect(result.stats.byRule.PATH_TEST).toBe(1);
     });
 
+    test("filters a .test.ets file under src/main without a test directory", () => {
+        const result = filterOutOfScopeIssues([
+            issue(
+                path.join(root, "src", "main", "ets", "account", "components", "VerifyPage.test.ets"),
+                [message()]
+            )
+        ], { repositoryRoot: root });
+        expect(result.issues).toEqual([]);
+        expect(result.stats.byRule.PATH_TEST).toBe(1);
+    });
+
     test("filters an entire clone when its peer is out of scope", () => {
         const peer = path.join(root, "benchmark", "Clone.ets");
+        const result = filterOutOfScopeIssues([
+            issue(path.join(root, "src", "main", "ets", "A.ets"), [cloneMessage(peer)])
+        ], { repositoryRoot: root });
+        expect(result.issues).toEqual([]);
+        expect(result.stats.byRule.CLONE_PEER_OUT_OF_SCOPE_PATH).toBe(1);
+    });
+
+    test("filters a clone when its peer uses a test filename under src/main", () => {
+        const peer = path.join(root, "src", "main", "ets", "components", "Peer.test.ets");
         const result = filterOutOfScopeIssues([
             issue(path.join(root, "src", "main", "ets", "A.ets"), [cloneMessage(peer)])
         ], { repositoryRoot: root });

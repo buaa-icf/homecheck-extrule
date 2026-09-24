@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const CODE_CLONE_RULE = '@extrulesproject/code-clone-fragment-check';
+const TEST_FILE_SUFFIXES = ['.test.ets', '.spec.ets', '.test.ts', '.spec.ts'];
 
 const PATH_GROUPS = [
   {
@@ -51,6 +52,16 @@ function classifyOutOfScopePath(filePath, repositoryRoot) {
     return null;
   }
   const segments = relativePath.split('/').filter(Boolean).map((segment) => segment.toLowerCase());
+  const fileName = segments[segments.length - 1] || '';
+  const testSuffix = TEST_FILE_SUFFIXES.find((suffix) => fileName.endsWith(suffix));
+  if (testSuffix) {
+    return {
+      category: 'test',
+      rule: 'PATH_TEST',
+      matchedSegment: fileName,
+      relativePath,
+    };
+  }
   for (const group of PATH_GROUPS) {
     const matchedSegment = segments.find((segment) => group.segments.has(segment));
     if (matchedSegment) {
