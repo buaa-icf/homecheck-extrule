@@ -21,6 +21,7 @@ import { BaseRuleChecker } from "./BaseRuleChecker";
 import { buildFeatureEnvyFieldTypeMap, FeatureEnvyAnalyzer, FeatureEnvyMetrics } from "./feature-envy/analysis";
 import { isArkUiMethod, shouldSkipMethod } from "./shared/ark";
 import { PerfReporter } from "./perf";
+import { scoreFeatureEnvy } from "./priority/PriorityScorer";
 
 // Heuristic detection for "Feature Envy" code smell: a method that tends to
 // interact much more with another class than with its own.
@@ -110,7 +111,7 @@ export class FeatureEnvyCheck extends BaseRuleChecker<FeatureEnvyRuleOptions> {
                 return;
             }
 
-            this.addIssueReport(targetMtd, metrics);
+            this.addIssueReport(targetMtd, metrics, atfdThreshold);
         });
     }
     private getMethodPosition(method: ArkMethod): { line: number; startCol: number; endCol: number; filePath: string } {
@@ -124,7 +125,7 @@ export class FeatureEnvyCheck extends BaseRuleChecker<FeatureEnvyRuleOptions> {
     /**
      * Emit an IssueReport describing the detected Feature Envy.
      */
-    private addIssueReport(method: ArkMethod, metrics: FeatureEnvyMetrics) {
+    private addIssueReport(method: ArkMethod, metrics: FeatureEnvyMetrics, atfdThreshold: number) {
         const { line, startCol, endCol, filePath } = this.getMethodPosition(method);
         const methodName = method.getName() ?? "<unknown>";
         const description = `Method '${methodName}' is feature-envious toward '${metrics.dominantProvider}' (ATFD=${metrics.atfd}, LDA=${metrics.lda.toFixed(2)}, CPFD=${metrics.cpfd}). Consider moving logic or introducing delegation.`;
@@ -136,6 +137,7 @@ export class FeatureEnvyCheck extends BaseRuleChecker<FeatureEnvyRuleOptions> {
             description,
             filePath,
             methodName,
+            priority: scoreFeatureEnvy(method.getCode() ?? "", metrics.atfd, metrics.lda, metrics.cpfd, atfdThreshold),
         });
     }
 }

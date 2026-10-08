@@ -30,6 +30,7 @@ import {
     startsWithSwitch
 } from "./switch-statement/sourceAnalysis";
 import { PerfReporter } from "./perf";
+import { scoreSwitch } from "./priority/PriorityScorer";
 
 // Detect "Switch Statement" smell: large switch blocks or long if/else-if chains
 // that may signal missing polymorphism.
@@ -56,6 +57,7 @@ interface SwitchIssueParams {
     startCol: number;
     endCol: number;
     filePath: string;
+    source: string;
 }
 
 interface IfElseChainIssueParams {
@@ -65,6 +67,7 @@ interface IfElseChainIssueParams {
     startCol: number;
     endCol: number;
     filePath: string;
+    source: string;
 }
 
 /**
@@ -172,6 +175,7 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
                     startCol: originPosition.getColNo(),
                     endCol: originPosition.getColNo() + (stmt.getOriginalText()?.length ?? 0),
                     filePath: stmt.getCfg()?.getDeclaringMethod().getDeclaringArkFile()?.getFilePath() ?? "",
+                    source: switchBlockText,
                 });
             }
         }
@@ -203,6 +207,7 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
                 startCol: block.switchColumn,
                 endCol: block.switchColumn + 1,
                 filePath: method.getDeclaringArkFile()?.getFilePath() ?? "",
+                source: block.text,
             });
         }
     }
@@ -261,6 +266,7 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
                 startCol: token.column,
                 endCol: token.column + 2,
                 filePath: method.getDeclaringArkFile()?.getFilePath() ?? "",
+                source: code,
             });
         }
     }
@@ -297,6 +303,7 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             description,
             filePath,
             methodName: method.getName(),
+            priority: scoreSwitch(params.source, caseCount, this.getCaseThreshold(), caseLineCounts.map(item => item.lines)),
         });
     }
 
@@ -315,6 +322,7 @@ export class SwitchStatementCheck extends BaseRuleChecker<SwitchStatementRuleOpt
             description,
             filePath,
             methodName: method.getName(),
+            priority: scoreSwitch(params.source, branchCount, this.getCaseThreshold()),
         });
     }
 }

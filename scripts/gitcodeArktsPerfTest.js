@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, execSync } = require('node:child_process');
 const { buildDashboardHtml, startDashboardServer } = require('./perfDashboard');
 const { filterIssuesReportFile } = require('./outOfScopeIssueFilter');
 const {
@@ -535,6 +535,28 @@ function countIssues(issues) {
     issueObjects: issues.length,
     issueMessages,
   };
+}
+
+function buildPriorityRanking(repositories) {
+  const issues = [];
+  for (const repository of repositories) {
+    const reportPath = repository.sharedRun && repository.sharedRun.issuesReportPath;
+    if (!reportPath || !fs.existsSync(reportPath)) {
+      continue;
+    }
+    for (const file of readJson(reportPath, [])) {
+      for (const message of file.messages || []) {
+        if (Number.isFinite(message.priorityScore) && /^P[1-4]$/.test(message.priorityLevel)) {
+          issues.push({ repository: repository.name, filePath: file.filePath, ...message });
+        }
+      }
+    }
+  }
+  issues.sort((left, right) => right.priorityScore - left.priorityScore
+    || left.repository.localeCompare(right.repository)
+    || left.filePath.localeCompare(right.filePath)
+    || (left.line || 0) - (right.line || 0));
+  return issues;
 }
 
 function filterIssuesByRule(issues, ruleName) {
@@ -1095,7 +1117,7 @@ async function main() {
   if (!Number.isInteger(dashboardPort) || dashboardPort < 0 || dashboardPort > 65535) {
     throw new Error(`dashboardPort should be an integer from 0 to 65535, got: ${args.dashboardPort}`);
   }
-  for (const requiredPath of [baseProjectConfigPath, baseRuleConfigPath, packagePath]) {
+  for (const requiredPath of [baseProjectConfigPath, baseRuleConfigPath]) {
     if (!fs.existsSync(requiredPath)) {
       throw new Error(`Required path does not exist: ${requiredPath}`);
     }
@@ -1162,6 +1184,17 @@ async function main() {
   ensureDir(outputDir);
   ensureDir(tmpConfigDir);
   ensureDir(npmCacheDir);
+  if (path.resolve(runnerPath) === path.resolve(path.join(arkCheckPath, 'lib', 'run.js'))) {
+    console.log('[rules] 正在打包当前扩展规则，供本次 HomeCheck 扫描使用...');
+    execSync('npm pack --silent', {
+      cwd: projectRoot,
+      stdio: 'inherit',
+      env: { ...process.env, npm_config_cache: npmCacheDir, NPM_CONFIG_CACHE: npmCacheDir },
+    });
+  }
+  if (!fs.existsSync(packagePath)) {
+    throw new Error(`Required path does not exist: ${packagePath}`);
+  }
 
   const repositories = [];
   const f1RepoResults = [];
@@ -1210,7 +1243,9 @@ async function main() {
       ...buildDatasetRepos([...labeledRepoNames]).map((repo) => [repo.name, repo.url]),
     ]);
     const seenNames = new Set();
-    repoWorkItems = configuredRepos.map((configuredRepo) => {
+    repoWorkItems = configuredRepos
+      .filter((configuredRepo) => !includeRepos || includeRepos.has(configuredRepo.name))
+      .map((configuredRepo) => {
       if (seenNames.has(configuredRepo.name)) {
         throw new Error(`repos 中存在重复仓库名: ${configuredRepo.name}`);
       }
@@ -1235,7 +1270,7 @@ async function main() {
         cloneRoot: reposRoot,
         localPath,
       };
-    });
+      });
     datasetRepos = repoWorkItems
       .filter((item) => item.group === 'dataset')
       .map((item) => item.repo);
@@ -1292,6 +1327,7 @@ async function main() {
   const dashboardPath = path.join(outputDir, 'perfDashboard.html');
   const f1ReportPath = path.join(outputDir, 'f1Report.json');
   const f1MarkdownPath = path.join(outputDir, 'f1Report.md');
+  const priorityRankingPath = path.join(outputDir, 'priorityRanking.json');
   let failure = null;
 
   try {
@@ -1429,7 +1465,9 @@ async function main() {
       reposRoot,
       outputDir,
       repositories,
+      priorityRankingPath,
     };
+    writeJson(priorityRankingPath, buildPriorityRanking(repositories));
     writeJson(summaryPath, report);
     if (perfEnabled) {
       writeJson(perfReportPath, buildAggregatePerfReport(report));
@@ -1466,6 +1504,7 @@ async function main() {
     console.log(`Markdown: ${markdownPath}`);
   }
   console.log(`Dashboard: ${dashboardPath}`);
+  console.log(`Priority ranking: ${priorityRankingPath}`);
   if (f1Requested && groundTruth && f1RepoResults.length > 0) {
     console.log(`F1 report: ${f1ReportPath}`);
     console.log(`F1 markdown: ${f1MarkdownPath}`);
@@ -1487,6 +1526,7 @@ module.exports = {
   RULES,
   RULE_ORDER,
   buildAggregatePerfReport,
+  buildPriorityRanking,
   buildMarkdown,
   buildMultiRuleConfig,
   buildNodeOptions,

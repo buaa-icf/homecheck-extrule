@@ -1,5 +1,6 @@
 const {
     buildMarkdown,
+    buildPriorityRanking,
     buildMultiRuleConfig,
     buildNodeOptions,
     computeThroughput,
@@ -25,6 +26,20 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 describe('gitcodeArktsPerfTest helpers', () => {
+    it('collects scored issues into a descending priority report', () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'priority-ranking-'));
+        const reportPath = path.join(root, 'issuesReport.json');
+        fs.writeFileSync(reportPath, JSON.stringify([{ filePath: 'Page.ets', messages: [
+            { rule: RULES.longMethod.ruleName, line: 8, priorityScore: 31, priorityLevel: 'P3' },
+            { rule: RULES.featureEnvy.ruleName, line: 20, priorityScore: 81, priorityLevel: 'P1' },
+        ] }]));
+        expect(buildPriorityRanking([{ name: 'cases', sharedRun: { issuesReportPath: reportPath } }]))
+            .toEqual([
+                { repository: 'cases', filePath: 'Page.ets', rule: RULES.featureEnvy.ruleName, line: 20, priorityScore: 81, priorityLevel: 'P1' },
+                { repository: 'cases', filePath: 'Page.ets', rule: RULES.longMethod.ruleName, line: 8, priorityScore: 31, priorityLevel: 'P3' },
+            ]);
+    });
+
     it('omits completed repository memory timelines from live dashboard snapshots', () => {
         const snapshot = snapshotDashboardState({
             status: 'running',

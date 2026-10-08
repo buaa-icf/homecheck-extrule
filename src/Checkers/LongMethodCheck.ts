@@ -20,6 +20,7 @@ import { LongMethodRuleOptions } from "./config/types";
 import { BaseRuleChecker } from "./BaseRuleChecker";
 import { isArkUiMethod } from "./shared";
 import { PerfReporter } from "./perf";
+import { scoreLongMethod } from "./priority/PriorityScorer";
 
 const gMetaData: BaseMetaData = {
     severity: 2,
@@ -178,6 +179,7 @@ export class LongMethodCheck extends BaseRuleChecker<LongMethodRuleOptions> {
             filePath,
             methodName,
             severity: severityOverride !== undefined ? severityOverride : undefined,
+            priority: scoreLongMethod(method.getCode() ?? "", actualLines, maxLines, isArkUiMethod(method)),
         });
     }
 }

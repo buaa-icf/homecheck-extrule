@@ -42,14 +42,16 @@ index 4807880..80ea0e9 100644
      });
  }
 diff --git a/node_modules/homecheck/lib/model/Defects.d.ts b/node_modules/homecheck/lib/model/Defects.d.ts
-index 32f017f..f85a84d 100644
+index 32f017f..2fb1681 100644
 --- a/node_modules/homecheck/lib/model/Defects.d.ts
 +++ b/node_modules/homecheck/lib/model/Defects.d.ts
-@@ -18,8 +18,9 @@ export declare class Defects {
+@@ -18,8 +18,11 @@ export declare class Defects {
      fixKey: string;
      showIgnoreIcon: boolean;
      engineName: string;
 +    methodName: string;
++    priorityScore?: number;
++    priorityLevel?: 'P1' | 'P2' | 'P3' | 'P4';
      fix?: FixData;
 -    constructor(reportLine: number, reportColumn: number, endColumn: number, description: string, severity: number, ruleId: string, filePath: string, ruleDocPath: string, disabled: boolean, checked: boolean, fixable: boolean, showIgnoreIcon?: boolean);
 +    constructor(reportLine: number, reportColumn: number, endColumn: number, description: string, severity: number, ruleId: string, filePath: string, ruleDocPath: string, disabled: boolean, checked: boolean, fixable: boolean, methodName?: string, showIgnoreIcon?: boolean);
@@ -117,3 +119,29 @@ index 5879002..a8b7dce 100644
                  const cmd = `${projectConfig.npmPath} install --no-save --prefix "${projectConfig.npmInstallDir}" "${ruleSet.packagePath}"`;
                  logger.info('Start to execute cmd: ' + cmd);
                  const execLog = (0, child_process_1.execSync)(cmd);
+diff --git a/node_modules/homecheck/lib/utils/common/GeneratingJsonFile.js b/node_modules/homecheck/lib/utils/common/GeneratingJsonFile.js
+index bb52f9e..9ee5631 100644
+--- a/node_modules/homecheck/lib/utils/common/GeneratingJsonFile.js
++++ b/node_modules/homecheck/lib/utils/common/GeneratingJsonFile.js
+@@ -68,7 +68,9 @@ class GeneratingJsonFile {
+                     severity: severitys[defect.severity],
+                     mergeKey: defect.mergeKey,
+                     description: defect.description,
+-                    ruleDocPath: defect.ruleDocPath
++                    ruleDocPath: defect.ruleDocPath,
++                    priorityScore: defect.priorityScore,
++                    priorityLevel: defect.priorityLevel
+                 };
+                 fileDefectInfo.defects.push(defectInfo);
+             }
+@@ -124,6 +126,10 @@ class GeneratingJsonFile {
+                 oneDefect.severity = defect.severity;
+                 oneDefect.message = defect.description;
+                 oneDefect.rule = defect.ruleId;
++                if (Number.isFinite(defect.priorityScore) && /^P[1-4]$/.test(defect.priorityLevel)) {
++                    oneDefect.priorityScore = defect.priorityScore;
++                    oneDefect.priorityLevel = defect.priorityLevel;
++                }
+                 oneResult.messages.push(oneDefect);
+             }
+             jsonResults.push(oneResult);

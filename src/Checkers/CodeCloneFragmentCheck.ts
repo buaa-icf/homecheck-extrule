@@ -57,6 +57,7 @@ import {
     Tokenizer
 } from "./FragmentDetection";
 import { PerfReporter } from "./perf";
+import { scoreCodeClone } from "./priority/PriorityScorer";
 
 const gMetaData: BaseMetaData = {
     severity: 2,
@@ -89,6 +90,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     private fileTokenCache: Map<string, Token[]> = new Map();
     private fileCache: Map<string, ArkFile> = new Map();
     private locationCache: Map<string, CodeLocation> = new Map();
+    private prioritySourceCache: Map<string, string[]> = new Map();
 
     private fileMatcher: FileMatcher = {
         matcherType: MatcherTypes.FILE
@@ -110,6 +112,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             this.fileCache.clear();
             this.fileTokenCache.clear();
             this.locationCache.clear();
+            this.prioritySourceCache.clear();
 
             this.cloneMatcher = this.createCloneMatcher(this.options);
             this.tokenizer = this.createTokenizer(this.options);
@@ -288,6 +291,7 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         this.fileTokenCache.clear();
         this.fileCache.clear();
         this.locationCache.clear();
+        this.prioritySourceCache.clear();
     }
 
     /**
@@ -392,6 +396,12 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
     private addIssueReport(report: FragmentCloneReport): void {
         const severity = this.rule?.alert ?? this.metaData.severity;
         const description = formatDescriptionUtil(report);
+        const priority = scoreCodeClone(
+            report,
+            this.getPrioritySource(report.location1),
+            this.getPrioritySource(report.location2),
+            this.options.minimumTokens
+        );
 
         this.issues.push(createDefects({
             line: report.location1.startLine,
@@ -402,7 +412,8 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             ruleId: this.rule.ruleId,
             filePath: report.location1.file,
             ruleDocPath: this.metaData.ruleDocPath,
-            methodName: report.location1.methodName ?? ""
+            methodName: report.location1.methodName ?? "",
+            priority
         }));
     }
 
@@ -415,6 +426,15 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
         const scopeDesc = getScopeDescriptionUtil(report.scope);
         const memberDesc = report.members.map(member => formatLocationUtil(member)).join("; ");
         const description = `Code Clone ${report.cloneType} (${scopeDesc}) [Class #${report.classId}, ${report.members.length} members]: ${memberDesc}.`;
+        const second = report.members[1];
+        const priority = scoreCodeClone({
+            cloneType: report.cloneType,
+            scope: report.scope,
+            location1: anchor,
+            location2: second,
+            tokenCount: this.options.minimumTokens,
+            lineCount: Math.max(anchor.endLine - anchor.startLine + 1, second.endLine - second.startLine + 1)
+        }, this.getPrioritySource(anchor), this.getPrioritySource(second), this.options.minimumTokens);
 
         this.issues.push(createDefects({
             line: anchor.startLine,
@@ -425,8 +445,24 @@ export class CodeCloneFragmentCheck implements AdviceChecker {
             ruleId: this.rule.ruleId,
             filePath: anchor.file,
             ruleDocPath: this.metaData.ruleDocPath,
-            methodName: anchor.methodName ?? ""
+            methodName: anchor.methodName ?? "",
+            priority
         }));
+    }
+
+    private getPrioritySource(location: CodeLocation): string {
+        let lines = this.prioritySourceCache.get(location.file);
+        if (lines === undefined) {
+            lines = (readSourceFile(location.file).content ?? "").split(/\r?\n/);
+            this.prioritySourceCache.set(location.file, lines);
+            if (this.prioritySourceCache.size > 32) {
+                const oldest = this.prioritySourceCache.keys().next().value;
+                if (oldest !== undefined) {
+                    this.prioritySourceCache.delete(oldest);
+                }
+            }
+        }
+        return lines.slice(location.startLine - 1, location.endLine).join("\n");
     }
 
     /**

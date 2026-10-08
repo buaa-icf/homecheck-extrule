@@ -14,6 +14,7 @@
  */
 
 import { Defects, IssueReport } from "homecheck";
+import { PriorityResult } from "../priority/PriorityScorer";
 
 export interface DefectsParams {
     line: number;
@@ -29,6 +30,7 @@ export interface DefectsParams {
     disabled?: boolean;
     checked?: boolean;
     fixable?: boolean;
+    priority?: PriorityResult;
 }
 
 export function createDefects(params: DefectsParams) {
@@ -47,5 +49,8 @@ export function createDefects(params: DefectsParams) {
         params.methodName,
         params.showIgnoreIcon ?? true
     );
+    if (params.priority) {
+        Object.assign(defects, params.priority);
+    }
     return new IssueReport(defects, undefined);
 }

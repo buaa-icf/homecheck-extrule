@@ -106,13 +106,13 @@ npm run scan:files -- --files=src/main/ets/pages/Index.ets,src/main/ets/model/Us
 
 ### 打包扩展规则
 
-修改规则源码后，需要重新生成供 HomeCheck 加载的规则包：
+直接调用 HomeCheck 扫描前，修改规则源码后需要重新生成规则包：
 
 ```powershell
 npm pack
 ```
 
-该命令会把当前扩展规则项目打包为根目录下的 `extrulesproject-1.0.0.tgz`。只修改扫描仓库、数据集或配置文件时不需要重复执行。
+该命令会把当前扩展规则项目打包为根目录下的 `extrulesproject-1.0.0.tgz`。`npm run perf:gitcode` 会在每次扫描开始时自动打包当前源码，并在输出目录生成按分数降序排列的 `priorityRanking.json`。
 
 ### 批量评测配置
 
