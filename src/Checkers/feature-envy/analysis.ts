@@ -8,7 +8,20 @@ const IGNORED_TYPE_ALIASES = new Set([
 
 const DEFAULT_IGNORED_CLASSES = new Set<string>([
     "String", "Number", "Boolean", "Object", "Array", "Date", "Math", "RegExp", "JSON", "Symbol", "BigInt", "Error", "Promise",
-    "Record", "Map", "Set", "WeakMap", "WeakSet"
+    "Record", "Map", "Set", "WeakMap", "WeakSet",
+    "TypeError", "RangeError", "ReferenceError", "SyntaxError", "EvalError", "URIError",
+    "ArrayBuffer", "SharedArrayBuffer", "DataView", "RegExpMatchArray",
+    "Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array",
+    "Int32Array", "Uint32Array", "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array",
+    "StringConstructor", "NumberConstructor", "BooleanConstructor", "ObjectConstructor", "ArrayConstructor",
+    "DateConstructor", "RegExpConstructor", "PromiseConstructor", "MapConstructor", "SetConstructor",
+    "BigIntConstructor", "ErrorConstructor", "EvalErrorConstructor", "RangeErrorConstructor",
+    "ReferenceErrorConstructor", "SyntaxErrorConstructor", "TypeErrorConstructor", "URIErrorConstructor",
+    "ArrayBufferConstructor", "SharedArrayBufferConstructor", "DataViewConstructor",
+    "Int8ArrayConstructor", "Uint8ArrayConstructor", "Uint8ClampedArrayConstructor",
+    "Int16ArrayConstructor", "Uint16ArrayConstructor", "Int32ArrayConstructor", "Uint32ArrayConstructor",
+    "Float32ArrayConstructor", "Float64ArrayConstructor", "BigInt64ArrayConstructor", "BigUint64ArrayConstructor",
+    "WeakMapConstructor", "WeakSetConstructor", "WeakRefConstructor", "FinalizationRegistryConstructor"
 ]);
 
 export interface FeatureEnvyMetrics {
@@ -134,13 +147,16 @@ function isIgnoredClassName(className: string, ignoredClasses: ReadonlySet<strin
         return true;
     }
 
-    const normalizedClassName = unwrapTypeName(className);
+    const normalizedClassName = unwrapTypeName(className).replace(/^@built-in\/[^:]+:\s*/, "");
     const unionParts = splitTopLevelTypeNames(normalizedClassName);
     if (unionParts.length > 1) {
         return unionParts.every((part) => isIgnoredClassName(part, ignoredClasses));
     }
 
     const lowerClassName = normalizedClassName.toLowerCase();
+    if (/^(?:readonly\s+)?(?:string|number|boolean|bigint)\[\]$/.test(lowerClassName)) {
+        return true;
+    }
     return normalizedClassName === "%unk"
         || normalizedClassName === "unknown"
         || normalizedClassName.startsWith("%")

@@ -848,6 +848,13 @@ import {
 import { ts } from 'arkanalyzer';
 
 describe('Tokenizer - offsetToLineColumn 位置转换', () => {
+    test('单独 CR 换行不把后续代码定位到第 1 行', () => {
+        const code = '/* license */\rimport A from "a";\rconst value = 1;';
+        const tokens = new Tokenizer().tokenize(code);
+        expect(tokens[0].value).toBe('import');
+        expect(tokens[0].line).toBe(2);
+        expect(offsetToLineColumn(code, code.indexOf('const'))).toEqual({ line: 3, column: 0 });
+    });
     test('单行代码的位置计算', () => {
         const code = 'let x = 1;';
         

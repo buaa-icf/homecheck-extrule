@@ -189,3 +189,72 @@ class PaymentAdapter {
     req.send(context);
   }
 }
+
+@Component
+struct StyleOnlyComponent {
+  @Styles
+  cardStyle() {
+    .padding(12)
+    .borderRadius(8)
+    .backgroundColor(Color.White)
+    .width(100)
+    .height(40)
+  }
+}
+
+@Extend(Text)
+function labelStyle() {
+  .fontSize(16)
+  .fontColor(Color.Black)
+  .fontWeight(FontWeight.Bold)
+  .width(100)
+  .height(40)
+}
+
+class BuiltinLookup {
+  clearMaps(): void {
+    Object.keys({ a: 1 });
+    Object.keys({ b: 2 });
+    Object.keys({ c: 3 });
+    Object.keys({ d: 4 });
+    Object.keys({ e: 5 });
+  }
+}
+
+interface AttributeModifier<T> {
+  applyNormalAttribute(instance: T): void;
+}
+
+class WidgetAttribute {
+  fontSize(value: number): WidgetAttribute { return this; }
+  fontWeight(value: number): WidgetAttribute { return this; }
+  fontColor(value: number): WidgetAttribute { return this; }
+  maxLines(value: number): WidgetAttribute { return this; }
+  opacity(value: number): WidgetAttribute { return this; }
+}
+
+class WidgetModifier implements AttributeModifier<WidgetAttribute> {
+  applyNormalAttribute(instance: WidgetAttribute): void {
+    instance.fontSize(16).fontWeight(1).fontColor(1).maxLines(1).opacity(1);
+  }
+}
+
+class BuiltinConstructors {
+  validate(value: number): void {
+    if (value < 0) throw new Error('negative');
+    if (value < 1) throw new Error('small');
+    if (value < 2) throw new Error('low');
+    if (value < 3) throw new Error('range');
+    if (value < 4) throw new Error('invalid');
+  }
+}
+
+class BuiltinInstances {
+  read(data: Uint8Array): void {
+    data.slice(0, 1);
+    data.slice(1, 2);
+    data.slice(2, 3);
+    data.slice(3, 4);
+    data.slice(4, 5);
+  }
+}

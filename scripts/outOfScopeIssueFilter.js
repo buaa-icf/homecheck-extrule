@@ -13,7 +13,7 @@ const PATH_GROUPS = [
   {
     category: 'test',
     rule: 'PATH_TEST',
-    segments: new Set(['test', 'ohostest']),
+    segments: new Set(['test', 'ohostest', 'inspector_test']),
   },
   {
     category: 'performance-or-benchmark',
@@ -21,6 +21,13 @@ const PATH_GROUPS = [
     segments: new Set(['performance', 'benchmark', 'ohbm', 'perfermance']),
   },
 ];
+
+// These are executable API demonstration entry pages in the TPC sample
+// collection. Library implementations under the same modules remain in scope.
+const TPC_DEMO_ENTRY_MODULES = new Set([
+  'stringtemplate', 'sanitize-html', 'ohos_msgpack', 'compare-versions',
+  'net_snmp', 'protobufjs_aspromise', 'typed-function', 'basicftp', 'asn1demo',
+]);
 
 function normalizePath(value) {
   return typeof value === 'string'
@@ -71,6 +78,28 @@ function classifyOutOfScopePath(filePath, repositoryRoot) {
         matchedSegment,
         relativePath,
       };
+    }
+  }
+  const lowerPath = segments.join('/');
+  if (lowerPath.includes('/testbed/tests/')) {
+    return { category: 'test', rule: 'PATH_TESTBED', matchedSegment: 'Testbed/Tests', relativePath };
+  }
+  if (fileName === 'testinterfacepage.ets' || fileName === 'testinterfacepage.ts') {
+    return { category: 'test', rule: 'PATH_TEST_INTERFACE_PAGE', matchedSegment: fileName, relativePath };
+  }
+  const entryIndex = segments.findIndex((segment, index) =>
+    segment === 'entry' && segments[index + 1] === 'src' && segments[index + 2] === 'main'
+    && segments[index + 3] === 'ets' && segments[index + 4] === 'pages');
+  if (entryIndex >= 1) {
+    const moduleName = segments[entryIndex - 1];
+    const isTpcCollection = path.basename(repositoryRoot).toLowerCase() === 'openharmony_tpc_samples'
+      || segments.includes('openharmony_tpc_samples');
+    const isDemoPage = segments.slice(entryIndex + 5, -1).includes('demo')
+      || moduleName.endsWith('demo')
+      || /demo[^/]*\.(ets|ts)$/.test(fileName);
+    const isCataloguedTpcDemo = isTpcCollection && TPC_DEMO_ENTRY_MODULES.has(moduleName);
+    if (isDemoPage || isCataloguedTpcDemo) {
+      return { category: 'api-demo', rule: 'PATH_API_DEMO_ENTRY', matchedSegment: moduleName, relativePath };
     }
   }
   return null;

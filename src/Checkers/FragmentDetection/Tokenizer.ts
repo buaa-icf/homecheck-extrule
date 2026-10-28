@@ -193,7 +193,12 @@ export class SourcePositionMapper {
     constructor(text: string) {
         this.lineStarts = [0];
         for (let i = 0; i < text.length; i++) {
-            if (text[i] === '\n') {
+            if (text[i] === '\r') {
+                if (text[i + 1] === '\n') {
+                    i++;
+                }
+                this.lineStarts.push(i + 1);
+            } else if (text[i] === '\n') {
                 this.lineStarts.push(i + 1);
             }
         }

@@ -25,6 +25,48 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 describe('gitcodeArktsPerfTest helpers', () => {
+    it('runs file detection without CLOC, performance reports or F1', async () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gitcode-detection-'));
+        const repo = path.join(root, 'source');
+        const outputDir = path.join(root, 'out');
+        fs.mkdirSync(repo);
+        fs.writeFileSync(path.join(repo, 'Target.ets'), 'class Target {}');
+        const config = path.join(root, 'project.json');
+        fs.writeFileSync(config, JSON.stringify({ repos: [`local=${repo}`] }));
+        const runner = path.join(root, 'runner.cjs');
+        fs.writeFileSync(runner, [
+            "const fs = require('node:fs'), path = require('node:path');",
+            "if (process.env.EXTRULES_PERF !== '0') throw Error('performance enabled');",
+            "const arg = process.argv.find(a => a.startsWith('--projectConfigPath='));",
+            "const project = JSON.parse(fs.readFileSync(arg.slice(arg.indexOf('=') + 1), 'utf8'));",
+            "fs.mkdirSync(project.reportDir, { recursive: true });",
+            "fs.writeFileSync(path.join(project.reportDir, 'issuesReport.json'), JSON.stringify([{ filePath: path.join(project.projectPath, 'Target.ets'), messages: [{ line: 1, rule: '@extrulesproject/long-method-check', message: 'target issue' }] }]));",
+        ].join('\n'));
+        const previousArgv = process.argv;
+        // A CLOC attempt must fail this test, even on machines with a working CLOC.
+        const originalMkdtemp = fs.mkdtempSync;
+        const tempSpy = jest.spyOn(require('node:fs'), 'mkdtempSync').mockImplementation((...args: any[]) => {
+            if (String(args[0]).includes('cloc-arkts-')) throw new Error('CLOC must not run');
+            return originalMkdtemp(args[0], args[1]);
+        });
+        process.argv = [previousArgv[0], previousArgv[1],
+            `--baseProjectConfig=${config}`, `--outputDir=${outputDir}`, `--runnerPath=${runner}`,
+            '--files=Target.ets', '--includeRules=long-method', '--perf=false', '--f1=false', '--dashboard=false'];
+        try {
+            await expect(main()).resolves.toBe(0);
+            const summary = JSON.parse(fs.readFileSync(path.join(outputDir, 'summary.json'), 'utf8'));
+            expect(summary.perfEnabled).toBe(false);
+            const run = summary.repositories[0].runs[0];
+            expect(run.success).toBe(true);
+            expect(JSON.parse(fs.readFileSync(run.issuesReportPath, 'utf8'))[0].messages).toHaveLength(1);
+            expect(fs.existsSync(path.join(outputDir, 'perfReport.json'))).toBe(false);
+            expect(fs.existsSync(path.join(outputDir, 'f1Report.json'))).toBe(false);
+        } finally {
+            process.argv = previousArgv;
+            tempSpy.mockRestore();
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
     it('omits completed repository memory timelines from live dashboard snapshots', () => {
         const snapshot = snapshotDashboardState({
             status: 'running',

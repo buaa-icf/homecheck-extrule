@@ -3,6 +3,7 @@ import { ArkMethod, Scene, SceneConfig } from "arkanalyzer";
 import { Rule } from "homecheck";
 import { ALERT_LEVEL } from "homecheck/lib/model/Rule";
 import { FeatureEnvyCheck } from "../src/Checkers/FeatureEnvyCheck";
+import { buildFeatureEnvyFieldTypeMap, FeatureEnvyAnalyzer } from "../src/Checkers/feature-envy/analysis";
 
 const PROJECT_DIR = path.resolve(__dirname, "sample/FeatureEnvy");
 
@@ -91,6 +92,47 @@ describe("FeatureEnvyCheck integration", () => {
             checker.check(method);
         }
 
+        expect(checker.issues).toHaveLength(0);
+    });
+
+    test("ArkUI 样式方法和内建对象调用不产生 Feature Envy 告警", () => {
+        const methods = collectAllMethods(scene);
+        const style = methods.find(method => method.getName() === "cardStyle");
+        const extended = methods.find(method => method.getName() === "labelStyle");
+        const builtin = methods.find(method => method.getName() === "clearMaps");
+        const modifier = methods.find(method => method.getDeclaringArkClass()?.getName() === "WidgetModifier" && method.getName() === "applyNormalAttribute");
+        const builtinConstructors = methods.find(method => method.getDeclaringArkClass()?.getName() === "BuiltinConstructors" && method.getName() === "validate");
+        const builtinInstances = methods.find(method => method.getDeclaringArkClass()?.getName() === "BuiltinInstances" && method.getName() === "read");
+        expect(style?.hasDecorator("Styles")).toBe(true);
+        expect(extended?.hasDecorator("Extend")).toBe(true);
+        expect(builtin).toBeDefined();
+        expect(modifier).toBeDefined();
+        expect(builtinConstructors).toBeDefined();
+        expect(builtinInstances).toBeDefined();
+        expect(modifier?.getDeclaringArkClass()?.getImplementedInterfaceNames()).toContain("AttributeModifier<WidgetAttribute>");
+        const modifierAnalysis = new FeatureEnvyAnalyzer(
+            modifier!.getSignature().getDeclaringClassSignature().getClassName(),
+            buildFeatureEnvyFieldTypeMap(modifier!)
+        ).analyze(modifier!.getBody()!.getCfg().getStmts());
+        expect(modifierAnalysis.metrics.atfd).toBeGreaterThan(4);
+        const builtinAnalysis = new FeatureEnvyAnalyzer(
+            builtinConstructors!.getSignature().getDeclaringClassSignature().getClassName(),
+            buildFeatureEnvyFieldTypeMap(builtinConstructors!)
+        ).analyze(builtinConstructors!.getBody()!.getCfg().getStmts());
+        expect(builtinAnalysis.metrics.dominantProvider).not.toBe("ErrorConstructor");
+        const builtinInstanceAnalysis = new FeatureEnvyAnalyzer(
+            builtinInstances!.getSignature().getDeclaringClassSignature().getClassName(),
+            buildFeatureEnvyFieldTypeMap(builtinInstances!)
+        ).analyze(builtinInstances!.getBody()!.getCfg().getStmts());
+        expect(builtinInstanceAnalysis.metrics.dominantProvider).not.toBe("Uint8Array");
+
+        const checker = createChecker();
+        checker.check(style as ArkMethod);
+        checker.check(extended as ArkMethod);
+        checker.check(builtin as ArkMethod);
+        checker.check(modifier as ArkMethod);
+        checker.check(builtinConstructors as ArkMethod);
+        checker.check(builtinInstances as ArkMethod);
         expect(checker.issues).toHaveLength(0);
     });
 

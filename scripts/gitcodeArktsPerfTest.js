@@ -1155,9 +1155,7 @@ async function main() {
     console.log('[files] 指定文件模式不计算整库 F1，已自动跳过数据集评估');
   }
 
-  if (!perfEnabled && !f1Requested) {
-    throw new Error('No task enabled: enable performance collection or configure a dataset for F1');
-  }
+  // Detection remains enabled even when performance and F1 collection are disabled.
 
   ensureDir(outputDir);
   ensureDir(tmpConfigDir);
@@ -1312,14 +1310,19 @@ async function main() {
       if (selectedFiles) {
         console.log(`  [files] 只扫描 ${selectedFiles.length} 个指定文件`);
       }
-      dashboardState.current = {
-        kind: 'setup',
-        label: `统计代码行数 ${repo.name}`,
-        startedMs: Date.now(),
-      };
-      console.log('  [count] 正在统计 ArkTS/TypeScript 代码行数...');
-      const etsLines = perfEnabled ? await countEtsLinesWithCloc(cloneResult.path, selectedFiles) : 0;
-      console.log(`  [count] 完成，共 ${etsLines} 行 ArkTS/TypeScript`);
+      let etsLines = 0;
+      if (perfEnabled) {
+        dashboardState.current = {
+          kind: 'setup',
+          label: `统计代码行数 ${repo.name}`,
+          startedMs: Date.now(),
+        };
+        console.log('  [count] 正在统计 ArkTS/TypeScript 代码行数...');
+        etsLines = await countEtsLinesWithCloc(cloneResult.path, selectedFiles);
+        console.log(`  [count] 完成，共 ${etsLines} 行 ArkTS/TypeScript`);
+      } else {
+        console.log('  [count] 已跳过 CLOC 与性能统计；仍执行异味检测');
+      }
       const repoResult = {
         name: repo.name,
         url: repo.url,

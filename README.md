@@ -100,6 +100,14 @@ npm run perf:gitcode
 npm run scan:files -- --files=src/main/ets/pages/Index.ets,src/main/ets/model/User.ts
 ```
 
+重构工具只需检测、不需要吞吐量时使用：
+
+```powershell
+npm run scan:files -- --perf=false --f1=false --dashboard=false --files=src/main/ets/pages/Index.ets
+```
+
+此模式不调用 CLOC，避免 CLOC 的 Windows 路径限制干扰异味复检；检测规则和告警报告不变。
+
 指定文件模式仅支持 `repos` 中配置一个仓库，只构建指定 `.ets/.ts` 文件的 Scene，并只报告这些文件中的异味；它不会计算整库 F1。
 
 该命令可以批量扫描仓库，统计告警数量和性能数据；配置了 `datasetDir` 时还会计算 F1。运行时默认启动实时面板，并在结束后生成 HTML 报告。
@@ -166,7 +174,7 @@ npm run perf:gitcode -- `
   --perf=false
 ```
 
-以上命令默认都会启动实时面板，并在结束后生成 `perfDashboard.html`。`--perf=false` 时面板只显示进度和可用的 F1 信息。如果同时关闭性能且没有启用数据集 F1，脚本会提示没有可执行任务。
+以上命令默认都会启动实时面板，并在结束后生成 `perfDashboard.html`。`--perf=false` 时跳过 CLOC 和性能采集，面板只显示进度和可用的 F1 信息。允许同时指定 `--perf=false --f1=false` 只执行异味检测，仍生成检测报告和 `summary.json`，适合重构复检。
 
 - `projectPath`（命令行覆盖名为 `reposRoot`）是源码仓库根目录；例如 `projectPath=..` 且 `repos` 中有 `cases` 时，实际扫描 `../cases`
 - 本地已有仓库会直接复用；缺少的已知仓库会下载到 `reposRoot`，加 `--updateExisting=true` 才会更新已有 Git 仓库
@@ -186,7 +194,7 @@ npm run perf:gitcode -- `
 | --- | --- | --- |
 | `--reposRoot=<path>` | `projectConfig.projectPath`，再回退到 `report/.perftest/gitcode_arkts_repos` | 覆盖仓库根目录，目标路径为 `reposRoot/仓库名` |
 | `projectConfig.repos` | 无 | 统一选择仓库；`名称` 使用 `projectPath/名称`，`名称=路径或Git地址` 使用显式目标 |
-| `--perf=false` | `true` | 不生成性能统计；仍执行 HomeCheck 以供 F1 比对 |
+| `--perf=false` | `true` | 跳过 CLOC 和性能统计；仍执行异味检测，可独立于 F1 使用 |
 | `--f1=false` | 数据集路径非空时启用 | 即使配置了数据集，也强制不加载、不计算 F1 |
 | `--datasetDir=<path>` | `projectConfig.datasetDir` | 覆盖 F1 标签数据集目录；配置为空时不运行 F1 |
 | `--outputDir=<path>` | `report/.perftest/gitcode_arkts_smell_perf` | JSON、Markdown 和面板输出目录 |

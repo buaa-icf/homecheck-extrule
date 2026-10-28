@@ -78,6 +78,18 @@ export class FeatureEnvyCheck extends BaseRuleChecker<FeatureEnvyRuleOptions> {
             if (shouldSkipMethod(methodName) || isArkUiMethod(targetMtd)) {
                 return;
             }
+            // @Styles/@Extend declare ArkUI appearance. Their fluent attribute
+            // calls are not accesses to a movable foreign domain object.
+            if (targetMtd.hasDecorator("Styles") || targetMtd.hasDecorator("Extend")) {
+                return;
+            }
+            // AttributeModifier callbacks configure ArkUI attributes supplied by
+            // the framework. Their calls cannot be moved to the attribute type.
+            const declaringClass = targetMtd.getDeclaringArkClass();
+            if (declaringClass?.getImplementedInterfaceNames().some((name) =>
+                name === "AttributeModifier" || name.startsWith("AttributeModifier<"))) {
+                return;
+            }
 
             const body = targetMtd.getBody();
             if (!body) {

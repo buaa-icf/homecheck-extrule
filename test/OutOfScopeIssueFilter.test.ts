@@ -51,7 +51,16 @@ describe("out-of-scope issue filter", () => {
         ["sample/performance/Foo.ets", "PATH_PERFORMANCE_OR_BENCHMARK"],
         ["sample/benchmark/Foo.ets", "PATH_PERFORMANCE_OR_BENCHMARK"],
         ["sample/OHBM/Foo.ets", "PATH_PERFORMANCE_OR_BENCHMARK"],
-        ["sample/perfermance/Foo.ets", "PATH_PERFORMANCE_OR_BENCHMARK"]
+        ["sample/perfermance/Foo.ets", "PATH_PERFORMANCE_OR_BENCHMARK"],
+        ["function/arkui/inspector_test/entry/src/main/ets/pages/Index.ets", "PATH_TEST"],
+        ["box2d/entry/src/main/ets/Testbed/Tests/Mobile.ts", "PATH_TESTBED"],
+        ["node-imap/entry/src/main/ets/pages/TestInterfacePage.ets", "PATH_TEST_INTERFACE_PAGE"],
+        ["openharmony_tpc_samples/sanitize-html/entry/src/main/ets/pages/allowed_schemes.ets", "PATH_API_DEMO_ENTRY"],
+        ["openharmony_tpc_samples/stringTemplate/entry/src/main/ets/pages/Index.ets", "PATH_API_DEMO_ENTRY"],
+        ["openharmony_tpc_samples/ohos_polka/entry/src/main/ets/pages/demo/http.ts", "PATH_API_DEMO_ENTRY"],
+        ["openharmony_tpc_samples/lodashDemo/entry/src/main/ets/pages/Index.ets", "PATH_API_DEMO_ENTRY"],
+        ["openharmony_tpc_samples/BasicFtp/entry/src/main/ets/pages/PressPage.ets", "PATH_API_DEMO_ENTRY"],
+        ["ohos_msgpack/entry/src/main/ets/pages/Encoding64DemoOne.ets", "PATH_API_DEMO_ENTRY"]
     ])("classifies %s", (relativePath, expectedRule) => {
         const match = classifyOutOfScopePath(path.join(root, ...relativePath.split("/")), root);
         expect(match?.rule).toBe(expectedRule);
@@ -61,7 +70,11 @@ describe("out-of-scope issue filter", () => {
         "src/main/ets/pages/Contest.ets",
         "src/main/ets/pages/Latest.ets",
         "src/main/ets/pages/TestPage.ets",
-        "src/main/ets/pages/Foo.test.ets.backup"
+        "src/main/ets/pages/Foo.test.ets.backup",
+        "openharmony_tpc_samples/ohos_polka/library/src/main/ets/http/core/request/IncomingMessage.ts",
+        "openharmony_tpc_samples/net_snmp/library/src/main/ets/Snmp.ets",
+        "openharmony_tpc_samples/unknown/entry/src/main/ets/pages/Index.ets",
+        "business/entry/src/main/ets/pages/Index.ets"
     ])("does not classify production-like filename %s as test", (relativePath) => {
         const match = classifyOutOfScopePath(path.join(root, ...relativePath.split("/")), root);
         expect(match).toBeNull();
