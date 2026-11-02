@@ -3,7 +3,7 @@ import { ArkMethod, Scene, SceneConfig } from "arkanalyzer";
 import { Rule } from "homecheck";
 import { ALERT_LEVEL } from "homecheck/lib/model/Rule";
 import { FeatureEnvyCheck } from "../src/Checkers/FeatureEnvyCheck";
-import { buildFeatureEnvyFieldTypeMap, FeatureEnvyAnalyzer } from "../src/Checkers/feature-envy/analysis";
+import { buildFeatureEnvyFieldTypeMap, FeatureEnvyAnalyzer, isArrayProvider, isNonMovableFeatureEnvyTarget } from "../src/Checkers/feature-envy/analysis";
 
 const PROJECT_DIR = path.resolve(__dirname, "sample/FeatureEnvy");
 
@@ -63,6 +63,24 @@ beforeAll(() => {
 }, 60_000);
 
 describe("FeatureEnvyCheck integration", () => {
+    test("suppresses non-movable targets but preserves typed domain targets", () => {
+        for (const provider of ["any", "ESObject", "console", "Logger", "LogUtil", "BusinessError", "@built-in/lib.es5.d.ts: Date"]) {
+            expect(isNonMovableFeatureEnvyTarget(provider)).toBe(true);
+        }
+        for (const provider of ["ITransactionInfo|undefined", "IOrderInfo|undefined", "AppStorage"]) {
+            expect(isNonMovableFeatureEnvyTarget(provider)).toBe(false);
+        }
+    });
+
+    test("array targets are not movable Feature Envy owners", () => {
+        for (const provider of ["any[]", "ITransactionStatus[]", "Array<UserInfo>", "IOrderInfo[]|undefined"]) {
+            expect(isArrayProvider(provider)).toBe(true);
+        }
+        for (const provider of ["ITransactionInfo|undefined", "IOrderInfo|undefined", "AppStorage"]) {
+            expect(isArrayProvider(provider)).toBe(false);
+        }
+    });
+
     test("默认三指标应只报告 BillingService.settle，而不是 DTO 映射、UI builder、primitive 格式化或纯适配组装", () => {
         const checker = createChecker();
 

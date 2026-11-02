@@ -54,6 +54,9 @@ describe("out-of-scope issue filter", () => {
         ["sample/perfermance/Foo.ets", "PATH_PERFORMANCE_OR_BENCHMARK"],
         ["function/arkui/inspector_test/entry/src/main/ets/pages/Index.ets", "PATH_TEST"],
         ["box2d/entry/src/main/ets/Testbed/Tests/Mobile.ts", "PATH_TESTBED"],
+        ["box2d/entry/src/main/ets/Testbed/Framework/Main.ts", "PATH_TEST"],
+        ["library/src/main/ets/example/Example.ets", "PATH_DEMO_SOURCE"],
+        ["library/src/main/ets/preview/PreviewPage.ets", "PATH_DEMO_SOURCE"],
         ["node-imap/entry/src/main/ets/pages/TestInterfacePage.ets", "PATH_TEST_INTERFACE_PAGE"],
         ["openharmony_tpc_samples/sanitize-html/entry/src/main/ets/pages/allowed_schemes.ets", "PATH_API_DEMO_ENTRY"],
         ["openharmony_tpc_samples/stringTemplate/entry/src/main/ets/pages/Index.ets", "PATH_API_DEMO_ENTRY"],
@@ -71,8 +74,13 @@ describe("out-of-scope issue filter", () => {
         "src/main/ets/pages/Latest.ets",
         "src/main/ets/pages/TestPage.ets",
         "src/main/ets/pages/Foo.test.ets.backup",
+        "src/main/ets/mock/preview/MockResponse.ets",
+        "src/main/ets/mocks/sample/TransactionDatasetMock.ets",
         "openharmony_tpc_samples/ohos_polka/library/src/main/ets/http/core/request/IncomingMessage.ts",
         "openharmony_tpc_samples/net_snmp/library/src/main/ets/Snmp.ets",
+        "openharmony_tpc_samples/metadata-extractor/library/src/main/ets/TextSampleDescriptionAtom.ts",
+        "openharmony_tpc_samples/mathjsDemo/library/src/main/ets/Calculator.ets",
+        "openharmony_tpc_samples/mathjsDemo/entry/src/main/ets/mock/MockData.ets",
         "openharmony_tpc_samples/unknown/entry/src/main/ets/pages/Index.ets",
         "business/entry/src/main/ets/pages/Index.ets"
     ])("does not classify production-like filename %s as test", (relativePath) => {
@@ -84,6 +92,77 @@ describe("out-of-scope issue filter", () => {
         const nestedRoot = path.join(root, "report", ".perftest", "repo");
         const productionFile = path.join(nestedRoot, "src", "main", "ets", "pages", "Index.ets");
         expect(classifyOutOfScopePath(productionFile, nestedRoot)).toBeNull();
+    });
+
+    test("filters TPC demo entry helpers and sample pages while keeping library code", () => {
+        const tpcRoot = path.join(root, "openharmony_tpc_samples");
+        const helper = path.join(tpcRoot, "mathjsDemo", "entry", "src", "main", "ets", "crcalc", "crcalc.ets");
+        const samplePage = path.join(tpcRoot, "SmartRefreshLayout", "entry", "src", "main", "ets", "pages", "PhoenixSample.ets");
+        const library = path.join(tpcRoot, "SmartRefreshLayout", "library", "src", "main", "ets", "components", "Refresh.ets");
+        expect(classifyOutOfScopePath(helper, tpcRoot)?.rule).toBe("PATH_API_DEMO_ENTRY");
+        expect(classifyOutOfScopePath(samplePage, tpcRoot)?.rule).toBe("PATH_API_DEMO_ENTRY");
+        expect(classifyOutOfScopePath(library, tpcRoot)).toBeNull();
+    });
+
+    test("filters TPC entry components while keeping exported page utilities", () => {
+        const tpcRoot = path.join(root, "openharmony_tpc_samples");
+        const pages = path.join(tpcRoot, "codec", "entry", "src", "main", "ets", "pages");
+        fs.mkdirSync(pages, { recursive: true });
+        const demo = path.join(pages, "Index.ets");
+        const component = path.join(pages, "Player.ets");
+        const utility = path.join(pages, "helper.ts");
+        fs.writeFileSync(demo, "@Entry\n@Component\nstruct Index { build() {} }\n");
+        fs.writeFileSync(component, "@Component\nexport struct Player { build() {} }\n");
+        fs.writeFileSync(utility, "export function decode(value: number) { return value; }\n");
+        expect(classifyOutOfScopePath(demo, tpcRoot)?.rule).toBe("PATH_TPC_ENTRY_COMPONENT");
+        expect(classifyOutOfScopePath(component, tpcRoot)?.rule).toBe("PATH_TPC_ENTRY_COMPONENT");
+        expect(classifyOutOfScopePath(utility, tpcRoot)).toBeNull();
+    });
+
+    test("filters directory-external fixture mocks but preserves mock directory and persistent service", () => {
+        const service = path.join(root, "src", "main", "ets", "service");
+        const persistent = path.join(root, "src", "main", "ets", "persistent");
+        const mock = path.join(root, "src", "main", "ets", "mock");
+        for (const dir of [service, persistent, mock]) fs.mkdirSync(dir, { recursive: true });
+        const data = path.join(service, "MockData.ets");
+        const fixture = path.join(service, "MockService.ets");
+        const durable = path.join(persistent, "MockService.ets");
+        const exempt = path.join(mock, "MockService.ets");
+        fs.writeFileSync(data, "export const rows = [{ id: 1 }];\n");
+        fs.writeFileSync(fixture, "const records: Map<string, string> = new Map();\ngetRawFile<Result>('users.json');\n");
+        fs.writeFileSync(durable, "import { preferences } from '@kit.ArkData';\nconst records: Map<string, string> = new Map();\ngetRawFile<Result>('users.json');\n");
+        fs.writeFileSync(exempt, "const records: Map<string, string> = new Map();\ngetRawFile<Result>('users.json');\n");
+        expect(classifyOutOfScopePath(data, root)?.rule).toBe("PATH_MOCK_DATA_FILE");
+        expect(classifyOutOfScopePath(fixture, root)?.rule).toBe("PATH_FIXTURE_ONLY_MOCK_SERVICE");
+        expect(classifyOutOfScopePath(durable, root)).toBeNull();
+        expect(classifyOutOfScopePath(exempt, root)).toBeNull();
+    });
+
+    test("filters declaration-only files, TPC demo abilities, and source-confirmed mock infrastructure", () => {
+        const tpcRoot = path.join(root, "openharmony_tpc_samples");
+        const ability = path.join(tpcRoot, "codec", "entry", "src", "main", "ets", "entryability", "EntryAbility.ets");
+        const declaration = path.join(tpcRoot, "codec", "api", "common", "function.d.ts");
+        const service = path.join(root, "src", "main", "ets", "network");
+        fs.mkdirSync(service, { recursive: true });
+        const data = path.join(service, "institutions_mock_data.ts");
+        const server = path.join(service, "MockServer.ets");
+        const ordinary = path.join(service, "MockServer.ts");
+        fs.writeFileSync(data, "export const institutions = [{ name: 'demo' }];\n");
+        fs.writeFileSync(server, "import { AxiosMock } from './MockUtil'; import { MockDatabase } from './mock/MockDatabase';\n");
+        fs.writeFileSync(ordinary, "export class MockServer { save() { return 1; } }\n");
+        expect(classifyOutOfScopePath(declaration, tpcRoot)?.rule).toBe("PATH_DECLARATION_ONLY");
+        expect(classifyOutOfScopePath(ability, tpcRoot)?.rule).toBe("PATH_TPC_DEMO_ABILITY");
+        expect(classifyOutOfScopePath(data, root)?.rule).toBe("PATH_LITERAL_MOCK_DATA");
+        expect(classifyOutOfScopePath(server, root)?.rule).toBe("PATH_FIXTURE_MOCK_INFRASTRUCTURE");
+        expect(classifyOutOfScopePath(ordinary, root)).toBeNull();
+    });
+
+    test("filters functional test apps in OSTest while keeping scenario apps", () => {
+        const ostestRoot = path.join(root, "ostest_integration_test");
+        const functionalTest = path.join(ostestRoot, "function", "communication", "wifi", "p2ptest", "entry", "src", "main", "ets", "workers", "Worker.ets");
+        const scenario = path.join(ostestRoot, "scenario", "MyMusic", "entry", "src", "main", "ets", "viewmodel", "MainViewModel.ets");
+        expect(classifyOutOfScopePath(functionalTest, ostestRoot)?.rule).toBe("PATH_INTEGRATION_TEST_FUNCTION");
+        expect(classifyOutOfScopePath(scenario, ostestRoot)).toBeNull();
     });
 
     test("filters a non-clone issue by its primary path", () => {

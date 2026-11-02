@@ -13,12 +13,17 @@ const PATH_GROUPS = [
   {
     category: 'test',
     rule: 'PATH_TEST',
-    segments: new Set(['test', 'ohostest', 'inspector_test']),
+    segments: new Set(['test', 'ohostest', 'inspector_test', 'testbed']),
   },
   {
     category: 'performance-or-benchmark',
     rule: 'PATH_PERFORMANCE_OR_BENCHMARK',
     segments: new Set(['performance', 'benchmark', 'ohbm', 'perfermance']),
+  },
+  {
+    category: 'api-demo',
+    rule: 'PATH_DEMO_SOURCE',
+    segments: new Set(['sample', 'samples', 'example', 'examples', 'demo', 'demos', 'preview']),
   },
 ];
 
@@ -28,6 +33,32 @@ const TPC_DEMO_ENTRY_MODULES = new Set([
   'stringtemplate', 'sanitize-html', 'ohos_msgpack', 'compare-versions',
   'net_snmp', 'protobufjs_aspromise', 'typed-function', 'basicftp', 'asn1demo',
 ]);
+
+const sourceKindCache = new Map();
+
+function readSourceKind(filePath) {
+  const key = pathKey(filePath);
+  if (sourceKindCache.has(key)) {
+    return sourceKindCache.get(key);
+  }
+  let kind = { entryComponent: false, fixtureOnlyMockService: false, fixtureMockInfrastructure: false, literalMockData: false };
+  try {
+    const source = fs.readFileSync(filePath, 'utf8');
+    kind = {
+      entryComponent: /^\s*@(?:Entry|Component(?:V2)?)\b/m.test(source),
+      fixtureOnlyMockService: /\bgetRawFile\s*(?:<[^>]+>)?\s*\(/.test(source)
+        && /\bMap\s*</.test(source)
+        && !/\b(?:preferences|PersistentStorage|relationalStore)\b/.test(source),
+      fixtureMockInfrastructure: /\bAxiosMock\b/.test(source)
+        && /\b(?:MockDatabase|MockDataMgr|AxiosAdapter)\b/.test(source),
+      literalMockData: /\bexport\s+const\s+\w+\s*=\s*\[/.test(source),
+    };
+  } catch {
+    // A missing source file is not enough evidence to remove an issue.
+  }
+  sourceKindCache.set(key, kind);
+  return kind;
+}
 
 function normalizePath(value) {
   return typeof value === 'string'
@@ -58,8 +89,13 @@ function classifyOutOfScopePath(filePath, repositoryRoot) {
   if (relativePath === null) {
     return null;
   }
+  const sourcePath = path.resolve(repositoryRoot, relativePath);
   const segments = relativePath.split('/').filter(Boolean).map((segment) => segment.toLowerCase());
   const fileName = segments[segments.length - 1] || '';
+  const lowerPath = segments.join('/');
+  if (/\.d\.ts$/.test(fileName)) {
+    return { category: 'declaration-only', rule: 'PATH_DECLARATION_ONLY', matchedSegment: fileName, relativePath };
+  }
   const testSuffix = TEST_FILE_SUFFIXES.find((suffix) => fileName.endsWith(suffix));
   if (testSuffix) {
     return {
@@ -69,7 +105,16 @@ function classifyOutOfScopePath(filePath, repositoryRoot) {
       relativePath,
     };
   }
+  if (lowerPath.includes('/testbed/tests/')) {
+    return { category: 'test', rule: 'PATH_TESTBED', matchedSegment: 'Testbed/Tests', relativePath };
+  }
   for (const group of PATH_GROUPS) {
+    if (group.rule === 'PATH_DEMO_SOURCE' && segments.some((segment) => segment === 'mock' || segment === 'mocks')) {
+      continue;
+    }
+    if (group.rule === 'PATH_DEMO_SOURCE' && lowerPath.includes('/entry/src/main/ets/pages/demo/')) {
+      continue;
+    }
     const matchedSegment = segments.find((segment) => group.segments.has(segment));
     if (matchedSegment) {
       return {
@@ -80,26 +125,53 @@ function classifyOutOfScopePath(filePath, repositoryRoot) {
       };
     }
   }
-  const lowerPath = segments.join('/');
-  if (lowerPath.includes('/testbed/tests/')) {
-    return { category: 'test', rule: 'PATH_TESTBED', matchedSegment: 'Testbed/Tests', relativePath };
-  }
   if (fileName === 'testinterfacepage.ets' || fileName === 'testinterfacepage.ts') {
     return { category: 'test', rule: 'PATH_TEST_INTERFACE_PAGE', matchedSegment: fileName, relativePath };
+  }
+  if (!segments.includes('mock') && !segments.includes('mocks')) {
+    if (/(?:^|[_-])mock[_-]data\.(?:ets|ts)$/.test(fileName) && readSourceKind(sourcePath).literalMockData) {
+      return { category: 'mock-fixture', rule: 'PATH_LITERAL_MOCK_DATA', matchedSegment: fileName, relativePath };
+    }
+    if (/^mockdata\.(?:ets|ts)$/.test(fileName)) {
+      return { category: 'mock-fixture', rule: 'PATH_MOCK_DATA_FILE', matchedSegment: fileName, relativePath };
+    }
+    if (/^mockservice\.(?:ets|ts)$/.test(fileName) && readSourceKind(sourcePath).fixtureOnlyMockService) {
+      return { category: 'mock-fixture', rule: 'PATH_FIXTURE_ONLY_MOCK_SERVICE', matchedSegment: fileName, relativePath };
+    }
+    if (/^mock(?:server|util)\.(?:ets|ts)$/.test(fileName) && readSourceKind(sourcePath).fixtureMockInfrastructure) {
+      return { category: 'mock-fixture', rule: 'PATH_FIXTURE_MOCK_INFRASTRUCTURE', matchedSegment: fileName, relativePath };
+    }
+  }
+  if (path.basename(repositoryRoot).toLowerCase() === 'ostest_integration_test' && segments[0] === 'function') {
+    return { category: 'test', rule: 'PATH_INTEGRATION_TEST_FUNCTION', matchedSegment: 'function', relativePath };
+  }
+  const entrySourceIndex = segments.findIndex((segment, index) =>
+    segment === 'entry' && segments[index + 1] === 'src' && segments[index + 2] === 'main'
+    && segments[index + 3] === 'ets');
+  const isTpcCollection = path.basename(repositoryRoot).toLowerCase() === 'openharmony_tpc_samples'
+    || segments.includes('openharmony_tpc_samples');
+  if (isTpcCollection && entrySourceIndex >= 1 && !segments.includes('mock') && !segments.includes('mocks')) {
+    const moduleName = segments[entrySourceIndex - 1];
+    if (segments[entrySourceIndex + 4] === 'entryability') {
+      return { category: 'api-demo', rule: 'PATH_TPC_DEMO_ABILITY', matchedSegment: moduleName, relativePath };
+    }
+    const isNamedDemoSource = /(?:sample|example|demo|test)[^/]*\.(?:ets|ts)$/.test(fileName);
+    if (moduleName.endsWith('demo') || isNamedDemoSource) {
+      return { category: 'api-demo', rule: 'PATH_API_DEMO_ENTRY', matchedSegment: moduleName, relativePath };
+    }
   }
   const entryIndex = segments.findIndex((segment, index) =>
     segment === 'entry' && segments[index + 1] === 'src' && segments[index + 2] === 'main'
     && segments[index + 3] === 'ets' && segments[index + 4] === 'pages');
   if (entryIndex >= 1) {
     const moduleName = segments[entryIndex - 1];
-    const isTpcCollection = path.basename(repositoryRoot).toLowerCase() === 'openharmony_tpc_samples'
-      || segments.includes('openharmony_tpc_samples');
     const isDemoPage = segments.slice(entryIndex + 5, -1).includes('demo')
       || moduleName.endsWith('demo')
       || /demo[^/]*\.(ets|ts)$/.test(fileName);
     const isCataloguedTpcDemo = isTpcCollection && TPC_DEMO_ENTRY_MODULES.has(moduleName);
-    if (isDemoPage || isCataloguedTpcDemo) {
-      return { category: 'api-demo', rule: 'PATH_API_DEMO_ENTRY', matchedSegment: moduleName, relativePath };
+    const isTpcEntryComponent = isTpcCollection && readSourceKind(sourcePath).entryComponent;
+    if ((isDemoPage || isCataloguedTpcDemo || isTpcEntryComponent) && !segments.includes('mock') && !segments.includes('mocks')) {
+      return { category: 'api-demo', rule: isTpcEntryComponent ? 'PATH_TPC_ENTRY_COMPONENT' : 'PATH_API_DEMO_ENTRY', matchedSegment: moduleName, relativePath };
     }
   }
   return null;

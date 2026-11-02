@@ -18,7 +18,7 @@ import { BaseMetaData, MatcherCallback, MatcherTypes, MethodMatcher } from "home
 import { RuleOptionSchema } from "./config/parseRuleOptions";
 import { FeatureEnvyRuleOptions } from "./config/types";
 import { BaseRuleChecker } from "./BaseRuleChecker";
-import { buildFeatureEnvyFieldTypeMap, FeatureEnvyAnalyzer, FeatureEnvyMetrics } from "./feature-envy/analysis";
+import { buildFeatureEnvyFieldTypeMap, FeatureEnvyAnalyzer, FeatureEnvyMetrics, isNonMovableFeatureEnvyTarget } from "./feature-envy/analysis";
 import { isArkUiMethod, shouldSkipMethod } from "./shared/ark";
 import { PerfReporter } from "./perf";
 
@@ -107,7 +107,7 @@ export class FeatureEnvyCheck extends BaseRuleChecker<FeatureEnvyRuleOptions> {
             const { metrics, pureMappingAdapter } = analysis;
             const { atfdThreshold, ldaThreshold, cpfdThreshold } = this.getOptions();
 
-            if (!metrics.dominantProvider) {
+            if (!metrics.dominantProvider || isNonMovableFeatureEnvyTarget(metrics.dominantProvider)) {
                 return;
             }
 

@@ -164,6 +164,31 @@ function isIgnoredClassName(className: string, ignoredClasses: ReadonlySet<strin
         || IGNORED_TYPE_ALIASES.has(lowerClassName);
 }
 
+export function isArrayProvider(className: string): boolean {
+    const parts = splitTopLevelTypeNames(unwrapTypeName(className));
+    return parts.length > 0 && parts.every((part) => {
+        const name = unwrapTypeName(part);
+        return name === "null" || name === "undefined"
+            || /^(?:readonly\s+)?[^|]+\[\]$/.test(name)
+            || /^(?:ReadonlyArray|Array)<.+>$/.test(name);
+    });
+}
+
+// Keep metric collection intact: dropping accesses here could make an unrelated
+// secondary provider dominant and create a new warning for the same method.
+export function isNonMovableFeatureEnvyTarget(className: string): boolean {
+    if (isIgnoredClassName(className, DEFAULT_IGNORED_CLASSES) || isArrayProvider(className)) {
+        return true;
+    }
+    const parts = splitTopLevelTypeNames(unwrapTypeName(className));
+    return parts.length > 0 && parts.every((part) => {
+        const name = unwrapTypeName(part).replace(/^@[^:]+:\s*/, "");
+        return /^(?:any|ESObject|never|unknown|console|hilog|Log|Logger|LogUtil|Console|HiLog)$/.test(name)
+            || /^[A-Za-z_$][\w$]*Error$/.test(name)
+            || isIgnoredClassName(name, DEFAULT_IGNORED_CLASSES);
+    });
+}
+
 export function buildFeatureEnvyFieldTypeMap(method: ArkMethod): Map<string, string> {
     const fieldTypeMap = new Map<string, string>();
     const declaringClass = method.getDeclaringArkClass();
